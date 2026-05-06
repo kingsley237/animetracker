@@ -1,0 +1,65 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.Python
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ── User data — NEVER commit this ────────────────────────────────────────────
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# ── Image cache ───────────────────────────────────────────────────────────────
+covers/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── PyInstaller ───────────────────────────────────────────────────────────────
+*.spec
+dist/
+build/
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+secrets.py
+config_local.py
