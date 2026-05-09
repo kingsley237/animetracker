@@ -149,17 +149,20 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         content_row.addWidget(self.detail_panel)
 
+        # central_content holds ONLY the content row — banner floats above it
         self.central_content = QWidget()
         central_vbox = QVBoxLayout(self.central_content)
         central_vbox.setContentsMargins(0, 0, 0, 0)
         central_vbox.setSpacing(0)
-        # Update banner at top
-        central_vbox.addWidget(self.update_banner)
-        # Content row below
         content_widget = QWidget()
         content_widget.setLayout(content_row)
         central_vbox.addWidget(content_widget)
         root.addWidget(self.central_content)
+
+        # Toast banner — parented to central widget so it floats over content
+        # Re-parent it here so it overlays correctly
+        self.update_banner.setParent(central)
+        self.update_banner.raise_()
         self.setStatusBar(self._build_status_bar())
 
 
@@ -1023,7 +1026,11 @@ class MainWindow(QMainWindow):
         get_pool().start(checker)
 
     def _on_update_available(self, version: str, notes: str, url: str):
+        # Ensure banner is parented to centralWidget so it floats correctly
+        self.update_banner.setParent(self.centralWidget())
+        self.update_banner._reposition()
         self.update_banner.show_update(version, notes, url)
+        self.update_banner.raise_()
 
     # ── Connectivity monitor ───────────────────────────────────────────────────
 
@@ -1047,18 +1054,21 @@ class MainWindow(QMainWindow):
             self.conn_label.setStyleSheet("color:#34d399;")
 
     def _on_went_offline(self):
-        """Show offline banner inside app."""
+        """Show offline banner pinned to top of content area."""
         if not hasattr(self, "_offline_banner"):
             from ui.offline_banner import OfflineBanner
-            self._offline_banner = OfflineBanner(self.central_content)
-            self.central_content.layout().insertWidget(0, self._offline_banner)
+            self._offline_banner = OfflineBanner(self.centralWidget())
+            self._offline_banner.setFixedWidth(self.central_content.width())
+            # Position below sidebar, at very top of content area
+            sidebar_w = 204
+            self._offline_banner.move(sidebar_w, 0)
         self._offline_banner.show()
+        self._offline_banner.raise_()
 
     def _on_reconnected(self):
         """Hide offline banner and refresh airing data."""
         if hasattr(self, "_offline_banner"):
             self._offline_banner.hide()
-        # Refresh data that may have gone stale while offline
         QTimer.singleShot(500, self._refresh_airing)
 
     # ── Resize ─────────────────────────────────────────────────────────────────
@@ -1066,6 +1076,8 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(60, self._load_library)
+        if self.update_banner.isVisible():
+            self.update_banner._reposition()
 
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 
