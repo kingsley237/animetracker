@@ -20,7 +20,7 @@ GITHUB_OWNER = "kingsley237"
 GITHUB_REPO  = "animetracker"
 
 # Current app version — bump this every release
-APP_VERSION  = "2.0.0"
+APP_VERSION  = "2.1.0"
 
 
 def _parse_version(v: str) -> Tuple[int, int, int]:

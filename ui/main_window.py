@@ -23,13 +23,8 @@ from PyQt6.QtGui import QPixmap, QColor, QFont, QIcon, QCursor
 
 from core.database import DatabaseManager
 from workers.workers import Worker, ImageWorker, AiringRefreshWorker, run_worker
+# UI modules imported lazily to speed up startup
 from ui.anime_card import AnimeCard
-from ui.detail_panel import DetailPanel
-from ui.discover_page import DiscoverPage
-from ui.stats_page import StatsPage
-from ui.add_dialog import AddAnimeDialog
-from ui.settings_dialog import SettingsDialog
-from ui.hall_of_fame import HallOfFamePage
 from ui.update_banner import UpdateBanner
 
 
@@ -42,6 +37,7 @@ NAV_ITEMS = [
     ("Hall of Fame",  "🏆", "hof"),
     ("Discover",      "✦",  "discover"),
     ("Statistics",    "◈",  "stats"),
+    ("AnimeStream",   "🎬", "stream"),
 ]
 
 # Pages that show the filter pill row (All / Watching / Completed / Planned)
@@ -66,7 +62,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("AnimeTracker")
         self.setMinimumSize(1100, 700)
-        self.resize(1340, 840)
+        self.showMaximized()   # Always open fullscreen
 
         # Window icon
         icon_path = Path(__file__).parent.parent / "resources" / "icon.ico"
@@ -79,13 +75,26 @@ class MainWindow(QMainWindow):
         self._load_library()
         self._check_connection()
         self._check_for_updates()
+        QTimer.singleShot(800, self._maybe_show_onboarding)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
 
-    def _load_theme(self):
-        qss = Path(__file__).parent.parent / "resources" / "themes" / "dark.qss"
-        if qss.exists():
-            QApplication.instance().setStyleSheet(qss.read_text(encoding="utf-8"))
+    def _load_theme(self, mode: str = "dark"):
+        from PyQt6.QtCore import QSettings
+        settings  = QSettings("AnimeTracker", "AnimeTracker")
+        theme     = settings.value("theme", "dark")
+        qss_file  = "light.qss" if theme == "light" else "dark.qss"
+        qss_path  = Path(__file__).parent.parent / "resources" / "themes" / qss_file
+        if qss_path.exists():
+            QApplication.instance().setStyleSheet(qss_path.read_text(encoding="utf-8"))
+
+    def toggle_theme(self):
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("AnimeTracker", "AnimeTracker")
+        current  = settings.value("theme", "dark")
+        new_theme = "light" if current == "dark" else "dark"
+        settings.setValue("theme", new_theme)
+        self._load_theme(new_theme)
 
     # ── UI build ───────────────────────────────────────────────────────────────
 
@@ -101,31 +110,36 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_sidebar())
 
         # Content + detail panel in a plain HBox — no splitter needed
-        # Update banner — sits above content, hidden until update found
         self.update_banner = UpdateBanner()
-        root.addWidget(self.update_banner)
+        # (banner wired into central_vbox later)
 
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
 
-        # Stacked pages
+        # Stacked pages — heavy pages loaded lazily on first navigation
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentArea")
 
-        self.library_page  = self._build_library_page()
-        self.discover_page = DiscoverPage(self.db, self)
-        self.stats_page    = StatsPage(self.db, self)
-        self.hof_page      = HallOfFamePage(self.db, self)
+        self.library_page   = self._build_library_page()
+        self.stack.addWidget(self.library_page)   # idx 0 — loaded immediately
 
-        self.stack.addWidget(self.library_page)
-        self.stack.addWidget(self.discover_page)
-        self.stack.addWidget(self.stats_page)
-        self.stack.addWidget(self.hof_page)
+        # Placeholders for lazy-loaded pages
+        self._discover_page = None
+        self._stats_page    = None
+        self._hof_page      = None
+        self._stream_page   = None
+
+        # Add placeholder widgets so indices stay fixed
+        for _ in range(4):
+            ph = QWidget()
+            ph.setObjectName("contentArea")
+            self.stack.addWidget(ph)
 
         content_row.addWidget(self.stack, stretch=1)
 
         # Detail panel — fixed width, hidden by default
+        from ui.detail_panel import DetailPanel
         self.detail_panel = DetailPanel(self.db, self)
         self.detail_panel.setFixedWidth(390)
         self.detail_panel.setVisible(False)
@@ -135,9 +149,17 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         content_row.addWidget(self.detail_panel)
 
+        self.central_content = QWidget()
+        central_vbox = QVBoxLayout(self.central_content)
+        central_vbox.setContentsMargins(0, 0, 0, 0)
+        central_vbox.setSpacing(0)
+        # Update banner at top
+        central_vbox.addWidget(self.update_banner)
+        # Content row below
         content_widget = QWidget()
         content_widget.setLayout(content_row)
-        root.addWidget(content_widget)
+        central_vbox.addWidget(content_widget)
+        root.addWidget(self.central_content)
         self.setStatusBar(self._build_status_bar())
 
 
@@ -197,6 +219,13 @@ class MainWindow(QMainWindow):
                 sep2.setFrameShape(QFrame.Shape.HLine)
                 sep2.setStyleSheet("color:#1a1d28;margin:0 16px;")
                 lay.addWidget(sep2)
+                lay.addSpacing(6)
+            if page_id == "stats":
+                lay.addSpacing(10)
+                sep3 = QFrame()
+                sep3.setFrameShape(QFrame.Shape.HLine)
+                sep3.setStyleSheet("color:#1a1d28;margin:0 16px;")
+                lay.addWidget(sep3)
                 lay.addSpacing(6)
 
         lay.addStretch()
@@ -408,14 +437,36 @@ class MainWindow(QMainWindow):
         self._deselect_all_cards()
 
         if page_id == "discover":
+            if self._discover_page is None:
+                from ui.discover_page import DiscoverPage
+                self._discover_page = DiscoverPage(self.db, self)
+                self.stack.removeWidget(self.stack.widget(1))
+                self.stack.insertWidget(1, self._discover_page)
             self.stack.setCurrentIndex(1)
-            self.discover_page.load()
+            self._discover_page.load()
         elif page_id == "stats":
+            if self._stats_page is None:
+                from ui.stats_page import StatsPage
+                self._stats_page = StatsPage(self.db, self)
+                self.stack.removeWidget(self.stack.widget(2))
+                self.stack.insertWidget(2, self._stats_page)
             self.stack.setCurrentIndex(2)
-            self.stats_page.load()
+            self._stats_page.load()
         elif page_id == "hof":
+            if self._hof_page is None:
+                from ui.hall_of_fame import HallOfFamePage
+                self._hof_page = HallOfFamePage(self.db, self)
+                self.stack.removeWidget(self.stack.widget(3))
+                self.stack.insertWidget(3, self._hof_page)
             self.stack.setCurrentIndex(3)
-            self.hof_page.load()
+            self._hof_page.load()
+        elif page_id == "stream":
+            if self._stream_page is None:
+                from ui.animestream_page import AnimeStreamPage
+                self._stream_page = AnimeStreamPage(self.db, self)
+                self.stack.removeWidget(self.stack.widget(4))
+                self.stack.insertWidget(4, self._stream_page)
+            self.stack.setCurrentIndex(4)
         else:
             self.stack.setCurrentIndex(0)
             titles = {
@@ -461,55 +512,76 @@ class MainWindow(QMainWindow):
     # ── Library loading ────────────────────────────────────────────────────────
 
     def _show_skeletons(self):
-        """Show grey placeholder cards while real data loads."""
+        """Show shimmer skeleton cards immediately while DB fetch runs."""
         COLS = self._calc_columns()
-        for i in range(min(8, COLS * 2)):
-            skel = QFrame()
-            skel.setObjectName("animeCard")
-            skel.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.CARD_HEIGHT)
-            skel.setStyleSheet(
-                "QFrame{background:#0f1218;border:1px solid #1a1d28;border-radius:10px;}"
-            )
+        count = min(12, COLS * 3)
+        for i in range(count):
+            skel = _SkeletonCard()
             self.grid_layout.addWidget(skel, i // COLS, i % COLS)
 
     def _load_library(self, watch_status: Optional[str] = None):
-        # Determine what status to query
+        """
+        Non-blocking library load:
+        1. Show skeleton cards immediately (instant visual feedback)
+        2. Fetch data from DB in background worker
+        3. Replace skeletons with real cards when done
+        """
         if watch_status is None and self._current_filter != "all":
             watch_status = self._current_filter
 
-        if self._search_query:
-            anime_list = self.db.search_anime(self._search_query)
-        elif watch_status == "dropped":
-            anime_list = self._get_dropped_as_anime()
-        elif watch_status == "behind":
-            # "Behind" = has aired episodes the user hasn't watched yet
-            all_anime = self.db.get_all_anime(watch_status="watching", sort_by=self._sort_by)
-            from datetime import datetime, timezone
-            now_ts = int(datetime.now(timezone.utc).timestamp())
-            anime_list = []
-            for a in all_anime:
-                next_ep = a.get("next_episode_num")
-                next_at = a.get("next_episode_at")
-                total   = a.get("total_episodes") or 0
-                api_s   = (a.get("status") or "").upper()
-                if next_ep and next_ep > 1:
-                    aired = next_ep - 1
-                elif total and api_s in ("FINISHED","CANCELLED"):
-                    aired = total
-                else:
-                    aired = 0
-                watched = self.db.get_watched_count(a["id"])
-                if aired > 0 and watched < aired:
-                    anime_list.append(a)
-        else:
-            anime_list = self.db.get_all_anime(watch_status=watch_status, sort_by=self._sort_by)
+        # Show skeletons FIRST — instant feedback before any data work
+        self._clear_grid()
+        self.empty_state.setVisible(False)
+        self.grid_container.setVisible(True)
+        self._show_skeletons()
 
-        # Clear grid
+        # Snapshot params for the background worker
+        search_q   = self._search_query
+        sort_by    = self._sort_by
+        current_filter = self._current_filter
+        current_page   = self.current_page
+
+        def fetch_data():
+            if search_q:
+                return self.db.search_anime(search_q)
+            elif watch_status == "dropped":
+                return self._get_dropped_as_anime()
+            elif watch_status == "behind":
+                from datetime import datetime, timezone
+                all_anime = self.db.get_all_anime(watch_status="watching", sort_by=sort_by)
+                result = []
+                for a in all_anime:
+                    next_ep = a.get("next_episode_num")
+                    total   = a.get("total_episodes") or 0
+                    api_s   = (a.get("status") or "").upper()
+                    aired   = (next_ep - 1) if (next_ep and next_ep > 1) else (
+                               total if (total and api_s in ("FINISHED","CANCELLED")) else 0)
+                    watched = self.db.get_watched_count(a["id"])
+                    if aired > 0 and watched < aired:
+                        result.append(a)
+                return result
+            else:
+                return self.db.get_all_anime(watch_status=watch_status, sort_by=sort_by)
+
+        worker = Worker(fetch_data)
+        worker.signals.result.connect(
+            lambda anime_list: self._render_library(
+                anime_list, current_filter, current_page
+            )
+        )
+        run_worker(worker)
+
+    def _clear_grid(self):
         for i in reversed(range(self.grid_layout.count())):
             item = self.grid_layout.itemAt(i)
             if item and item.widget():
                 item.widget().setParent(None)
         self._cards.clear()
+
+    def _render_library(self, anime_list: List[Dict],
+                         current_filter: str, current_page: str):
+        """Called from worker result — renders real cards replacing skeletons."""
+        self._clear_grid()
 
         has = bool(anime_list)
         self.empty_state.setVisible(not has)
@@ -517,8 +589,8 @@ class MainWindow(QMainWindow):
 
         if has:
             show_grouped = (
-                self._current_filter == "all"
-                and self.current_page == "library"
+                current_filter == "all"
+                and current_page == "library"
                 and not self._search_query
             )
             if show_grouped:
@@ -811,12 +883,14 @@ class MainWindow(QMainWindow):
     # ── Dialogs ────────────────────────────────────────────────────────────────
 
     def _open_add_dialog(self):
+        from ui.add_dialog import AddAnimeDialog
         dlg = AddAnimeDialog(self.db, self)
         if dlg.exec():
             self._load_library()
             self._update_stats_strip()
 
     def _open_settings(self):
+        from ui.settings_dialog import SettingsDialog
         SettingsDialog(self.db, self).exec()
 
     # ── Timers ─────────────────────────────────────────────────────────────────
@@ -919,6 +993,25 @@ class MainWindow(QMainWindow):
                     if refreshed:
                         self._cards[anime["id"]].update_data(refreshed)
 
+    # ── Onboarding ─────────────────────────────────────────────────────────────
+
+    def _maybe_show_onboarding(self):
+        # ── Toggle for testing: set True to always show tutorial ──────────────
+        FORCE_ONBOARDING = False
+        # ─────────────────────────────────────────────────────────────────────
+        from PyQt6.QtCore import QSettings
+        settings    = QSettings("AnimeTracker", "AnimeTracker")
+        seen        = settings.value("onboarding_seen", False, type=bool)
+        total_anime = len(self.db.get_all_anime())
+        # First ever use = never seen the tour AND library is completely empty
+        is_first_use = (not seen) and (total_anime == 0)
+        if FORCE_ONBOARDING or is_first_use:
+            from ui.onboarding import OnboardingOverlay
+            overlay = OnboardingOverlay(self, self.centralWidget())
+            overlay.finished.connect(
+                lambda: settings.setValue("onboarding_seen", True)
+            )
+
     # ── Update check ───────────────────────────────────────────────────────────
 
     def _check_for_updates(self):
@@ -932,30 +1025,117 @@ class MainWindow(QMainWindow):
     def _on_update_available(self, version: str, notes: str, url: str):
         self.update_banner.show_update(version, notes, url)
 
-    # ── Connection check ───────────────────────────────────────────────────────
+    # ── Connectivity monitor ───────────────────────────────────────────────────
 
     def _check_connection(self):
-        def check():
-            from core.api import check_connection
-            return check_connection()
-        w = Worker(check)
-        w.signals.result.connect(self._on_conn_result)
-        run_worker(w)
+        from core.connectivity import ConnectivityMonitor
+        self._conn_monitor = ConnectivityMonitor(self)
+        self._conn_monitor.status_changed.connect(self._on_conn_status)
+        self._conn_monitor.went_offline.connect(self._on_went_offline)
+        self._conn_monitor.reconnected.connect(self._on_reconnected)
+        self._conn_monitor.start()
 
-    def _on_conn_result(self, result):
-        ok, quality, ms = result
-        if not ok:
+    def _on_conn_status(self, is_online: bool, latency_ms: float):
+        if not is_online:
             self.conn_label.setText("⬤  Offline")
             self.conn_label.setStyleSheet("color:#f87171;")
-        elif quality == "poor":
-            self.conn_label.setText(f"⬤  Slow  ({ms:.0f}ms)")
+        elif latency_ms > 600:
+            self.conn_label.setText(f"⬤  Slow  ({latency_ms:.0f}ms)")
             self.conn_label.setStyleSheet("color:#fbbf24;")
         else:
-            self.conn_label.setText(f"⬤  Online  ({ms:.0f}ms)")
+            self.conn_label.setText(f"⬤  Online  ({latency_ms:.0f}ms)")
             self.conn_label.setStyleSheet("color:#34d399;")
+
+    def _on_went_offline(self):
+        """Show offline banner inside app."""
+        if not hasattr(self, "_offline_banner"):
+            from ui.offline_banner import OfflineBanner
+            self._offline_banner = OfflineBanner(self.central_content)
+            self.central_content.layout().insertWidget(0, self._offline_banner)
+        self._offline_banner.show()
+
+    def _on_reconnected(self):
+        """Hide offline banner and refresh airing data."""
+        if hasattr(self, "_offline_banner"):
+            self._offline_banner.hide()
+        # Refresh data that may have gone stale while offline
+        QTimer.singleShot(500, self._refresh_airing)
 
     # ── Resize ─────────────────────────────────────────────────────────────────
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(60, self._load_library)
+
+# ── Skeleton card widget ───────────────────────────────────────────────────────
+
+class _SkeletonCard(QFrame):
+    """
+    Animated shimmer placeholder shown while library data loads.
+    Pure CSS animation — no timers needed.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.CARD_HEIGHT)
+        self.setObjectName("skeletonCard")
+        self.setStyleSheet("""
+            QFrame#skeletonCard {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #111420, stop:0.5 #1a1d2e, stop:1 #111420
+                );
+                border: 1px solid #1a1d28;
+                border-radius: 10px;
+            }
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # Cover placeholder
+        cover = QFrame()
+        cover.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.COVER_HEIGHT)
+        cover.setStyleSheet(
+            "background:#131620;border-radius:10px 10px 0 0;border:none;"
+        )
+        lay.addWidget(cover)
+
+        # Text line placeholders
+        info = QWidget()
+        info.setFixedSize(AnimeCard.CARD_WIDTH,
+                          AnimeCard.CARD_HEIGHT - AnimeCard.COVER_HEIGHT)
+        info.setStyleSheet("background:#111420;border-radius:0 0 10px 10px;")
+        il = QVBoxLayout(info)
+        il.setContentsMargins(10, 10, 10, 10)
+        il.setSpacing(6)
+
+        for w_frac, h in [(0.85, 10), (0.55, 8), (0.70, 6)]:
+            line = QFrame()
+            line.setFixedSize(
+                int(AnimeCard.CARD_WIDTH * w_frac), h
+            )
+            line.setStyleSheet(
+                "background:#1e2130;border-radius:4px;border:none;"
+            )
+            il.addWidget(line)
+
+        il.addStretch()
+        lay.addWidget(info)
+
+        # Shimmer animation via QPropertyAnimation on opacity would require
+        # QGraphicsOpacityEffect; instead use a simple QTimer pulse
+        self._phase = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._pulse)
+        self._timer.start(600)
+
+    def _pulse(self):
+        self._phase = 1 - self._phase
+        bg = "#1a1d2e" if self._phase else "#111420"
+        self.setStyleSheet(f"""
+            QFrame#skeletonCard {{
+                background:{bg};
+                border:1px solid #1a1d28;
+                border-radius:10px;
+            }}
+        """)
