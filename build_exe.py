@@ -23,7 +23,7 @@ DIST    = ROOT / "dist"
 BUILD   = ROOT / "build"
 ICON_W  = ROOT / "resources" / "icon.ico"
 ICON_M  = ROOT / "resources" / "icon_256.png"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 def ensure_pyinstaller():
