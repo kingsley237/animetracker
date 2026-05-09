@@ -52,3 +52,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Seasonal chart browser
 - Dropped anime list with undo
 - JSON flat file storage (`anime_info.json`)
+
+---
+
+## Future updates
+
+- Check release descriptions on changes/new implementations/fixes etc
