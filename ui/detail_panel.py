@@ -543,40 +543,73 @@ class DetailPanel(QWidget):
     # ── Actions ────────────────────────────────────────────────────────────────
 
     def _cycle_status(self):
-        if not self._anime: return
+        """
+        Status state machine — enforces business rules based on AniList status.
+
+        Rules:
+          NOT_YET_RELEASED → planned only (locked)
+          RELEASING        → watching ↔ planned only (cannot complete a running show)
+          FINISHED         → watching ↔ completed ↔ planned (all allowed)
+          Unknown/empty    → watching ↔ planned (conservative)
+
+        Special case: if user has watched >= 1 episode and tries to move
+        to planned, we warn them but allow it (they may be re-watching or
+        pausing). This is the correct UX — never block, just inform.
+        """
+        if not self._anime:
+            return
+
         api_s = (self._anime.get("status") or "").upper()
         cur   = self._anime.get("watch_status", "watching")
+        aid   = self._anime["id"]
 
-        # ── Business rules ──────────────────────────────────────────────
-        # NOT_YET_RELEASED → can only be planned; block watching/completed
+        # ── NOT_YET_RELEASED — hard lock to planned ──────────────────────
         if api_s == "NOT_YET_RELEASED":
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self, "Not Released Yet",
-                "This anime has not aired yet. You can only set it as Plan to Watch.\n"
-                "It will move to Watching automatically once it begins airing."
-            )
-            return
-        # RELEASING → cannot be marked completed
-        if api_s == "RELEASING" and cur == "watching":
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Still Airing",
-                "This anime is still airing. You cannot mark it Completed yet.\n"
-                "It will be available once the final episode has aired."
+                "This anime has not aired yet.\n"
+                "It can only be set as Plan to Watch until it begins airing."
             )
             return
 
-        order = ["watching", "planned"]
-        # Finished anime can be completed
-        if api_s in ("FINISHED", "CANCELLED", ""):
+        # ── Determine allowed transitions ────────────────────────────────
+        if api_s == "RELEASING":
+            # Airing: watching ↔ planned. Cannot mark completed.
+            if cur == "watching":
+                # Warn if trying to step away while episodes remain
+                watched = self.db.get_watched_count(aid)
+                if watched > 0:
+                    from PyQt6.QtWidgets import QMessageBox
+                    res = QMessageBox.question(
+                        self, "Move to Plan to Watch?",
+                        f"You have already watched {watched} episode(s).\n"
+                        "Move this to Plan to Watch anyway?\n\n"
+                        "(You can move it back to Watching at any time.)",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    )
+                    if res != QMessageBox.StandardButton.Yes:
+                        return
+                new = "planned"
+            elif cur == "planned":
+                new = "watching"
+            else:
+                new = "watching"
+
+        elif api_s in ("FINISHED", "CANCELLED"):
+            # Finished: full cycle watching → completed → planned → watching
             order = ["watching", "completed", "planned"]
+            idx   = order.index(cur) if cur in order else 0
+            new   = order[(idx + 1) % len(order)]
 
-        new = order[(order.index(cur) + 1) % len(order)] if cur in order else order[0]
-        self.db.update_anime(self._anime["id"], {"watch_status": new})
+        else:
+            # Unknown status: watching ↔ planned only (conservative)
+            new = "planned" if cur == "watching" else "watching"
+
+        self.db.update_anime(aid, {"watch_status": new})
         self._anime["watch_status"] = new
         self.status_btn.setText(WATCH_STATUS_LABELS.get(new, new.title()))
-        self.episode_changed.emit(self._anime["id"])
+        self.episode_changed.emit(aid)
         self.stats_changed.emit()
 
     def _drop(self):
@@ -814,9 +847,42 @@ class _RatingWidget(QWidget):
         real = float(val)
         self.db.set_rating(self._aid, 0, real, RATING_LABELS.get(val, ""))
         self._cur = real
-        self.avg_lbl.setText(f"{real:.1f} / 6  —  {RATING_LABELS.get(val,'')}")
+        label = RATING_LABELS.get(val, "")
+        self.avg_lbl.setText(f"{real:.1f} / 6  —  {label}")
         self._render(real)
         self.rated.emit(self._aid)
+        # Offer AniList sync if user is logged in
+        self._maybe_sync_to_anilist(val)
+
+    def _maybe_sync_to_anilist(self, our_score: int):
+        """If logged into AniList, offer to sync the rating."""
+        from core.anilist_auth import AniListAuth, SCORE_MAP
+        auth = AniListAuth()
+        if not auth.is_logged_in():
+            return
+        # Get anilist_id for this anime
+        anime = self.db.get_anime_by_id(self._aid)
+        if not anime or not anime.get("anilist_id"):
+            return
+        anilist_score = SCORE_MAP.get(our_score, our_score * 16)
+        from PyQt6.QtWidgets import QMessageBox
+        res = QMessageBox.question(
+            self, "Sync to AniList?",
+            f"Submit your rating ({RATING_LABELS.get(our_score, '')}) "
+            f"to AniList as {anilist_score}/100?\n\n"
+            "This contributes to the community score on AniList.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if res == QMessageBox.StandardButton.Yes:
+            auth.score_synced.connect(
+                lambda _: self.avg_lbl.setText(
+                    self.avg_lbl.text() + "  ✓ Synced to AniList"
+                )
+            )
+            auth.score_failed.connect(
+                lambda e: QMessageBox.warning(self, "Sync Failed", e)
+            )
+            auth.submit_score(anime["anilist_id"], our_score)
 
     def _render(self, score: float):
         for i, b in enumerate(self._stars):

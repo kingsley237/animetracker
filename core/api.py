@@ -64,6 +64,9 @@ MEDIA_FIELDS = """
     source
     hashtag
     siteUrl
+    characters(sort: ROLE, perPage: 10) {
+        nodes { name { first last } image { medium } }
+    }
 """
 
 MEDIA_FIELDS_SLIM = """

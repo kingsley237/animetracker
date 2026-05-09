@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QFrame, QPushButton, QGridLayout, QComboBox, QProgressBar,
-    QMessageBox, QSizePolicy, QDialog, QTextEdit, QSpacerItem,
+    QMessageBox, QSizePolicy, QDialog, QTextEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor, QCursor, QPainter, QPainterPath
@@ -398,15 +398,16 @@ class DiscoverPage(QWidget):
     # ── Info dialog ───────────────────────────────────────────────────────────
 
     def _show_info(self, media: Dict):
-        # Fetch full data for complete synopsis/studios
+        """Fetch full data then show rich info dialog with banner + cover."""
         anilist_id = media.get("id")
         if anilist_id:
             def fetch():
                 return get_anime_by_id(anilist_id)
+            def show(full):
+                dlg = _InfoDialog(full or media, self)
+                dlg.exec()
             w = Worker(fetch)
-            w.signals.result.connect(
-                lambda full: _InfoDialog(full or media, self).exec()
-            )
+            w.signals.result.connect(show)
             run_worker(w)
         else:
             _InfoDialog(media, self).exec()
@@ -663,8 +664,8 @@ class _InfoDialog(QDialog):
 
     def _build(self, media: Dict):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(10)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
 
         t     = media.get("title") or {}
         sc    = media.get("averageScore")
@@ -676,27 +677,82 @@ class _InfoDialog(QDialog):
         pop   = media.get("popularity", 0)
         studios = [s["name"] for s in
                    (media.get("studios", {}).get("nodes") or [])] if media.get("studios") else []
+        banner_url = media.get("bannerImage") or ""
+        cover_url  = (media.get("coverImage") or {}).get("large") or                      (media.get("coverImage") or {}).get("medium") or ""
 
-        # ── Title block ──────────────────────────────────────────────────
-        romaji = t.get("romaji", "")
+        # ── Banner image ─────────────────────────────────────────────────
+        self.banner_lbl = QLabel()
+        self.banner_lbl.setFixedHeight(160)
+        self.banner_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.banner_lbl.setStyleSheet("background:#1a1d28;")
+        lay.addWidget(self.banner_lbl)
+
+        if banner_url:
+            from workers.workers import ImageWorker, run_worker
+            iw = ImageWorker(banner_url, 0, "banner")
+            iw.signals.result.connect(self._set_banner)
+            run_worker(iw)
+        elif cover_url:
+            from workers.workers import ImageWorker, run_worker
+            iw = ImageWorker(cover_url, 0, "cover_fallback")
+            iw.signals.result.connect(self._set_banner)
+            run_worker(iw)
+
+        # ── Body ─────────────────────────────────────────────────────────
+        body = QWidget()
+        body.setStyleSheet("background:transparent;")
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(24, 16, 24, 20)
+        body_lay.setSpacing(10)
+        lay.addWidget(body)
+
+        # Cover + title row
+        header_row = QHBoxLayout()
+        header_row.setSpacing(16)
+
+        # Small cover thumbnail
+        self.cover_lbl = QLabel()
+        self.cover_lbl.setFixedSize(72, 102)
+        self.cover_lbl.setStyleSheet(
+            "background:#1a1d28;border-radius:6px;"
+            "border:2px solid #0a0c10;margin-top:-40px;"
+        )
+        self.cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if cover_url:
+            from workers.workers import ImageWorker, run_worker
+            iw2 = ImageWorker(cover_url, 0, "cover_thumb")
+            iw2.signals.result.connect(self._set_cover)
+            run_worker(iw2)
+        header_row.addWidget(self.cover_lbl, 0, Qt.AlignmentFlag.AlignBottom)
+
+        # Title block
+        title_col = QVBoxLayout()
+        title_col.setSpacing(3)
+        romaji  = t.get("romaji", "")
         english = t.get("english", "")
         title_lbl = QLabel(romaji)
         title_lbl.setStyleSheet(
-            "font-size:18px;font-weight:700;color:#f0f1f5;letter-spacing:-0.2px;"
+            "font-size:17px;font-weight:700;color:#f0f1f5;letter-spacing:-0.2px;"
+            "background:transparent;"
         )
         title_lbl.setWordWrap(True)
-        lay.addWidget(title_lbl)
-
+        title_col.addWidget(title_lbl)
         if english and english != romaji:
             eng_lbl = QLabel(english)
-            eng_lbl.setStyleSheet("font-size:12px;color:#4a5070;")
+            eng_lbl.setStyleSheet("font-size:12px;color:#4a5070;background:transparent;")
             eng_lbl.setWordWrap(True)
-            lay.addWidget(eng_lbl)
-
+            title_col.addWidget(eng_lbl)
         if studios:
             studio_lbl = QLabel(", ".join(studios))
-            studio_lbl.setStyleSheet("font-size:12px;color:#4a5070;")
-            lay.addWidget(studio_lbl)
+            studio_lbl.setStyleSheet("font-size:11px;color:#4a5070;background:transparent;")
+            title_col.addWidget(studio_lbl)
+        header_row.addLayout(title_col)
+        body_lay.addLayout(header_row)
+
+        lay = body_lay   # continue adding to body_lay
+
+        if studios:
+            pass  # already added above
 
         # ── Score + meta row ─────────────────────────────────────────────
         score_row = QHBoxLayout()
@@ -784,8 +840,109 @@ class _InfoDialog(QDialog):
             lay.addWidget(rel_frame)
 
         # ── Close ────────────────────────────────────────────────────────
+        # ── Characters strip (anime-specific art) ───────────────────────
+        chars = (media.get("characters") or {}).get("nodes") or []
+        if chars:
+            char_header = QLabel("CHARACTERS")
+            char_header.setStyleSheet(
+                "font-size:10px;color:#3b4260;font-weight:700;"
+                "letter-spacing:1.5px;background:transparent;"
+            )
+            lay.addWidget(char_header)
+
+            char_scroll = QScrollArea()
+            char_scroll.setFixedHeight(110)
+            char_scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            char_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            char_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            char_scroll.setStyleSheet("background:transparent;border:none;")
+
+            char_w = QWidget()
+            char_w.setStyleSheet("background:transparent;")
+            char_lay = QHBoxLayout(char_w)
+            char_lay.setContentsMargins(0, 0, 0, 0)
+            char_lay.setSpacing(10)
+
+            self._char_labels = []
+            for ch in chars[:10]:
+                col = QVBoxLayout()
+                col.setSpacing(3)
+                col.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+                img_lbl = QLabel()
+                img_lbl.setFixedSize(56, 76)
+                img_lbl.setStyleSheet(
+                    "background:#1a1d28;border-radius:6px;"
+                )
+                img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                ch_img = (ch.get("image") or {}).get("medium") or ""
+                if ch_img:
+                    from workers.workers import ImageWorker, run_worker as rw
+                    iw = ImageWorker(ch_img, id(img_lbl), "char")
+                    iw.signals.result.connect(
+                        lambda r, l=img_lbl: self._set_char_img(l, r)
+                    )
+                    rw(iw)
+
+                name = (ch.get("name") or {}).get("first") or ""
+                name_lbl = QLabel(name[:10])
+                name_lbl.setStyleSheet(
+                    "font-size:9px;color:#6b7280;background:transparent;"
+                )
+                name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                name_lbl.setWordWrap(False)
+
+                col.addWidget(img_lbl)
+                col.addWidget(name_lbl)
+
+                cw2 = QWidget()
+                cw2.setStyleSheet("background:transparent;")
+                cw2.setLayout(col)
+                char_lay.addWidget(cw2)
+                self._char_labels.append(img_lbl)
+
+            char_lay.addStretch()
+            char_scroll.setWidget(char_w)
+            lay.addWidget(char_scroll)
+
         close = QPushButton("Close")
         close.setObjectName("secondaryBtn")
         close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         close.clicked.connect(self.accept)
         lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+    def _set_char_img(self, label, result):
+        if not result or not result[2]: return
+        px = QPixmap(result[2])
+        if px.isNull(): return
+        sc = px.scaled(56, 76,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation)
+        x = (sc.width()  - 56) // 2
+        y = (sc.height() - 76) // 2
+        label.setPixmap(sc.copy(x, y, 56, 76))
+
+    def _set_banner(self, result):
+        if not result or not result[2]: return
+        px = QPixmap(result[2])
+        if px.isNull(): return
+        w = self.banner_lbl.width() or 520
+        sc = px.scaled(w, 160,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation)
+        x = (sc.width() - w) // 2
+        self.banner_lbl.setPixmap(sc.copy(x, 0, w, 160))
+
+    def _set_cover(self, result):
+        if not result or not result[2]: return
+        px = QPixmap(result[2])
+        if px.isNull(): return
+        sc = px.scaled(72, 102,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation)
+        x = (sc.width()  - 72)  // 2
+        y = (sc.height() - 102) // 2
+        self.cover_lbl.setPixmap(sc.copy(x, y, 72, 102))

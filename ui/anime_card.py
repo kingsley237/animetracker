@@ -237,22 +237,55 @@ class AnimeCard(QFrame):
 
         has_unwatched_aired = aired > 0 and watched < aired
 
-        # Episode label — always clear about what watched/aired means
+        # Episode label — adapts to status so info always makes sense
         if ws == "completed":
+            # Completed: show full watch record
             self.ep_label.setText(f"Watched {watched}/{total or '?'} eps")
-        elif aired and total:
-            self.ep_label.setText(f"Watched {watched}/{aired} aired")
-        elif aired:
-            self.ep_label.setText(f"Watched {watched}/{aired} aired")
-        elif total:
-            self.ep_label.setText(f"0/{total} eps")
+            self.ep_label.setToolTip("You have finished this anime.")
+
+        elif ws == "watching":
+            # Watching: show progress against aired episodes
+            if aired and total:
+                self.ep_label.setText(f"Watched {watched}/{aired} aired")
+            elif aired:
+                self.ep_label.setText(f"Watched {watched}/{aired} aired")
+            elif total:
+                self.ep_label.setText(f"Watched {watched}/{total} eps")
+            else:
+                self.ep_label.setText(f"Watched {watched} eps")
+            self.ep_label.setToolTip(
+                f"You have watched {watched} episode(s). "
+                + (f"{aired} have aired so far." if aired else "")
+            )
+
+        elif ws == "planned":
+            # Planned: do NOT show watched/aired — irrelevant, potentially confusing.
+            # Show release info instead.
+            if api_status == "NOT_YET_RELEASED":
+                season_yr = anime.get("season_year") or ""
+                season_nm = (anime.get("season") or "").title()
+                if season_nm and season_yr:
+                    self.ep_label.setText(f"{season_nm} {season_yr}")
+                elif season_yr:
+                    self.ep_label.setText(f"Premieres {season_yr}")
+                else:
+                    self.ep_label.setText("Release date TBA")
+            elif total:
+                self.ep_label.setText(f"{total} episodes")
+            else:
+                self.ep_label.setText("Plan to Watch")
+            self.ep_label.setToolTip("This anime is in your Plan to Watch list.")
+
+        elif ws == "dropped":
+            # Dropped: show how far they got
+            self.ep_label.setText(
+                f"Dropped at ep {watched}" if watched > 0 else "Dropped"
+            )
+            self.ep_label.setToolTip("You dropped this anime.")
+
         else:
             self.ep_label.setText(f"Watched {watched} eps")
-
-        self.ep_label.setToolTip(
-            f"You have watched {watched} episode(s). "
-            + (f"{aired} have aired so far." if aired else "")
-        )
+            self.ep_label.setToolTip("")
 
         # ── Status badge — fully self-explanatory words only ──────────────────
         # Research: Carbon DS + Mobbin = never use abbreviations in status chips.
