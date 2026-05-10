@@ -1076,7 +1076,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(60, self._load_library)
-        if self.update_banner.isVisible():
+        if hasattr(self, "update_banner") and self.update_banner.isVisible():
             self.update_banner._reposition()
 
 # ── Skeleton card widget ───────────────────────────────────────────────────────
