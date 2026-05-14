@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         self._refresh_timer   = QTimer(self)
         self._search_timer    = QTimer(self)
 
-        self.setWindowTitle("AnimeTracker")
+        self.setWindowTitle("Miroku")
         self.setMinimumSize(1100, 700)
         self.showMaximized()   # Always open fullscreen
 
@@ -174,30 +174,47 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # Logo
+        # Brand
         logo_w = QWidget()
         ll = QVBoxLayout(logo_w)
-        ll.setContentsMargins(20, 22, 20, 10)
-        ll.setSpacing(2)
+        ll.setContentsMargins(12, 22, 12, 14)
+        ll.setSpacing(6)
+        ll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # Try to show app icon inline
-        icon_path = Path(__file__).parent.parent / "resources" / "icon_64.png"
+        resources = Path(__file__).parent.parent / "resources"
+        lettermark_path = resources / "logo_lettermark_64.png"
+        icon_path = lettermark_path if lettermark_path.exists() else resources / "icon_64.png"
         if icon_path.exists():
             icon_lbl = QLabel()
             px = QPixmap(str(icon_path)).scaled(
-                36, 36, Qt.AspectRatioMode.KeepAspectRatio,
+                44, 44, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             icon_lbl.setPixmap(px)
-            icon_lbl.setFixedSize(36, 36)
-            ll.addWidget(icon_lbl)
+            icon_lbl.setFixedSize(52, 46)
+            icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        logo = QLabel("ANIME")
-        logo.setObjectName("appLogo")
-        ll.addWidget(logo)
-        sub = QLabel("T R A C K E R")
+        wordmark_path = resources / "logo_wordmark_dark.png"
+        if wordmark_path.exists():
+            logo = QLabel()
+            px = QPixmap(str(wordmark_path)).scaledToWidth(
+                150, Qt.TransformationMode.SmoothTransformation
+            )
+            logo.setPixmap(px)
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            logo.setFixedHeight(max(28, px.height()))
+        else:
+            logo = QLabel("MIROKU")
+            logo.setObjectName("appLogo")
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ll.addWidget(logo, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        sub = QLabel("ANIME TRACKER")
         sub.setObjectName("appLogoSub")
-        ll.addWidget(sub)
+        sub.setWordWrap(False)
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ll.addWidget(sub, alignment=Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(logo_w)
 
         sep = QFrame()
@@ -362,7 +379,7 @@ class MainWindow(QMainWindow):
         ]:
             card = QFrame()
             card.setObjectName("statCard")
-            card.setFixedHeight(66)
+            card.setFixedHeight(80)
             card.setMinimumWidth(110)
             cl = QVBoxLayout(card)
             cl.setContentsMargins(14, 10, 14, 10)
@@ -891,6 +908,13 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self._load_library()
             self._update_stats_strip()
+            if getattr(dlg, "added_title", ""):
+                from ui.toast import Toast
+                Toast.show(
+                    self,
+                    f"'{dlg.added_title}' added as {dlg.added_status}.",
+                    kind="success",
+                )
 
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
@@ -1054,21 +1078,16 @@ class MainWindow(QMainWindow):
             self.conn_label.setStyleSheet("color:#34d399;")
 
     def _on_went_offline(self):
-        """Show offline banner pinned to top of content area."""
+        """Show floating offline banner."""
         if not hasattr(self, "_offline_banner"):
             from ui.offline_banner import OfflineBanner
             self._offline_banner = OfflineBanner(self.centralWidget())
-            self._offline_banner.setFixedWidth(self.central_content.width())
-            # Position below sidebar, at very top of content area
-            sidebar_w = 204
-            self._offline_banner.move(sidebar_w, 0)
-        self._offline_banner.show()
-        self._offline_banner.raise_()
+        self._offline_banner.show_offline()
 
     def _on_reconnected(self):
         """Hide offline banner and refresh airing data."""
         if hasattr(self, "_offline_banner"):
-            self._offline_banner.hide()
+            self._offline_banner.hide_offline()
         QTimer.singleShot(500, self._refresh_airing)
 
     # ── Resize ─────────────────────────────────────────────────────────────────
@@ -1078,7 +1097,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(60, self._load_library)
         if hasattr(self, "update_banner") and self.update_banner.isVisible():
             self.update_banner._reposition()
-
+        if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
+            self._offline_banner.reposition()
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 
 class _SkeletonCard(QFrame):

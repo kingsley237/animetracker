@@ -277,13 +277,11 @@ class AnimeStreamPage(QWidget):
                                 "Please enter a valid phone number.")
             return
         self.settings.setValue("animestream_phone", phone)
-        QMessageBox.information(
-            self, "You're on the list!",
-            f"{phone} has been saved.\n\n"
-            "We will notify you the day AnimeStream launches."
-        )
+        from ui.toast import Toast
+        Toast.show(self.window(), f"{phone} has been saved.\n\n" "We will notify you the day AnimeStream launches.", kind="success")
+        
 
     def _reset_notify(self, lay):
         self.settings.remove("animestream_phone")
-        QMessageBox.information(self, "Cleared",
-                                "Your number has been removed.")
+        from ui.toast import Toast
+        Toast.show(self.window(), "Your number has been removed.", kind="info")

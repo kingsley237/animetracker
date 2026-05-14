@@ -1,5 +1,5 @@
 """
-AnimeTracker — Settings Dialog
+Miroku — Settings Dialog
 General preferences, AniList login, data migration, backup, about.
 """
 from pathlib import Path
@@ -22,7 +22,7 @@ class SettingsDialog(QDialog):
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
         self.db       = db
-        self.settings = QSettings("AnimeTracker", "AnimeTracker")
+        self.settings = QSettings("Miroku", "Miroku")
         self._json_path: Optional[str] = None
 
         self.setWindowTitle("Settings")
@@ -276,7 +276,9 @@ class SettingsDialog(QDialog):
         lay.setSpacing(10)
 
         # Logo
-        icon_path = Path(__file__).parent.parent / "resources" / "icon_256.png"
+        resources = Path(__file__).parent.parent / "resources"
+        logo_path = resources / "logo_lettermark_256.png"
+        icon_path = logo_path if logo_path.exists() else resources / "icon_256.png"
         if icon_path.exists():
             ir = QHBoxLayout()
             px_lbl = QLabel()
@@ -289,7 +291,7 @@ class SettingsDialog(QDialog):
             ir.addStretch()
             lay.addLayout(ir)
 
-        name_lbl = QLabel("AnimeTracker")
+        name_lbl = QLabel("Miroku")
         name_lbl.setStyleSheet(
             "font-size:24px;font-weight:700;color:#7c6af7;letter-spacing:1px;"
         )
@@ -369,11 +371,8 @@ class SettingsDialog(QDialog):
 
     def _on_import_done(self, count: int):
         self.import_btn.setEnabled(True)
-        QMessageBox.information(
-            self, "Migration Complete",
-            f"Successfully imported {count} anime.\n\n"
-            "Go to the Library and click Refresh to fetch cover art and episode data."
-        )
+        from ui.toast import Toast
+        Toast.show(self.window(), f"Imported {count} anime.", kind="success")
 
     def _on_import_error(self, error: str):
         self.import_btn.setEnabled(True)
@@ -382,7 +381,8 @@ class SettingsDialog(QDialog):
     def _backup(self):
         try:
             dest = self.db.backup()
-            QMessageBox.information(self, "Backup Created", f"Saved to:\n{dest}")
+            from ui.toast import Toast
+            Toast.show(self.window(), f"Backup created: {dest.name}", kind="success")
         except Exception as e:
             QMessageBox.critical(self, "Backup Failed", str(e))
 
@@ -394,3 +394,5 @@ class SettingsDialog(QDialog):
         ) == QMessageBox.StandardButton.Yes:
             purge_cache(max_size_mb=0)
             self.cache_lbl.setText("Cache size: 0.0 MB")
+            from ui.toast import Toast
+            Toast.show(self.window(), "Image cache cleared.", kind="success")
