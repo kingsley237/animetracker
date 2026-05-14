@@ -500,12 +500,19 @@ class DetailPanel(QWidget):
         watched_data = {e["episode_num"]: e for e in self.db.get_episodes(aid)}
         ratings_data = {r["episode_num"]: r for r in self.db.get_ratings(aid)}
 
+        # Lock ALL episodes if anime hasn't aired yet
+        api_status = (anime.get("status") or "").upper()
+        is_unreleased = (api_status == "NOT_YET_RELEASED" or
+                         anime.get("watch_status") == "planned" and not aired_count)
+
         show_count = min(aired_count, 60)
         for ep_n in range(1, show_count + 1):
             ep_data = watched_data.get(ep_n, {})
             ep_rating = ratings_data.get(ep_n)
             row = _EpRow(aid, ep_n, ep_n + offset, ep_data, ep_rating, self.db)
             row.changed.connect(self._on_ep_changed)
+            if is_unreleased:
+                row.set_locked(True)
             self.ep_vbox.addWidget(row)
             self._ep_rows[ep_n] = row
 
@@ -611,13 +618,27 @@ class DetailPanel(QWidget):
         self.status_btn.setText(WATCH_STATUS_LABELS.get(new, new.title()))
         self.episode_changed.emit(aid)
         self.stats_changed.emit()
+        from ui.toast import Toast
+        Toast.show(
+            self.window(),
+            f"'{self._anime.get('romaji_title','Anime')}' moved to {new.replace('_', ' ').title()}.",
+            kind="success",
+        )
 
     def _drop(self):
         if not self._anime: return
-        # Already dropped — no double-drop
+        # Already dropped
         if self._anime.get("watch_status") == "dropped" or self._anime.get("_dropped_id"):
             QMessageBox.information(self, "Already Dropped",
                 "This anime is already in your Dropped list.")
+            return
+        # Cannot drop unreleased anime
+        api_s = (self._anime.get("status") or "").upper()
+        if api_s == "NOT_YET_RELEASED":
+            QMessageBox.information(
+                self, "Not Released Yet",
+                "You cannot drop an anime that has not aired yet. Use Delete instead.",
+            )
             return
         if QMessageBox.question(
             self, "Drop Anime",
@@ -625,9 +646,12 @@ class DetailPanel(QWidget):
             "You can restore it later.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) == QMessageBox.StandardButton.Yes:
+            name = self._anime.get("romaji_title", "Anime")
             self.db.delete_anime(self._anime["id"], drop=True)
             self.anime_dropped.emit(self._anime["id"])
             self.stats_changed.emit()
+            from ui.toast import Toast
+            Toast.show(self.window(), f"'{name}' moved to Dropped.", kind="success")
 
     def _delete(self):
         if not self._anime: return
@@ -647,9 +671,17 @@ class DetailPanel(QWidget):
             self.db.delete_anime(self._anime["id"])
             self.anime_deleted.emit(self._anime["id"])
         self.stats_changed.emit()
+        from ui.toast import Toast
+        Toast.show(self.window(), f"'{name}' deleted.", kind="success")
 
     def _mark_all(self):
         if not self._anime: return
+        api_s = (self._anime.get("status") or "").upper()
+        if api_s == "NOT_YET_RELEASED":
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Not Released",
+                "Cannot mark episodes watched — this anime has not aired yet.")
+            return
         next_ep = self._anime.get("next_episode_num") or 0
         total   = self._anime.get("total_episodes") or 0
         count   = next_ep - 1 if next_ep > 1 else total
@@ -658,6 +690,12 @@ class DetailPanel(QWidget):
             self.db.set_episode_watched(self._anime["id"], ep, True)
         self._build_episodes(self._anime)
         self.episode_changed.emit(self._anime["id"])
+        from ui.toast import Toast
+        Toast.show(
+            self.window(),
+            f"Marked {count} episode{'s' if count != 1 else ''} watched.",
+            kind="success",
+        )
 
 
 # ── Episode Row ────────────────────────────────────────────────────────────────
@@ -723,6 +761,18 @@ class _EpRow(QFrame):
             self._toggle_watch()
         super().mousePressEvent(event)
 
+    def set_locked(self, locked: bool):
+        """Lock this row — prevents toggling for unreleased anime."""
+        self._locked = locked
+        if locked:
+            self.setCursor(Qt.CursorShape.ForbiddenCursor)
+            self.setStyleSheet(
+                "QFrame#episodeRow{background:#0d0f14;"
+                "border-color:#141720;opacity:0.5;}"
+            )
+        else:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+
     def _refresh(self):
         # Row style
         if self._watched:
@@ -758,19 +808,38 @@ class _EpRow(QFrame):
     def _rate(self, val: int):
         if not self._watched:
             return
+        # Toggle off: clicking same star removes rating
+        if val == int(self._rating):
+            self._rating = 0.0
+            self.db.set_rating(self.anime_id, self.ep_num, 0.0, "")
+            self._render_stars(0.0)
+            self.changed.emit(self.anime_id)
+            from ui.toast import Toast
+            Toast.show(self.window(), f"Episode {self.ep_num} rating removed.", kind="info")
+            return
         self._rating = float(val)
         self.db.set_rating(self.anime_id, self.ep_num, self._rating,
                            RATING_LABELS.get(val, ""))
         self._render_stars(self._rating)
         self.changed.emit(self.anime_id)
+        from ui.toast import Toast
+        Toast.show(self.window(), f"Episode {self.ep_num} rated {val}/6.", kind="success")
 
     def _toggle_watch(self):
+        if getattr(self, "_locked", False):
+            return
         self._watched = not self._watched
         self.db.set_episode_watched(self.anime_id, self.ep_num, self._watched)
         if not self._watched:
             self._rating = 0.0
         self._refresh()
         self.changed.emit(self.anime_id)
+        from ui.toast import Toast
+        Toast.show(
+            self.window(),
+            f"Episode {self.ep_num} marked {'watched' if self._watched else 'unwatched'}.",
+            kind="success" if self._watched else "info",
+        )
 
 
 
@@ -844,14 +913,38 @@ class _RatingWidget(QWidget):
 
     def _rate(self, val: int):
         if not self._aid: return
-        real = float(val)
-        self.db.set_rating(self._aid, 0, real, RATING_LABELS.get(val, ""))
-        self._cur = real
+        # Block rating of anime that has not aired yet
+        anime = self.db.get_anime_by_id(self._aid)
+        if anime:
+            api_s = (anime.get("status") or "").upper()
+            ws    = anime.get("watch_status","")
+            if api_s == "NOT_YET_RELEASED" or ws == "planned":
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Cannot Rate Yet",
+                    "You can only rate anime you have started watching."
+                )
+                self._render(self._cur)
+                return
+        # Toggle off: clicking same star again removes rating
+        if val == int(self._cur):
+            self._cur = 0.0
+            self.db.set_rating(self._aid, 0, 0.0, "")
+            self.avg_lbl.setText("Not rated — click a star to rate")
+            self._render(0.0)
+            self.rated.emit(self._aid)
+            from ui.toast import Toast
+            Toast.show(self.window(), "Overall rating removed.", kind="info")
+            return
+        real  = float(val)
         label = RATING_LABELS.get(val, "")
+        self.db.set_rating(self._aid, 0, real, label)
+        self._cur = real
         self.avg_lbl.setText(f"{real:.1f} / 6  —  {label}")
         self._render(real)
         self.rated.emit(self._aid)
-        # Offer AniList sync if user is logged in
+        from ui.toast import Toast
+        Toast.show(self.window(), f"Overall rating saved: {val}/6.", kind="success")
         self._maybe_sync_to_anilist(val)
 
     def _maybe_sync_to_anilist(self, our_score: int):

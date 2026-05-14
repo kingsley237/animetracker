@@ -212,6 +212,13 @@ class HallOfFamePage(QWidget):
         dlg = _AddToHofDialog(self.db, self)
         if dlg.exec():
             self.load()
+            if getattr(dlg, "added_title", ""):
+                from ui.toast import Toast
+                Toast.show(
+                    self.window(),
+                    f"'{dlg.added_title}' added to Hall of Fame.",
+                    kind="success",
+                )
 
     def _remove(self, anime_id: int):
         name = next(
@@ -224,9 +231,13 @@ class HallOfFamePage(QWidget):
         ) == QMessageBox.StandardButton.Yes:
             _remove_from_hof(self.db, anime_id)
             self.load()
+            from ui.toast import Toast
+            Toast.show(self.window(), f"'{name}' removed from Hall of Fame.", kind="success")
 
     def _edit_note(self, anime_id: int, note: str):
         _update_hof_note(self.db, anime_id, note)
+        from ui.toast import Toast
+        Toast.show(self.window(), "Hall of Fame note saved.", kind="success")
 
     def _save_order(self):
         ids = [e["id"] for e in self._entries]
@@ -238,6 +249,8 @@ class HallOfFamePage(QWidget):
         self._entries[idx], self._entries[idx-1] = self._entries[idx-1], self._entries[idx]
         self._save_order()
         self.load()
+        from ui.toast import Toast
+        Toast.show(self.window(), "Hall of Fame ranking updated.", kind="success")
 
     def _move_down(self, anime_id: int):
         idx = next((i for i, e in enumerate(self._entries) if e["id"] == anime_id), -1)
@@ -245,6 +258,8 @@ class HallOfFamePage(QWidget):
         self._entries[idx], self._entries[idx+1] = self._entries[idx+1], self._entries[idx]
         self._save_order()
         self.load()
+        from ui.toast import Toast
+        Toast.show(self.window(), "Hall of Fame ranking updated.", kind="success")
 
 
 # ─── Row widget ───────────────────────────────────────────────────────────────
@@ -403,6 +418,7 @@ class _AddToHofDialog(QDialog):
         self.setStyleSheet("background:#0f1118;")
         self._selected_media: Optional[Dict] = None
         self._results: List[Dict] = []
+        self.added_title = ""
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._do_search)
@@ -636,11 +652,13 @@ class _AddToHofDialog(QDialog):
         # Case 1: from library — use existing anime id
         if m.get("_from_library"):
             lib_id = m["_lib_id"]
-            if _in_hof(self.db, lib_id):
-                QMessageBox.information(self, "Already Added",
-                    "This anime is already in your Hall of Fame.")
+            if _in_hof(self.db, lib_id):                
+                from ui.toast import Toast
+                Toast.show(self.window(), "This anime is already in your Hall of Fame.", kind="info")
                 return
             _add_to_hof(self.db, lib_id)
+            anime = self.db.get_anime_by_id(lib_id)
+            self.added_title = (anime or {}).get("romaji_title", "Anime")
             self.accept()
             return
 
@@ -651,10 +669,11 @@ class _AddToHofDialog(QDialog):
         if existing:
             # Already in library
             if _in_hof(self.db, existing["id"]):
-                QMessageBox.information(self, "Already Added",
-                    "This anime is already in your Hall of Fame.")
+                from ui.toast import Toast
+                Toast.show(self.window(), "This anime is already in your Hall of Fame.", kind="info")
                 return
             _add_to_hof(self.db, existing["id"])
+            self.added_title = existing.get("romaji_title", "Anime")
             self.accept()
             return
 
@@ -697,6 +716,7 @@ class _AddToHofDialog(QDialog):
                 "next_episode_num": nae.get("episode"),
             })
             _add_to_hof(self.db, new_id)
+            self.added_title = t.get("romaji", "Anime")
             self.accept()
 
         w = Worker(fetch)

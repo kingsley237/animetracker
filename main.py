@@ -11,9 +11,15 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
+# WebEngine MUST be imported before QApplication — Qt requirement
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+except ImportError:
+    pass  # PyQt6-WebEngine not installed — trailer player will fall back to browser
+
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt, QCoreApplication
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QCursor, QFont, QIcon
 
 from core.database import DatabaseManager
 
@@ -33,14 +39,33 @@ def main():
     app.setFont(font)
 
     try:
+        from core.updater import APP_VERSION
+    except Exception:
+        APP_VERSION = app.applicationVersion()
+
+    startup_screen = app.screenAt(QCursor.pos()) or app.primaryScreen()
+
+    from ui.splash import SplashScreen
+    splash = SplashScreen(APP_VERSION, startup_screen)
+    splash.show()
+    splash.set_status("Starting Miroku...")
+
+    try:
+        splash.set_status("Opening your library...")
         db = DatabaseManager()
     except Exception as e:
+        splash.close()
         QMessageBox.critical(None, "Database Error", f"Failed to initialize database:\n{e}")
         sys.exit(1)
 
+    splash.set_status("Building the interface...")
     from ui.main_window import MainWindow
     window = MainWindow(db)
+    if startup_screen:
+        window.setGeometry(startup_screen.availableGeometry())
+        window.showMaximized()
     window.show()
+    splash.finish(window)
 
     exit_code = app.exec()
     db.close()
