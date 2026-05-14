@@ -34,15 +34,15 @@ QLabel#appLogo {
     font-weight: 700;
     color: #7c6af7;
     letter-spacing: 1px;
-    padding: 22px 20px 8px;
+    padding: 0;
 }
 
 QLabel#appLogoSub {
-    font-size: 10px;
+    font-size: 9px;
     color: #4a5070;
-    letter-spacing: 2px;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    padding: 0 20px 20px;
+    padding: 0;
 }
 
 QPushButton#navBtn {
@@ -210,20 +210,28 @@ QScrollBar::handle:horizontal {
 }
 
 /* ── Anime card ──────────────────────────────────────────────────────────── */
+/* ── Base card ───────────────────────────────────────────────────────────── */
 QFrame#animeCard {
     background-color: #111420;
-    border: 1px solid #1a1d28;
+    border: 1.5px solid #1e2235;
     border-radius: 10px;
 }
 
+/* ── Hover — clearly brighter border + subtle bg lift ───────────────────── */
 QFrame#animeCard:hover {
-    border-color: #2e3354;
-    background-color: #131726;
+    border: 2px solid #3d4270;
+    background-color: #141828;
 }
 
+/* ── Selected/active — strong purple border, elevated bg ────────────────── */
 QFrame#animeCard[selected="true"] {
-    border-color: #4b3fa8;
-    background-color: #151929;
+    border: 2.5px solid #7c6af7;
+    background-color: #181c30;
+}
+
+QFrame#animeCard[selected="true"]:hover {
+    border: 2.5px solid #9d8fff;
+    background-color: #1c2038;
 }
 
 QLabel#cardCover {
@@ -763,10 +771,26 @@ QPushButton#filterPill {
     color: #9da5c0 !important;
 }
 
-/* ── Anime card: unwatched aired episodes — red left accent ─────────────── */
+/* ── Unwatched card — red border all sides, highly visible ──────────────── */
 QFrame#animeCard[hasUnwatched="true"] {
-    border-color: #7f1d1d;
-    border-left: 3px solid #f87171;
+    background-color: #160f0f;
+    border: 2px solid #7f1d1d;
+    border-left: 4px solid #f87171;
+    border-radius: 10px;
+}
+
+/* ── Unwatched + hover — brighter red so it's still visible ─────────────── */
+QFrame#animeCard[hasUnwatched="true"]:hover {
+    background-color: #1c1010;
+    border: 2px solid #ef4444;
+    border-left: 4px solid #ff6b6b;
+}
+
+/* ── Unwatched + selected — keep red visible even when active ───────────── */
+QFrame#animeCard[hasUnwatched="true"][selected="true"] {
+    background-color: #1a1020;
+    border: 2.5px solid #ef4444;
+    border-left: 4px solid #ff6b6b;
 }
 
 /* ── Progress bar: unwatched alert state ─────────────────────────────────── */

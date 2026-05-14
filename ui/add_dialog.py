@@ -46,6 +46,8 @@ class AddAnimeDialog(QDialog):
         self.db = db
         self._results: List[Dict] = []
         self._selected: Optional[Dict] = None
+        self.added_title = ""
+        self.added_status = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._do_search)
@@ -250,10 +252,8 @@ class AddAnimeDialog(QDialog):
 
         anilist_id = media.get("id")
         if anilist_id and self.db.get_anime_by_anilist_id(anilist_id):
-            QMessageBox.information(
-                self, "Already Added",
-                f"'{(media.get('title') or {}).get('romaji','')}' is already in your library."
-            )
+            from ui.toast import Toast
+            Toast.show(self.window(), f"'{(media.get('title') or {}).get('romaji','')}' is already in your library.", kind="info")
             return
 
         self.add_btn.setEnabled(False)
@@ -299,6 +299,8 @@ class AddAnimeDialog(QDialog):
             "next_episode_at":  nae.get("airingAt"),
             "next_episode_num": nae.get("episode"),
         })
+        self.added_title = t.get("romaji", "Unknown")
+        self.added_status = "Plan to Watch" if watch_status == "planned" else "Watching"
         self.accept()
 
 

@@ -40,7 +40,6 @@ logs/
 
 # ── IDEs ─────────────────────────────────────────────────────────────────────
 .idea/
-.vscode/
 *.sublime-project
 *.sublime-workspace
 
@@ -63,3 +62,6 @@ build/
 .env
 secrets.py
 config_local.py
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
