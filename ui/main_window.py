@@ -28,16 +28,22 @@ from ui.anime_card import AnimeCard
 from ui.update_banner import UpdateBanner
 
 
-NAV_ITEMS = [
-    ("Library",       "📚", "library"),
-    ("Watching",      "▶",  "watching"),
-    ("Completed",     "✓",  "completed"),
-    ("Planned",       "⏳", "planned"),
-    ("Dropped",       "✕",  "dropped"),
-    ("Hall of Fame",  "🏆", "hof"),
-    ("Discover",      "✦",  "discover"),
-    ("Statistics",    "◈",  "stats"),
-    ("AnimeStream",   "🎬", "stream"),
+NAV_SECTIONS = [
+    ("Library", [
+        ("Library", "LIB", "library"),
+        ("Watching", "NOW", "watching"),
+        ("Completed", "DONE", "completed"),
+        ("Planned", "PLAN", "planned"),
+        ("Dropped", "DROP", "dropped"),
+    ]),
+    ("Explore", [
+        ("Discover", "DISC", "discover"),
+        ("AnimeStream", "PLAY", "stream"),
+    ]),
+    ("Personal", [
+        ("Hall of Fame", "HOF", "hof"),
+        ("Statistics", "DATA", "stats"),
+    ]),
 ]
 
 # Pages that show the filter pill row (All / Watching / Completed / Planned)
@@ -169,16 +175,17 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(204)
+        sidebar.setFixedWidth(232)
         lay = QVBoxLayout(sidebar)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(14, 0, 14, 14)
         lay.setSpacing(0)
 
         # Brand
         logo_w = QWidget()
+        logo_w.setObjectName("sidebarBrand")
         ll = QVBoxLayout(logo_w)
-        ll.setContentsMargins(12, 22, 12, 14)
-        ll.setSpacing(6)
+        ll.setContentsMargins(0, 22, 0, 18)
+        ll.setSpacing(7)
         ll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         resources = Path(__file__).parent.parent / "resources"
@@ -187,11 +194,12 @@ class MainWindow(QMainWindow):
         if icon_path.exists():
             icon_lbl = QLabel()
             px = QPixmap(str(icon_path)).scaled(
-                44, 44, Qt.AspectRatioMode.KeepAspectRatio,
+                40, 40, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             icon_lbl.setPixmap(px)
-            icon_lbl.setFixedSize(52, 46)
+            icon_lbl.setObjectName("sidebarLogoMark")
+            icon_lbl.setFixedSize(48, 44)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -199,7 +207,7 @@ class MainWindow(QMainWindow):
         if wordmark_path.exists():
             logo = QLabel()
             px = QPixmap(str(wordmark_path)).scaledToWidth(
-                150, Qt.TransformationMode.SmoothTransformation
+                128, Qt.TransformationMode.SmoothTransformation
             )
             logo.setPixmap(px)
             logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -210,54 +218,41 @@ class MainWindow(QMainWindow):
             logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ll.addWidget(logo, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        sub = QLabel("ANIME TRACKER")
+        sub = QLabel("Anime progress tracker")
         sub.setObjectName("appLogoSub")
         sub.setWordWrap(False)
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ll.addWidget(sub, alignment=Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(logo_w)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color:#1a1d28;margin:0 16px;")
-        lay.addWidget(sep)
-        lay.addSpacing(8)
-
         self._nav_buttons: Dict[str, QPushButton] = {}
-        for label, icon, page_id in NAV_ITEMS:
-            btn = QPushButton(f"  {icon}  {label}")
-            btn.setObjectName("navBtn")
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.clicked.connect(lambda _, p=page_id: self._navigate(p))
-            self._nav_buttons[page_id] = btn
-            lay.addWidget(btn)
+        for section, items in NAV_SECTIONS:
+            header = QLabel(section.upper())
+            header.setObjectName("sidebarSectionLabel")
+            lay.addWidget(header)
+            lay.addSpacing(6)
 
-            # Divider after Dropped and before Discover
-            if page_id == "dropped":
-                lay.addSpacing(10)
-                sep2 = QFrame()
-                sep2.setFrameShape(QFrame.Shape.HLine)
-                sep2.setStyleSheet("color:#1a1d28;margin:0 16px;")
-                lay.addWidget(sep2)
-                lay.addSpacing(6)
-            if page_id == "stats":
-                lay.addSpacing(10)
-                sep3 = QFrame()
-                sep3.setFrameShape(QFrame.Shape.HLine)
-                sep3.setStyleSheet("color:#1a1d28;margin:0 16px;")
-                lay.addWidget(sep3)
-                lay.addSpacing(6)
+            for label, token, page_id in items:
+                btn = QPushButton(f"{token:<4}  {label}")
+                btn.setObjectName("navBtn")
+                btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                btn.clicked.connect(lambda _, p=page_id: self._navigate(p))
+                self._nav_buttons[page_id] = btn
+                lay.addWidget(btn)
+                lay.addSpacing(4)
+
+            lay.addSpacing(12)
 
         lay.addStretch()
 
-        add_btn = QPushButton("  +  Add Anime")
+        add_btn = QPushButton("+  Add Anime")
         add_btn.setObjectName("primaryBtn")
         add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        add_btn.setStyleSheet("margin:0 16px 6px;padding:10px;")
         add_btn.clicked.connect(self._open_add_dialog)
         lay.addWidget(add_btn)
+        lay.addSpacing(8)
 
-        cfg_btn = QPushButton("  ⚙  Settings")
+        cfg_btn = QPushButton("SET   Settings")
         cfg_btn.setObjectName("navBtn")
         cfg_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         cfg_btn.clicked.connect(self._open_settings)
