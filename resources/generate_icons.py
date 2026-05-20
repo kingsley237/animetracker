@@ -17,7 +17,7 @@ import struct
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, QRectF, QSize
+from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -27,6 +27,26 @@ SVG = HERE / "logo_lettermark.svg"
 FALLBACK_SVG = HERE / "miroku_icon.svg"
 SIZES = [16, 24, 32, 48, 64, 128, 256, 512]
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
+CONTENT_SCALE = 0.92
+
+
+def _visible_bounds(image: QImage, threshold: int = 10):
+    min_x = image.width()
+    min_y = image.height()
+    max_x = -1
+    max_y = -1
+
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixelColor(x, y).alpha() > threshold:
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+
+    if max_x < 0 or max_y < 0:
+        return None
+    return min_x, min_y, max_x - min_x + 1, max_y - min_y + 1
 
 
 def _render_svg_png(source: Path, size: int) -> bytes:
@@ -34,12 +54,40 @@ def _render_svg_png(source: Path, size: int) -> bytes:
     if not renderer.isValid():
         raise RuntimeError(f"Could not read SVG: {source}")
 
+    source_size = max(size * 4, 1024)
+    source_image = QImage(
+        QSize(source_size, source_size),
+        QImage.Format.Format_ARGB32
+    )
+    source_image.fill(QColor(0, 0, 0, 0))
+
+    painter = QPainter(source_image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter, QRectF(0, 0, source_size, source_size))
+    painter.end()
+
+    bounds = _visible_bounds(source_image)
+    if bounds:
+        source_image = source_image.copy(*bounds)
+
     image = QImage(QSize(size, size), QImage.Format.Format_ARGB32)
     image.fill(QColor(0, 0, 0, 0))
 
+    target_size = int(size * CONTENT_SCALE)
+    scaled = source_image.scaled(
+        target_size,
+        target_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
     painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.drawImage(
+        (size - scaled.width()) // 2,
+        (size - scaled.height()) // 2,
+        scaled,
+    )
     painter.end()
 
     data = QByteArray()

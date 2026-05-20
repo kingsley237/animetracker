@@ -23,50 +23,60 @@ QWidget {
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 QWidget#sidebar {
-    background-color: #0a0c10;
+    background-color: #090b10;
     border-right: 1px solid #1e2130;
-    min-width: 200px;
-    max-width: 200px;
+    min-width: 232px;
+    max-width: 232px;
+}
+
+QWidget#sidebarBrand {
+    border-bottom: 1px solid #181b26;
+    margin-bottom: 14px;
+}
+
+QLabel#sidebarLogoMark {
+    background-color: #10131b;
+    border: 1px solid #202436;
+    border-radius: 8px;
 }
 
 QLabel#appLogo {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
-    color: #7c6af7;
+    color: #f0f1f5;
     letter-spacing: 1px;
     padding: 0;
 }
 
 QLabel#appLogoSub {
-    font-size: 9px;
-    color: #4a5070;
-    letter-spacing: 1px;
-    text-transform: uppercase;
+    font-size: 11px;
+    color: #6f768b;
+    letter-spacing: 0;
     padding: 0;
 }
 
 QPushButton#navBtn {
     background: transparent;
-    border: none;
-    color: #6b7280;
+    border: 1px solid transparent;
+    color: #8a91a6;
     font-size: 13px;
     font-weight: 500;
     text-align: left;
-    padding: 10px 20px 10px 16px;
-    border-radius: 0;
-    border-left: 3px solid transparent;
+    padding: 8px 10px;
+    border-radius: 7px;
+    min-height: 20px;
 }
 
 QPushButton#navBtn:hover {
-    background-color: #131620;
-    color: #c7cbd9;
-    border-left-color: #2e3354;
+    background-color: #11141d;
+    color: #d5d8e4;
+    border-color: #202436;
 }
 
 QPushButton#navBtn[active="true"] {
-    background-color: #151929;
-    color: #a594f9;
-    border-left-color: #7c6af7;
+    background-color: #151928;
+    color: #f2f3f8;
+    border-color: #2c3350;
     font-weight: 600;
 }
 
@@ -76,10 +86,11 @@ QWidget#sidebarSection {
 
 QLabel#sidebarSectionLabel {
     font-size: 10px;
-    color: #3b4260;
+    color: #4e566d;
     letter-spacing: 1.5px;
     text-transform: uppercase;
     font-weight: 600;
+    padding: 2px 10px 0;
 }
 
 /* ── Status bar ──────────────────────────────────────────────────────────── */
