@@ -43,6 +43,20 @@ from PyQt6.QtGui import QCursor, QFont, QIcon
 from core.database import DatabaseManager
 
 
+def _build_app_icon() -> QIcon:
+    resources = ROOT / "resources"
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
+        path = resources / f"miroku_lettermark_{size}.png"
+        if path.exists():
+            icon.addFile(str(path))
+    if icon.isNull():
+        ico = resources / "miroku_app_icon.ico"
+        if ico.exists():
+            icon = QIcon(str(ico))
+    return icon
+
+
 def main():
     try:
         from core.updater import APP_VERSION
@@ -59,12 +73,9 @@ def main():
     app.setOrganizationName("Miroku")
 
     # App icon
-    icon_path = ROOT / "resources" / "icon.ico"
-    if icon_path.exists():
-        app_icon = QIcon(str(icon_path))
+    app_icon = _build_app_icon()
+    if not app_icon.isNull():
         app.setWindowIcon(app_icon)
-    else:
-        app_icon = QIcon()
 
     font = QFont("Segoe UI", 10)
     app.setFont(font)
@@ -73,6 +84,8 @@ def main():
 
     from ui.splash import SplashScreen
     splash = SplashScreen(APP_VERSION, startup_screen)
+    if not app_icon.isNull():
+        splash.setWindowIcon(app_icon)
     splash.show()
     app.processEvents()
     splash.set_status("Starting Miroku…", progress=10)
