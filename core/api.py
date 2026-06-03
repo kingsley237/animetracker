@@ -1,5 +1,5 @@
 """
-AnimeTracker — AniList GraphQL API Client
+Miroku — AniList GraphQL API Client
 Fetches full anime data: covers, banners, synopsis, studios, trailers, airing schedule.
 """
 import requests

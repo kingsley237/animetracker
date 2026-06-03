@@ -1,5 +1,5 @@
 """
-AnimeTracker — Image Cache
+Miroku — Image Cache
 Downloads and caches anime cover art and banners locally.
 Serves cached images on subsequent requests.
 """
@@ -64,7 +64,7 @@ def download_image(
         _active_downloads.add(url)
 
     try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "AnimeTracker/2.0"})
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Miroku/2.2"})
         resp.raise_for_status()
 
         # Detect extension from content-type

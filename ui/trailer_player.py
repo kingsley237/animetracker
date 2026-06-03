@@ -1,5 +1,5 @@
 """
-AnimeTracker - Trailer Player.
+Miroku — Trailer Player.
 
 Uses QWebEngineView with a small local HTML player shell. The shell owns the
 loader UI, so users never get stuck behind a Python overlay if WebEngine load

@@ -1,5 +1,5 @@
 """
-AnimeTracker — Main Window
+Miroku — Main Window
 Fixed:
   - Filter pills (All/Watching/Completed/Planned) ONLY shown on Library page
   - Dropped section loads and displays correctly
@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
     QStatusBar, QApplication, QLineEdit, QGridLayout, QStackedWidget,
     QProgressBar, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPixmap, QColor, QFont, QIcon, QCursor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
+from PyQt6.QtGui import QPixmap, QColor, QFont, QIcon, QCursor, QPainterPath, QRegion
 
 from core.database import DatabaseManager
 from workers.workers import Worker, ImageWorker, AiringRefreshWorker, run_worker
@@ -31,14 +31,12 @@ from ui.update_banner import UpdateBanner
 NAV_SECTIONS = [
     ("Library", [
         ("Library", "LIB", "library"),
-        ("Watching", "NOW", "watching"),
-        ("Completed", "DONE", "completed"),
-        ("Planned", "PLAN", "planned"),
         ("Dropped", "DROP", "dropped"),
     ]),
     ("Explore", [
         ("Discover", "DISC", "discover"),
-        ("AnimeStream", "PLAY", "stream"),
+        ("Calendar", "CAL", "calendar"),
+        ("Miroku Stream", "PLAY", "stream"),
     ]),
     ("Personal", [
         ("Hall of Fame", "HOF", "hof"),
@@ -65,6 +63,7 @@ class MainWindow(QMainWindow):
         self._countdown_timer = QTimer(self)
         self._refresh_timer   = QTimer(self)
         self._search_timer    = QTimer(self)
+        self._notification_timer = QTimer(self)
 
         self.setWindowTitle("Miroku")
         self.setMinimumSize(1100, 700)
@@ -86,20 +85,19 @@ class MainWindow(QMainWindow):
     # ── Theme ──────────────────────────────────────────────────────────────────
 
     def _load_theme(self, mode: str = "dark"):
-        from PyQt6.QtCore import QSettings
-        settings  = QSettings("AnimeTracker", "AnimeTracker")
-        theme     = settings.value("theme", "dark")
-        qss_file  = "light.qss" if theme == "light" else "dark.qss"
+        from core.app_settings import resolved_theme
+        qss_file  = f"{resolved_theme()}.qss"
         qss_path  = Path(__file__).parent.parent / "resources" / "themes" / qss_file
+        if not qss_path.exists():
+            qss_path = Path(__file__).parent.parent / "resources" / "themes" / "dark.qss"
         if qss_path.exists():
             QApplication.instance().setStyleSheet(qss_path.read_text(encoding="utf-8"))
 
     def toggle_theme(self):
-        from PyQt6.QtCore import QSettings
-        settings = QSettings("AnimeTracker", "AnimeTracker")
-        current  = settings.value("theme", "dark")
+        from core.app_settings import preferred_theme, set_preferred_theme
+        current  = preferred_theme()
         new_theme = "light" if current == "dark" else "dark"
-        settings.setValue("theme", new_theme)
+        set_preferred_theme(new_theme)
         self._load_theme(new_theme)
 
     # ── UI build ───────────────────────────────────────────────────────────────
@@ -135,9 +133,10 @@ class MainWindow(QMainWindow):
         self._stats_page    = None
         self._hof_page      = None
         self._stream_page   = None
+        self._calendar_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(4):
+        for _ in range(5):
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
@@ -150,6 +149,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.setFixedWidth(390)
         self.detail_panel.setVisible(False)
         self.detail_panel.episode_changed.connect(self._on_episode_changed)
+        self.detail_panel.watch_status_changed.connect(self._on_watch_status_changed)
         self.detail_panel.stats_changed.connect(self._update_stats_strip)
         self.detail_panel.anime_dropped.connect(self._on_anime_dropped)
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
@@ -169,6 +169,13 @@ class MainWindow(QMainWindow):
         # Re-parent it here so it overlays correctly
         self.update_banner.setParent(central)
         self.update_banner.raise_()
+        from ui.notification_banner import NotificationBanner
+        self.notification_banner = NotificationBanner(central)
+        self.notification_banner.open_anime.connect(self._open_notification_anime)
+        self.notification_banner.mark_watched.connect(self._mark_notification_episode)
+        self.notification_banner.move_to_watching.connect(self._move_notification_to_watching)
+        self.notification_banner.remind_later.connect(self._remind_notification_later)
+        self.notification_banner.dismissed.connect(self._dismiss_notification)
         self.setStatusBar(self._build_status_bar())
 
 
@@ -321,11 +328,12 @@ class MainWindow(QMainWindow):
             ("Behind","behind"),
         ]:
             b = QPushButton(label)
-            b.setObjectName("filterPill")
+            b.setObjectName("filterPillBehind" if fid == "behind" else "filterPill")
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             b.clicked.connect(lambda _, f=fid: self._set_filter(f))
             self._filter_btns[fid] = b
             fr.addWidget(b)
+
         fr.addStretch()
         lay.addWidget(self.filter_row)
         lay.addSpacing(16)
@@ -482,6 +490,16 @@ class MainWindow(QMainWindow):
                 self.stack.removeWidget(self.stack.widget(4))
                 self.stack.insertWidget(4, self._stream_page)
             self.stack.setCurrentIndex(4)
+        elif page_id == "calendar":
+            if self._calendar_page is None:
+                from ui.release_calendar_page import ReleaseCalendarPage
+                self._calendar_page = ReleaseCalendarPage(self.db, self)
+                self._calendar_page.anime_selected.connect(self._open_anime_from_calendar)
+                self._calendar_page.data_changed.connect(self._on_episode_changed)
+                self.stack.removeWidget(self.stack.widget(5))
+                self.stack.insertWidget(5, self._calendar_page)
+            self.stack.setCurrentIndex(5)
+            self._calendar_page.load()
         else:
             self.stack.setCurrentIndex(0)
             titles = {
@@ -630,9 +648,9 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
         COLS = self._calc_columns()
         groups = [
-            ("▶  Watching",      "watching",  "#7c6af7"),
-            ("⏳  Plan to Watch", "planned",   "#6b7280"),
-            ("✓  Completed",     "completed", "#34d399"),
+            ("〡 WATCHING",    "watching",  "#a594f9"),
+            ("〡 PLAN TO WATCH", "planned", "#6b7280"),
+            ("〡 COMPLETED",   "completed", "#34d399"),
         ]
         row_num = 0
         for group_label, status, color in groups:
@@ -640,11 +658,9 @@ class MainWindow(QMainWindow):
             if not members:
                 continue
             # Section header as a full-width spanning label
-            hdr = QLabel(f"  {group_label}  ({len(members)})")
-            hdr.setStyleSheet(
-                f"font-size:11px;font-weight:700;color:{color};"
-                "background:transparent;padding:8px 0 4px 2px;"
-            )
+            hdr = QLabel(f"{group_label}  ·  {len(members)} titles")
+            hdr.setObjectName("libSectionHeader")
+            hdr.setStyleSheet(f"color:{color};")
             self.grid_layout.addWidget(hdr, row_num, 0, 1, max(COLS, 1))
             row_num += 1
             for col_idx, anime in enumerate(members):
@@ -840,6 +856,16 @@ class MainWindow(QMainWindow):
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
 
+    def _open_anime_from_calendar(self, anime_id: int):
+        self._navigate("library")
+        anime = self.db.get_anime_by_id(anime_id)
+        if not anime:
+            return
+        self.selected_anime_id = anime_id
+        self.detail_panel.load_anime(anime)
+        self._open_detail_panel()
+        self._load_detail_images(anime)
+
     def _deselect_all_cards(self):
         for card in self._cards.values():
             card.set_selected(False)
@@ -849,6 +875,98 @@ class MainWindow(QMainWindow):
         if anime and anime_id in self._cards:
             self._cards[anime_id].update_data(anime)
         self._update_stats_strip()
+        if self._calendar_page is not None:
+            self._calendar_page.load()
+
+    def _on_watch_status_changed(self, anime_id: int, new_status: str):
+        """Remove or update cards when watch status no longer matches the active view."""
+        self._update_stats_strip()
+
+        if (
+            self.current_page == "library"
+            and self._current_filter == "all"
+            and not self._search_query
+        ):
+            self._load_library()
+            return
+
+        if self._search_query:
+            anime = self.db.get_anime_by_id(anime_id)
+            if anime and anime_id in self._cards:
+                self._cards[anime_id].update_data(anime)
+            return
+
+        if not self._anime_belongs_on_current_view(new_status, anime_id):
+            self._remove_card_from_grid(anime_id)
+            if self.selected_anime_id == anime_id:
+                self.detail_panel.setVisible(False)
+                self.selected_anime_id = None
+            return
+
+        anime = self.db.get_anime_by_id(anime_id)
+        if not anime:
+            return
+        if anime_id in self._cards:
+            self._cards[anime_id].update_data(anime)
+        else:
+            self._load_library_for_current_page()
+
+    def _anime_belongs_on_current_view(self, watch_status: str, anime_id: int) -> bool:
+        page_map = {
+            "watching": "watching",
+            "planned": "planned",
+            "completed": "completed",
+        }
+        if self.current_page in page_map:
+            return watch_status == page_map[self.current_page]
+
+        if self.current_page != "library":
+            return True
+
+        if self._current_filter in (None, "all"):
+            return True
+
+        if self._current_filter == "behind":
+            if watch_status != "watching":
+                return False
+            anime = self.db.get_anime_by_id(anime_id)
+            if not anime:
+                return False
+            next_ep = anime.get("next_episode_num")
+            total = anime.get("total_episodes") or 0
+            api_s = (anime.get("status") or "").upper()
+            aired = (next_ep - 1) if (next_ep and next_ep > 1) else (
+                total if (total and api_s in ("FINISHED", "CANCELLED")) else 0
+            )
+            watched = self.db.get_watched_count(anime_id)
+            return aired > 0 and watched < aired
+
+        if self._current_filter == "dropped":
+            return watch_status == "dropped"
+
+        return watch_status == self._current_filter
+
+    def _remove_card_from_grid(self, anime_id: int):
+        card = self._cards.pop(anime_id, None)
+        if card:
+            self.grid_layout.removeWidget(card)
+            card.setParent(None)
+            card.deleteLater()
+        has_cards = bool(self._cards)
+        self.empty_state.setVisible(not has_cards)
+        self.grid_container.setVisible(has_cards)
+
+    def _load_library_for_current_page(self):
+        status_map = {
+            "watching": "watching",
+            "planned": "planned",
+            "completed": "completed",
+            "dropped": "dropped",
+        }
+        if self.current_page in status_map:
+            self._load_library(watch_status=status_map[self.current_page])
+        else:
+            self._load_library()
 
     def _on_anime_dropped(self, anime_id: int):
         self.detail_panel.setVisible(False)
@@ -905,11 +1023,20 @@ class MainWindow(QMainWindow):
             self._update_stats_strip()
             if getattr(dlg, "added_title", ""):
                 from ui.toast import Toast
-                Toast.show(
-                    self,
-                    f"'{dlg.added_title}' added as {dlg.added_status}.",
-                    kind="success",
-                )
+                if getattr(dlg, "added_to_hof", False):
+                    Toast.show(
+                        self,
+                        f"'{dlg.added_title}' added to Hall of Fame.",
+                        kind="success",
+                    )
+                    if self._hof_page is not None:
+                        self._hof_page.load()
+                else:
+                    Toast.show(
+                        self,
+                        f"'{dlg.added_title}' added as {dlg.added_status}.",
+                        kind="success",
+                    )
 
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
@@ -932,6 +1059,10 @@ class MainWindow(QMainWindow):
 
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._load_library)
+
+        self._notification_timer.timeout.connect(self._scan_notifications)
+        self._notification_timer.start(300_000)
+        QTimer.singleShot(1800, self._scan_notifications)
 
     def _tick(self):
         for card in self._cards.values():
@@ -976,7 +1107,8 @@ class MainWindow(QMainWindow):
                 refreshed = self.db.get_anime_by_id(anime["id"])
                 if refreshed:
                     self._cards[anime["id"]].update_data(refreshed)
-
+        if self._calendar_page is not None:
+            self._calendar_page.load()
     # ── Upcoming date refresh ─────────────────────────────────────────────────
 
     def _refresh_upcoming(self):
@@ -1014,15 +1146,16 @@ class MainWindow(QMainWindow):
                     refreshed = self.db.get_anime_by_id(anime["id"])
                     if refreshed:
                         self._cards[anime["id"]].update_data(refreshed)
-
+        if self._calendar_page is not None:
+            self._calendar_page.load()
     # ── Onboarding ─────────────────────────────────────────────────────────────
 
     def _maybe_show_onboarding(self):
         # ── Toggle for testing: set True to always show tutorial ──────────────
         FORCE_ONBOARDING = False
         # ─────────────────────────────────────────────────────────────────────
-        from PyQt6.QtCore import QSettings
-        settings    = QSettings("AnimeTracker", "AnimeTracker")
+        from core.app_settings import app_settings
+        settings    = app_settings()
         seen        = settings.value("onboarding_seen", False, type=bool)
         total_anime = len(self.db.get_all_anime())
         # First ever use = never seen the tour AND library is completely empty
@@ -1052,6 +1185,46 @@ class MainWindow(QMainWindow):
         self.update_banner.raise_()
 
     # ── Connectivity monitor ───────────────────────────────────────────────────
+
+    def _scan_notifications(self):
+        from core.notification_service import NotificationService
+        service = NotificationService(self.db)
+        worker = Worker(service.scan)
+        worker.signals.result.connect(self._on_notifications_ready)
+        run_worker(worker)
+
+    def _on_notifications_ready(self, notifications):
+        if notifications:
+            self.notification_banner.show_notifications(notifications)
+        else:
+            self.notification_banner.clear_if_idle()
+
+    def _open_notification_anime(self, anime_id: int):
+        self._open_anime_from_calendar(anime_id)
+
+    def _mark_notification_episode(self, anime_id: int, episode: int):
+        if not anime_id or not episode:
+            return
+        self.db.set_episode_watched(anime_id, episode, True)
+        self._on_episode_changed(anime_id)
+        from ui.toast import Toast
+        Toast.show(self, f"Episode {episode} marked watched.", kind="success")
+
+    def _move_notification_to_watching(self, anime_id: int):
+        if not anime_id:
+            return
+        self.db.update_anime(anime_id, {"watch_status": "watching"})
+        self._on_watch_status_changed(anime_id, "watching")
+        from ui.toast import Toast
+        Toast.show(self, "Moved to Watching.", kind="success")
+
+    def _remind_notification_later(self, notification_id: int):
+        self.db.remind_notification_later(notification_id, hours=24)
+        from ui.toast import Toast
+        Toast.show(self, "Reminder moved to tomorrow.", kind="info")
+
+    def _dismiss_notification(self, notification_id: int):
+        self.db.dismiss_notification(notification_id)
 
     def _check_connection(self):
         from core.connectivity import ConnectivityMonitor
@@ -1092,8 +1265,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(60, self._load_library)
         if hasattr(self, "update_banner") and self.update_banner.isVisible():
             self.update_banner._reposition()
+        if hasattr(self, "notification_banner") and self.notification_banner.isVisible():
+            self.notification_banner._reposition()
         if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
             self._offline_banner.reposition()
+
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 
 class _SkeletonCard(QFrame):
@@ -1105,49 +1281,42 @@ class _SkeletonCard(QFrame):
         super().__init__(parent)
         self.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.CARD_HEIGHT)
         self.setObjectName("skeletonCard")
+        path = QPainterPath()
+        path.addRoundedRect(
+            QRectF(0, 0, AnimeCard.CARD_WIDTH, AnimeCard.CARD_HEIGHT),
+            AnimeCard.CARD_RADIUS,
+            AnimeCard.CARD_RADIUS,
+        )
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
         self.setStyleSheet("""
             QFrame#skeletonCard {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
                     stop:0 #111420, stop:0.5 #1a1d2e, stop:1 #111420
                 );
-                border: 1px solid #1a1d28;
-                border-radius: 10px;
+                border: none;
             }
         """)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # Cover placeholder
+        # Poster skeleton — full bleed, text lines overlaid at bottom
         cover = QFrame()
-        cover.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.COVER_HEIGHT)
-        cover.setStyleSheet(
-            "background:#131620;border-radius:10px 10px 0 0;border:none;"
-        )
+        cover.setFixedSize(AnimeCard.CARD_WIDTH, AnimeCard.CARD_HEIGHT)
+        cover.setStyleSheet("background:#131620;border:none;")
         lay.addWidget(cover)
 
-        # Text line placeholders
-        info = QWidget()
-        info.setFixedSize(AnimeCard.CARD_WIDTH,
-                          AnimeCard.CARD_HEIGHT - AnimeCard.COVER_HEIGHT)
-        info.setStyleSheet("background:#111420;border-radius:0 0 10px 10px;")
-        il = QVBoxLayout(info)
-        il.setContentsMargins(10, 10, 10, 10)
-        il.setSpacing(6)
-
-        for w_frac, h in [(0.85, 10), (0.55, 8), (0.70, 6)]:
-            line = QFrame()
-            line.setFixedSize(
-                int(AnimeCard.CARD_WIDTH * w_frac), h
-            )
+        # Shimmer text lines at bottom to suggest info overlay
+        for w_frac, ypos in [(0.7, AnimeCard.CARD_HEIGHT - 46),
+                              (0.55, AnimeCard.CARD_HEIGHT - 30),
+                              (1.0, AnimeCard.CARD_HEIGHT - 6)]:
+            line = QFrame(cover)
+            line.setFixedSize(int(AnimeCard.CARD_WIDTH * w_frac), 6)
+            line.move(10, ypos)
             line.setStyleSheet(
-                "background:#1e2130;border-radius:4px;border:none;"
+                "background:#1e2130;border-radius:3px;border:none;"
             )
-            il.addWidget(line)
-
-        il.addStretch()
-        lay.addWidget(info)
 
         # Shimmer animation via QPropertyAnimation on opacity would require
         # QGraphicsOpacityEffect; instead use a simple QTimer pulse

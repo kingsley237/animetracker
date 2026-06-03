@@ -1,5 +1,5 @@
 """
-AnimeTracker — Discover Page
+Miroku — Discover Page
 Tabs: Seasonal · Trending · Upcoming · Anticipated
 Filter bar: sort by score, popularity, format, genre
 Cards: tall enough to always show all content + buttons
@@ -45,11 +45,12 @@ def _strip_html(txt: str) -> str:
     return re.sub(r"<[^>]+>", "", txt or "")
 
 
-def _get_classics(page: int = 1, per_page: int = 24, sort: str = "SCORE_DESC") -> List[Dict]:
+def _get_classics(page: int = 1, per_page: int = 24, sort: str = "SCORE_DESC",
+                  genre: Optional[str] = None) -> List[Dict]:
     """
-    Classics = FINISHED anime sorted by score.
-    View-only — great anime the user may not have seen.
+    Classics = FINISHED anime sorted by score, optionally filtered by genre.
     """
+    genre_filter = f'genre_in: ["{genre}"],' if genre else ""
     gql = f"""
     query ($page: Int, $perPage: Int, $sort: [MediaSort]) {{
         Page(page: $page, perPage: $perPage) {{
@@ -57,6 +58,7 @@ def _get_classics(page: int = 1, per_page: int = 24, sort: str = "SCORE_DESC") -
                 type: ANIME, isAdult: false,
                 status: FINISHED,
                 sort: $sort,
+                {genre_filter}
                 format_in: [TV, TV_SHORT, ONA, MOVIE],
                 averageScore_greater: 60
             ) {{
@@ -126,6 +128,25 @@ SORT_OPTIONS = [
     ("Oldest First",          "START_DATE"),
 ]
 
+# Sort options available per tab — only contextually meaningful options shown
+_MODE_SORTS: dict[str, list[str]] = {
+    "seasonal":  ["SCORE_DESC", "SCORE", "POPULARITY_DESC", "POPULARITY",
+                  "START_DATE_DESC", "START_DATE"],
+    "trending":  ["TRENDING_DESC", "POPULARITY_DESC", "SCORE_DESC"],
+    "upcoming":  ["POPULARITY_DESC"],
+    "classics":  ["SCORE_DESC", "SCORE", "POPULARITY_DESC", "POPULARITY"],
+}
+
+_ALL_SORT_OPTIONS = [
+    ("Score (High→Low)",      "SCORE_DESC"),
+    ("Score (Low→High)",      "SCORE"),
+    ("Popularity (High→Low)", "POPULARITY_DESC"),
+    ("Popularity (Low→High)", "POPULARITY"),
+    ("Newest First",          "START_DATE_DESC"),
+    ("Oldest First",          "START_DATE"),
+    ("Trending",              "TRENDING_DESC"),
+]
+
 
 class DiscoverPage(QWidget):
     def __init__(self, db: DatabaseManager, parent=None):
@@ -137,7 +158,9 @@ class DiscoverPage(QWidget):
         self._genre: Optional[str] = None
         self._sort_key     = "SCORE_DESC"
         self._cards: List["DiscoverCard"] = []
-        self._current_page = 1
+        self._current_page    = 1
+        self._fetch_generation = 0
+        self._active_info_dlg  = None
         self._build_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -300,6 +323,7 @@ class DiscoverPage(QWidget):
         lay.addSpacing(16)
 
         self._set_active("seasonal")
+        self._update_sort_options("seasonal")
 
     def load(self):
         if not self._loaded:
@@ -311,8 +335,8 @@ class DiscoverPage(QWidget):
     def _switch(self, mode: str):
         self._mode = mode
         self._set_active(mode)
-        # Season selectors only relevant for seasonal tab
         self.season_w.setVisible(mode == "seasonal")
+        self._update_sort_options(mode)
         self._fetch()
 
     def _set_active(self, mode: str):
@@ -324,18 +348,20 @@ class DiscoverPage(QWidget):
 
     def _apply(self):
         raw = self.season_combo.currentText().split("(")[0].strip()
-        self._season   = raw.upper()
-        self._year     = int(self.year_combo.currentText())
+        self._season = raw.upper()
+        self._year   = int(self.year_combo.currentText())
         gt = self.genre_combo.currentText()
-        self._genre    = None if gt == "All Genres" else gt
+        self._genre  = None if gt == "All Genres" else gt
         idx = self.sort_combo.currentIndex()
-        self._sort_key = SORT_OPTIONS[idx][1] if 0 <= idx < len(SORT_OPTIONS) else "SCORE_DESC"
+        keys = getattr(self, "_current_sort_keys", [o[1] for o in SORT_OPTIONS])
+        self._sort_key = keys[idx] if 0 <= idx < len(keys) else "SCORE_DESC"
         self._fetch()
 
     # ── Fetch ─────────────────────────────────────────────────────────────────
 
     def _fetch(self):
-        self._current_page = 1
+        self._current_page     = 1
+        self._fetch_generation += 1
         self.bar.setVisible(True)
         self.load_more_btn.setVisible(False)
         self._clear()
@@ -349,24 +375,34 @@ class DiscoverPage(QWidget):
 
     def _fetch_page(self, page: int, append: bool):
         self.bar.setVisible(True)
-        mode      = self._mode
-        season    = self._season
-        year      = self._year
-        genre     = self._genre
-        sort_key  = self._sort_key
+        mode       = self._mode
+        season     = self._season
+        year       = self._year
+        genre      = self._genre
+        sort_key   = self._sort_key
+        generation = self._fetch_generation   # snapshot — stale check
 
         def work():
             if mode == "seasonal":
                 return get_seasonal_anime(season, year, sort=sort_key,
                                           genre=genre, page=page)
             elif mode == "trending":
-                return _get_trending_sorted(page=page, per_page=24, sort=sort_key)
+                # Trending always sorts by trending score — other sorts make it
+                # indistinguishable from classics. Secondary sort applied via API.
+                trending_sort = sort_key if sort_key in (
+                    "TRENDING_DESC", "POPULARITY_DESC", "SCORE_DESC"
+                ) else "TRENDING_DESC"
+                return _get_trending_sorted(page=page, per_page=24, sort=trending_sort)
             elif mode == "upcoming":
                 return get_upcoming_anime(page=page, per_page=24)
-            else:  # classics — finished anime sorted by score
-                return _get_classics(page=page, sort=sort_key)
+            elif mode == "classics":
+                return _get_classics(page=page, sort=sort_key, genre=genre)
+            else:
+                return []
 
         def on_done(results):
+            if generation != self._fetch_generation:
+                return   # user switched tabs before this completed — discard
             self.bar.setVisible(False)
             self.load_more_btn.setText("Load More")
             self.load_more_btn.setEnabled(True)
@@ -415,18 +451,21 @@ class DiscoverPage(QWidget):
 
     def _show_info(self, media: Dict):
         """
-        Show dialog immediately with available data.
-        Full data (characters, studios, synopsis) loads in background
-        and updates the open dialog — fast perceived open time.
+        Show dialog immediately. Closes any previously open info dialog first.
+        Full data loads in background and updates the open dialog.
         """
-        # Open dialog instantly with what we have
+        if self._active_info_dlg is not None:
+            try:
+                self._active_info_dlg.close()
+            except RuntimeError:
+                pass
+            self._active_info_dlg = None
+
         dlg = _InfoDialog(media, self)
-        if not hasattr(self, "_open_info_dialogs"):
-            self._open_info_dialogs = []
-        self._open_info_dialogs.append(dlg)
-        dlg.destroyed.connect(lambda _=None, d=dlg: self._open_info_dialogs.remove(d) if d in self._open_info_dialogs else None)
+        self._active_info_dlg = dlg
+        dlg.finished.connect(lambda _: setattr(self, "_active_info_dlg", None))
         _center_on_parent_screen(dlg, self)
-        dlg.show()   # non-blocking — show immediately
+        dlg.show()
 
         # Always fetch full data — skeleton hides body until this completes
         anilist_id = media.get("id")
@@ -450,9 +489,8 @@ class DiscoverPage(QWidget):
 
     def _do_add(self, media: Dict):
         api_s = (media.get("status") or "").upper()
-        if api_s == "FINISHED":
-            from ui.toast import Toast
-            Toast.show(self.window(), f"'{(media.get('title') or {}).get('romaji','')}' has finished airing.\n\n" "Miroku only tracks currently airing and upcoming anime.", kind="info")
+        if api_s in ("FINISHED", "CANCELLED"):
+            self._add_to_hof(media)
             return
 
         anilist_id = media.get("id")
@@ -466,6 +504,34 @@ class DiscoverPage(QWidget):
 
         w = Worker(fetch)
         w.signals.result.connect(self._commit)
+        run_worker(w)
+
+    def _add_to_hof(self, media: Dict):
+        anilist_id = media.get("id")
+
+        def fetch():
+            return get_anime_by_id(anilist_id) if anilist_id else media
+
+        def done(full_media):
+            from ui.hall_of_fame import add_anilist_media_to_hof
+            from ui.toast import Toast
+            ok, title = add_anilist_media_to_hof(self.db, full_media)
+            if not ok:
+                if title == "already_in_hof":
+                    Toast.show(
+                        self.window(),
+                        "This anime is already in your Hall of Fame.",
+                        kind="info",
+                    )
+                return
+            Toast.show(
+                self.window(),
+                f"'{title}' added to Hall of Fame.",
+                kind="success",
+            )
+
+        w = Worker(fetch)
+        w.signals.result.connect(done)
         run_worker(w)
 
     def _commit(self, media: Dict):
@@ -514,6 +580,21 @@ class DiscoverPage(QWidget):
         # Re-place all cards
         for i, card in enumerate(self._cards):
             self.grid.addWidget(card, i // COLS, i % COLS)
+
+    def _update_sort_options(self, mode: str) -> None:
+        """Rebuild sort combo to show only options relevant to the current tab."""
+        allowed = _MODE_SORTS.get(mode, list(_MODE_SORTS["seasonal"]))
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.clear()
+        self._current_sort_keys: list[str] = []
+        for label, key in _ALL_SORT_OPTIONS:
+            if key in allowed:
+                self.sort_combo.addItem(label)
+                self._current_sort_keys.append(key)
+        # Default to first option for this mode
+        self.sort_combo.setCurrentIndex(0)
+        self._sort_key = self._current_sort_keys[0] if self._current_sort_keys else "SCORE_DESC"
+        self.sort_combo.blockSignals(False)
 
 
 # ── Discover Card ─────────────────────────────────────────────────────────────
@@ -640,7 +721,20 @@ class DiscoverCard(QFrame):
         info_btn.clicked.connect(lambda: self.info_requested.emit(self._media))
         btn_row.addWidget(info_btn)
 
-        if api_s != "FINISHED":
+        if api_s in ("FINISHED", "CANCELLED"):
+            hof_btn = QPushButton("🏆 HoF")
+            hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            hof_btn.setMinimumHeight(28)
+            hof_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            hof_btn.setStyleSheet(
+                "QPushButton{font-size:11px;font-weight:600;padding:4px 8px;"
+                "background:#2d2566;color:#e8e4ff;border:1px solid #4a3fa8;border-radius:6px;}"
+                "QPushButton:hover{background:#3d3480;}"
+            )
+            hof_btn.setToolTip("Add to Hall of Fame")
+            hof_btn.clicked.connect(lambda: self.add_requested.emit(self._media))
+            btn_row.addWidget(hof_btn)
+        else:
             add_btn = QPushButton("+ Add")
             add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             add_btn.setMinimumHeight(28)
@@ -652,13 +746,6 @@ class DiscoverCard(QFrame):
             )
             add_btn.clicked.connect(lambda: self.add_requested.emit(self._media))
             btn_row.addWidget(add_btn)
-        else:
-            fin_lbl = QLabel("Finished")
-            fin_lbl.setStyleSheet(
-                "font-size:10px;color:#4a5070;padding:4px 6px;"
-                "background:transparent;"
-            )
-            btn_row.addWidget(fin_lbl)
 
         il.addLayout(btn_row)
         outer.addWidget(info)

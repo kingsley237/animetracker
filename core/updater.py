@@ -1,5 +1,5 @@
 """
-AnimeTracker — Update Checker
+Miroku — Update Checker
 Checks GitHub Releases API on startup in a background thread.
 No auth required — uses the public API endpoint.
 

@@ -1,5 +1,5 @@
 """
-AnimeTracker — Entry Point
+Miroku — Entry Point
 Run: python main.py
 """
 import sys, os
@@ -49,6 +49,9 @@ def main():
     except Exception:
         APP_VERSION = "2.2.0"
 
+    from core.app_settings import migrate_legacy_settings
+    migrate_legacy_settings()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Miroku")
     app.setApplicationDisplayName("Miroku")
@@ -71,24 +74,45 @@ def main():
     from ui.splash import SplashScreen
     splash = SplashScreen(APP_VERSION, startup_screen)
     splash.show()
-    splash.set_status("Starting Miroku...")
+    app.processEvents()
+    splash.set_status("Starting Miroku…", progress=10)
 
+    # Stage 1 — Theme
+    splash.set_status("Loading theme…", progress=25)
+    from core.app_settings import resolved_theme
+    from pathlib import Path as _Path
+    _qss = _Path(__file__).parent / "resources" / "themes" / f"{resolved_theme()}.qss"
+    if not _qss.exists():
+        _qss = _Path(__file__).parent / "resources" / "themes" / "dark.qss"
+    if _qss.exists():
+        app.setStyleSheet(_qss.read_text(encoding="utf-8"))
+
+    # Stage 2 — Database
+    splash.set_status("Opening your library…", progress=45)
     try:
-        splash.set_status("Opening your library...")
         db = DatabaseManager()
     except Exception as e:
         splash.close()
         QMessageBox.critical(None, "Database Error", f"Failed to initialize database:\n{e}")
         sys.exit(1)
 
-    splash.set_status("Building the interface...")
+    # Stage 3 — UI modules
+    splash.set_status("Loading interface…", progress=65)
     from ui.main_window import MainWindow
+
+    # Stage 4 — Build window
+    splash.set_status("Building the interface…", progress=82)
     window = MainWindow(db)
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     if startup_screen:
         window.setGeometry(startup_screen.availableGeometry())
         window.showMaximized()
+
+    # Stage 5 — Ready
+    splash.set_status("Ready.", progress=100)
+    app.processEvents()
+
     window.show()
     splash.finish(window)
 

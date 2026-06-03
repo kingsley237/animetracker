@@ -1,503 +1,478 @@
 """
-AnimeTracker — Statistics Page
-Complete redesign: professional dashboard layout.
-Sections: headline KPIs · status breakdown · watch progress · genre chart · score distribution
-"""
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+Miroku — Statistics Page
+Clean redesign: content-driven heights, no fixed constraints, no paintEvent tricks.
 
+Sections
+--------
+1. Activity heatmap  (HeatmapSection)
+2. Four KPI tiles
+3. Status donut (left) + Top genres (right)
+4. Rating distribution
+"""
+from typing import Dict, List, Tuple
+
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QScrollArea, QSizePolicy, QGridLayout,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QLinearGradient
 
 from core.database import DatabaseManager
-
+from ui.heatmap_widget import HeatmapSection
 
 # ── Palette ────────────────────────────────────────────────────────────────────
-C_PURPLE  = "#7c6af7"
-C_GREEN   = "#34d399"
-C_AMBER   = "#fbbf24"
-C_RED     = "#f87171"
-C_BLUE    = "#38bdf8"
-C_ORANGE  = "#fb923c"
-C_TEAL    = "#2dd4bf"
-C_PINK    = "#f472b6"
-C_MUTED   = "#4a5070"
-C_TEXT    = "#dde0ed"
-C_DIM     = "#3b4260"
-C_CARD    = "#111420"
-C_BORDER  = "#1a1d28"
+C_PURPLE = "#7c6af7"
+C_GREEN  = "#34d399"
+C_AMBER  = "#fbbf24"
+C_RED    = "#f87171"
+C_BLUE   = "#38bdf8"
+C_TEAL   = "#2dd4bf"
+C_PINK   = "#f472b6"
+C_ORANGE = "#fb923c"
+C_GREY   = "#6b7280"
+C_TEXT   = "#dde0ed"
+C_DIM    = "#4a5070"
+C_CARD   = "#111420"
+C_BORDER = "#1a1d28"
 
+_GENRE_COLORS  = [C_PURPLE, C_GREEN, C_AMBER, C_RED,
+                  C_BLUE, C_ORANGE, C_TEAL, C_PINK]
+_RATING_LABELS = {1:"Terrible", 2:"Bad", 3:"Fair",
+                  4:"Good", 5:"Great", 6:"Masterpiece"}
+_RATING_COLORS = {1:C_RED, 2:C_ORANGE, 3:C_AMBER,
+                  4:C_GREEN, 5:C_PURPLE, 6:C_TEAL}
+
+
+def _card(parent=None) -> QFrame:
+    """Base card frame — dark bg, border, rounded corners via QSS."""
+    f = QFrame(parent)
+    f.setObjectName("statsPageCard")
+    f.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    return f
+
+
+def _section_header(text: str) -> QLabel:
+    l = QLabel(text)
+    l.setStyleSheet(
+        f"font-size:10px;font-weight:700;color:{C_DIM};"
+        "letter-spacing:1.8px;background:transparent;"
+    )
+    return l
+
+
+def _vline(color: str, width: int = 3) -> QFrame:
+    """Thin colored vertical accent bar."""
+    f = QFrame()
+    f.setFixedWidth(width)
+    f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+    f.setStyleSheet(f"background:{color};border-radius:2px;")
+    return f
+
+
+# ── Page ───────────────────────────────────────────────────────────────────────
 
 class StatsPage(QWidget):
-    def __init__(self, db: DatabaseManager, parent=None):
+    def __init__(self, db: DatabaseManager, parent=None) -> None:
         super().__init__(parent)
         self.db = db
         self._build_ui()
 
-    def _build_ui(self):
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        self.body = QWidget()
-        self.body.setStyleSheet("background:transparent;")
-        self.body_lay = QVBoxLayout(self.body)
-        self.body_lay.setContentsMargins(32, 24, 32, 32)
-        self.body_lay.setSpacing(28)
+        self._body = QWidget()
+        self._body.setStyleSheet("background:transparent;")
+        self._body_lay = QVBoxLayout(self._body)
+        self._body_lay.setContentsMargins(32, 32, 32, 64)
+        self._body_lay.setSpacing(36)
 
-        self.scroll.setWidget(self.body)
-        lay.addWidget(self.scroll)
+        scroll.setWidget(self._body)
+        root.addWidget(scroll)
 
-    # ── Load ───────────────────────────────────────────────────────────────────
-
-    def load(self):
-        # Wipe all previous widgets
-        while self.body_lay.count():
-            item = self.body_lay.takeAt(0)
+    def load(self) -> None:
+        while self._body_lay.count():
+            item = self._body_lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._render(self.db.get_stats())
 
-        stats = self.db.get_stats()
-        self._render(stats)
-
-    def _render(self, s: Dict):
-        # ── Page header ──────────────────────────────────────────────────
-        hdr = QVBoxLayout()
-        hdr.setSpacing(4)
+    def _render(self, s: Dict) -> None:
+        # Title
         title = QLabel("Statistics")
         title.setObjectName("pageTitle")
-        hdr.addWidget(title)
-        sub = QLabel("Your anime journey at a glance")
-        sub.setStyleSheet(f"font-size:13px;color:{C_MUTED};")
-        hdr.addWidget(sub)
-        hdr_w = QWidget()
-        hdr_w.setStyleSheet("background:transparent;")
-        hdr_w.setLayout(hdr)
-        self.body_lay.addWidget(hdr_w)
+        self._body_lay.addWidget(title)
 
-        # ── Section 1: Key numbers (2×2 grid) ───────────────────────────
-        self.body_lay.addWidget(self._section_label("YOUR NUMBERS"))
+        # Heatmap
+        self._body_lay.addWidget(HeatmapSection(self.db))
 
-        kpi_grid = QGridLayout()
-        kpi_grid.setSpacing(12)
-        kpi_defs = [
-            (str(s.get("total", 0)),                        "Total in Library",          C_PURPLE, "📚"),
-            (str(s.get("total_episodes_watched", 0)),       "Episodes Watched",           C_GREEN,  "▶"),
-            (f"{s['average_score']:.1f} / 6"
-             if s.get("average_score") else "–",            "Your Average Rating",        C_AMBER,  "★"),
-            (str(s.get("watching", 0) + s.get("completed", 0)),
-                                                            "Watched or Watching",        C_BLUE,   "◈"),
+        # KPI row
+        self._body_lay.addWidget(_KpiRow(s))
+
+        # Status + Genres side by side
+        status_data: List[Tuple[str, int, str]] = [
+            ("Watching",      s.get("watching",  0), C_PURPLE),
+            ("Completed",     s.get("completed", 0), C_GREEN),
+            ("Plan to Watch", s.get("planned",   0), C_GREY),
+            ("Dropped",       s.get("dropped",   0), C_RED),
         ]
-        for i, (val, label, color, icon) in enumerate(kpi_defs):
-            card = self._kpi_card(val, label, color, icon)
-            kpi_grid.addWidget(card, i // 2, i % 2)
+        mid = QHBoxLayout()
+        mid.setSpacing(20)
+        mid.setContentsMargins(0, 0, 0, 0)
 
-        kpi_w = QWidget()
-        kpi_w.setStyleSheet("background:transparent;")
-        kpi_w.setLayout(kpi_grid)
-        self.body_lay.addWidget(kpi_w)
+        status_card = _StatusCard(status_data)
+        mid.addWidget(status_card, stretch=1)
 
-        # ── Section 2: Status breakdown ──────────────────────────────────
-        self.body_lay.addWidget(self._section_label("STATUS BREAKDOWN"))
-
-        status_data = [
-            ("Watching",      s.get("watching", 0),   C_PURPLE),
-            ("Completed",     s.get("completed", 0),  C_GREEN),
-            ("Plan to Watch", s.get("planned", 0),    C_MUTED),
-            ("Dropped",       s.get("dropped", 0),    C_RED),
-        ]
-        total_lib = max(sum(v for _, v, _ in status_data), 1)
-
-        # Individual row cards
-        status_rows_w = QWidget()
-        status_rows_w.setStyleSheet("background:transparent;")
-        sr_lay = QVBoxLayout(status_rows_w)
-        sr_lay.setContentsMargins(0, 0, 0, 0)
-        sr_lay.setSpacing(8)
-
-        for label, count, color in status_data:
-            row = self._status_row(label, count, total_lib, color)
-            sr_lay.addWidget(row)
-
-        self.body_lay.addWidget(status_rows_w)
-
-        # Stacked bar below
-        bar_data = [(l, v, c) for l, v, c in status_data]
-        self.body_lay.addWidget(_StackedBar(bar_data, total_lib))
-
-        # ── Section 3: Watch time estimate (compact) ────────────────────
-        watched_eps = s.get("total_episodes_watched", 0)
-        if watched_eps > 0:
-            minutes  = watched_eps * 24
-            hours    = minutes // 60
-            days     = hours // 24
-            rem_h    = hours % 24
-            time_str = f"{days}d {rem_h}h" if days > 0 else f"{hours}h {minutes % 60}m"
-            self.body_lay.addWidget(
-                self._wide_info_card(f"≈ {time_str}", "Estimated watch time", C_TEAL, "⏱")
-            )
-
-        # ── Section 4: Genre breakdown ───────────────────────────────────
         top_genres = s.get("top_genres", [])
         if top_genres:
-            self.body_lay.addWidget(self._section_label("TOP GENRES"))
-            chart = _GenreChart(top_genres)
-            self.body_lay.addWidget(chart)
+            genres_card = _GenresCard(top_genres)
+            mid.addWidget(genres_card, stretch=1)
+
+        mid_w = QWidget()
+        mid_w.setStyleSheet("background:transparent;")
+        mid_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        mid_w.setLayout(mid)
+        self._body_lay.addWidget(mid_w)
+
+        # Ratings
+        dist = self._rating_dist()
+        if dist:
+            self._body_lay.addWidget(_RatingCard(dist))
+
+        self._body_lay.addStretch(1)
+
+    def _rating_dist(self) -> List[Tuple[int, int]]:
+        conn = self.db._get_conn()
+        rows = conn.execute(
+            "SELECT CAST(ROUND(score) AS INTEGER) AS s, COUNT(*) AS c "
+            "FROM ratings GROUP BY s ORDER BY s DESC"
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows if r[0] and 1 <= r[0] <= 6]
 
 
+# ── KPI row ────────────────────────────────────────────────────────────────────
 
-        # ── Section 5: Remarkable anime ────────────────────────────────
-        self.body_lay.addWidget(self._section_label("HIGHLIGHTS FROM YOUR LIBRARY"))
-        remarkable = self.db.get_remarkable_anime()
-        if remarkable:
-            for key, icon, title_fmt in [
-                ("most_watched",  "▶", lambda r: f"{r.get('cnt',0)} eps watched"),
-                ("highest_rated", "🏆", lambda r: f"avg {r.get('avg_sc',0):.1f}/6 rating"),
-                ("lowest_rated",  "📉", lambda r: f"avg {r.get('avg_sc',0):.1f}/6 rating"),
-                ("most_recent",   "🆕", lambda r: "Most recently added"),
-            ]:
-                entry = remarkable.get(key)
-                if not entry: continue
-                name = entry.get("english_title") or entry.get("romaji_title","")
-                subtitle = title_fmt(entry)
-                lbl_map = {
-                    "most_watched":  "Most Episodes Watched",
-                    "highest_rated": "Highest Rated by You",
-                    "lowest_rated":  "Lowest Rated by You",
-                    "most_recent":   "Most Recently Added",
-                }
-                self.body_lay.addWidget(
-                    self._highlight_row(icon, lbl_map[key], name, subtitle)
-                )
+class _KpiRow(QWidget):
+    """Four stat tiles in a horizontal row."""
 
-        self.body_lay.addStretch()
+    def __init__(self, s: Dict, parent=None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background:transparent;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-    # ── Widget builders ────────────────────────────────────────────────────────
+        watched  = s.get("total_episodes_watched", 0)
+        mins     = watched * 24
+        days     = mins // 1440
+        rem_h    = (mins % 1440) // 60
+        time_str = (f"{days}d {rem_h}h" if days > 0
+                    else f"{mins // 60}h {mins % 60}m" if mins >= 60
+                    else f"{mins}m")
+        avg      = s.get("average_score")
 
-    def _section_label(self, text: str) -> QLabel:
-        l = QLabel(text)
-        l.setStyleSheet(
-            f"font-size:10px;color:{C_DIM};font-weight:700;letter-spacing:1.8px;"
+        tiles = [
+            (str(watched),                          "EPISODES WATCHED", C_GREEN),
+            (str(s.get("completed", 0)),            "COMPLETED",        C_PURPLE),
+            (f"{avg:.1f} / 6" if avg else "—",      "AVG YOUR RATING",  C_AMBER),
+            (time_str if watched else "—",          "TIME INVESTED",    C_TEAL),
+        ]
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(16)
+        for val, label, color in tiles:
+            lay.addWidget(_KpiTile(val, label, color))
+
+
+class _KpiTile(QFrame):
+    """Single KPI: colored left-accent bar + large number + label."""
+
+    def __init__(self, value: str, label: str, color: str,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("statsPageCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Left accent bar
+        accent = QFrame()
+        accent.setFixedWidth(4)
+        accent.setStyleSheet(
+            f"background:{color};border-top-left-radius:10px;"
+            "border-bottom-left-radius:10px;border-radius:0px;"
+            f"background:{color};"
         )
-        return l
+        accent.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        outer.addWidget(accent)
 
-    def _kpi_card(self, value: str, label: str, color: str, icon: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("statCard")
-        card.setMinimumHeight(96)
-        lay  = QVBoxLayout(card)
-        lay.setContentsMargins(18, 14, 18, 14)
-        lay.setSpacing(6)
+        # Content
+        inner = QVBoxLayout()
+        inner.setContentsMargins(20, 24, 20, 24)
+        inner.setSpacing(10)
 
-        top = QHBoxLayout()
-        ic  = QLabel(icon)
-        ic.setStyleSheet(f"font-size:18px;background:transparent;")
-        top.addWidget(ic)
-        top.addStretch()
-        lay.addLayout(top)
-
-        val = QLabel(value)
-        val.setStyleSheet(
-            f"font-size:28px;font-weight:700;color:{color};"
+        val_lbl = QLabel(value)
+        val_lbl.setStyleSheet(
+            f"font-size:34px;font-weight:700;color:{color};"
             "letter-spacing:-0.5px;background:transparent;"
         )
-        lay.addWidget(val)
+        inner.addWidget(val_lbl)
 
         lbl = QLabel(label)
         lbl.setStyleSheet(
-            f"font-size:11px;color:{C_MUTED};font-weight:500;background:transparent;"
-        )
-        lbl.setWordWrap(True)
-        lay.addWidget(lbl)
-        return card
-
-    def _status_row(self, label: str, count: int, total: int,
-                    color: str) -> QFrame:
-        """Horizontal progress row: label · bar · count · pct"""
-        row = QFrame()
-        row.setObjectName("statCard")
-        row.setFixedHeight(52)
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(16, 0, 16, 0)
-        lay.setSpacing(12)
-
-        # Color dot
-        dot = QLabel("●")
-        dot.setStyleSheet(f"font-size:10px;color:{color};background:transparent;")
-        dot.setFixedWidth(14)
-        lay.addWidget(dot)
-
-        # Label
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"font-size:13px;color:{C_TEXT};background:transparent;")
-        lbl.setFixedWidth(120)
-        lay.addWidget(lbl)
-
-        # Progress bar
-        from PyQt6.QtWidgets import QProgressBar
-        bar = QProgressBar()
-        bar.setMaximum(total)
-        bar.setValue(count)
-        bar.setTextVisible(False)
-        bar.setFixedHeight(6)
-        bar.setStyleSheet(
-            f"QProgressBar{{background:{C_BORDER};border:none;border-radius:3px;}}"
-            f"QProgressBar::chunk{{background:{color};border-radius:3px;}}"
-        )
-        bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        lay.addWidget(bar)
-
-        # Count
-        cnt = QLabel(str(count))
-        cnt.setStyleSheet(
-            f"font-size:15px;font-weight:700;color:{color};background:transparent;"
-        )
-        cnt.setFixedWidth(36)
-        cnt.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(cnt)
-
-        # Percentage
-        pct = (count / total * 100) if total else 0
-        pct_lbl = QLabel(f"{pct:.0f}%")
-        pct_lbl.setStyleSheet(f"font-size:11px;color:{C_MUTED};background:transparent;")
-        pct_lbl.setFixedWidth(36)
-        pct_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(pct_lbl)
-        return row
-
-    def _wide_info_card(self, value: str, sub: str, color: str, icon: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("statCard")
-        card.setFixedHeight(72)
-        lay = QHBoxLayout(card)
-        lay.setContentsMargins(18, 0, 18, 0)
-        lay.setSpacing(16)
-
-        ic = QLabel(icon)
-        ic.setStyleSheet(f"font-size:24px;background:transparent;")
-        lay.addWidget(ic)
-
-        col = QVBoxLayout()
-        col.setSpacing(2)
-        val = QLabel(value)
-        val.setStyleSheet(
-            f"font-size:22px;font-weight:700;color:{color};background:transparent;"
-        )
-        col.addWidget(val)
-        sub_lbl = QLabel(sub)
-        sub_lbl.setStyleSheet(f"font-size:11px;color:{C_MUTED};background:transparent;")
-        col.addWidget(sub_lbl)
-        lay.addLayout(col)
-        lay.addStretch()
-        return card
-
-
-# ── Custom paint widgets ───────────────────────────────────────────────────────
-
-    def _highlight_row(self, icon: str, category: str,
-                       anime_name: str, subtitle: str) -> QFrame:
-        row = QFrame()
-        row.setObjectName("statCard")
-        row.setFixedHeight(58)
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(16, 0, 16, 0)
-        lay.setSpacing(12)
-
-        ic = QLabel(icon)
-        ic.setStyleSheet("font-size:18px;background:transparent;")
-        ic.setFixedWidth(24)
-        lay.addWidget(ic)
-
-        col = QVBoxLayout()
-        col.setSpacing(2)
-        cat_lbl = QLabel(category.upper())
-        cat_lbl.setStyleSheet(
-            f"font-size:9px;font-weight:700;color:{C_DIM};"
+            "font-size:11px;color:#4a5070;font-weight:700;"
             "letter-spacing:1px;background:transparent;"
         )
-        col.addWidget(cat_lbl)
-        name_lbl = QLabel(anime_name[:50])
-        name_lbl.setStyleSheet(
-            f"font-size:13px;font-weight:600;color:{C_TEXT};background:transparent;"
+        inner.addWidget(lbl)
+
+        outer.addLayout(inner)
+
+
+# ── Donut ──────────────────────────────────────────────────────────────────────
+
+class _DonutWidget(QWidget):
+    """Pure QPainter donut — fixed square size, no clipping issues."""
+
+    SIZE   = 200
+    STROKE = 20
+    GAP    = 4   # degrees gap between segments
+
+    def __init__(self, data: List[Tuple[str, int, str]], parent=None) -> None:
+        super().__init__(parent)
+        self._data  = [(l, v, c) for l, v, c in data if v > 0]
+        self._total = sum(v for _, v, _ in self._data)
+        self.setFixedSize(self.SIZE, self.SIZE)
+
+    def paintEvent(self, _) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        half   = self.STROKE // 2 + 2
+        size   = self.SIZE - half * 2
+        rect   = QRectF(half, half, size, size)
+
+        # Background ring
+        bg = QPen(QColor(C_BORDER))
+        bg.setWidth(self.STROKE)
+        bg.setCapStyle(Qt.PenCapStyle.FlatCap)
+        p.setPen(bg)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(rect)
+
+        if not self._data or self._total == 0:
+            p.end()
+            return
+
+        n_gaps      = len(self._data)
+        total_gap   = self.GAP * n_gaps * 16
+        available   = (360 * 16) - total_gap
+        angle       = 90 * 16        # 12 o'clock
+
+        seg = QPen()
+        seg.setWidth(self.STROKE)
+        seg.setCapStyle(Qt.PenCapStyle.FlatCap)
+
+        for _, value, color in self._data:
+            span = max(round((value / self._total) * available), 1)
+            seg.setColor(QColor(color))
+            p.setPen(seg)
+            p.drawArc(rect, angle, -span)
+            angle -= span + self.GAP * 16
+
+        # Centre: total number
+        p.setPen(QPen(QColor(C_TEXT)))
+        f = QFont()
+        f.setPointSize(22)
+        f.setWeight(QFont.Weight.Bold)
+        p.setFont(f)
+        p.drawText(
+            QRectF(half, half + size * 0.22, size, size * 0.38),
+            Qt.AlignmentFlag.AlignCenter,
+            str(self._total),
         )
-        col.addWidget(name_lbl)
-        lay.addLayout(col)
-        lay.addStretch()
 
-        sub_lbl = QLabel(subtitle)
-        sub_lbl.setStyleSheet(f"font-size:12px;color:{C_MUTED};background:transparent;")
-        lay.addWidget(sub_lbl)
-        return row
-
-
-class _StackedBar(QWidget):
-    """Compact stacked horizontal bar with legend."""
-
-    def __init__(self, data: List[Tuple], total: int, parent=None):
-        super().__init__(parent)
-        self.data  = [(l, v, c) for l, v, c in data if v > 0]
-        self.total = max(total, 1)
-        self.setFixedHeight(36)
-        self.setStyleSheet("background:transparent;")
-
-    def paintEvent(self, ev):
-        if not self.data:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w  = self.width() - 2
-        bh = 10
-        by = 4
-        x  = 1
-
-        p.setBrush(QBrush(QColor(C_BORDER)))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(x, by, w, bh, 5, 5)
-
-        cx = x
-        for i, (label, value, color) in enumerate(self.data):
-            sw = max(int((value / self.total) * w), 2)
-            p.setBrush(QBrush(QColor(color)))
-            if i == 0:
-                p.drawRoundedRect(cx, by, sw, bh, 5, 5)
-                p.drawRect(cx + sw - 5, by, 5, bh)
-            elif i == len(self.data) - 1:
-                p.drawRoundedRect(cx, by, sw, bh, 5, 5)
-                p.drawRect(cx, by, 5, bh)
-            else:
-                p.drawRect(cx, by, sw, bh)
-            cx += sw
-
+        # Centre: "in library"
+        p.setPen(QPen(QColor(C_DIM)))
+        f2 = QFont()
+        f2.setPointSize(8)
+        p.setFont(f2)
+        p.drawText(
+            QRectF(half, half + size * 0.60, size, size * 0.22),
+            Qt.AlignmentFlag.AlignCenter,
+            "in library",
+        )
         p.end()
 
 
-class _GenreChart(QWidget):
-    COLORS = [C_PURPLE, C_GREEN, C_AMBER, C_RED,
-              C_BLUE, C_ORANGE, C_TEAL, C_PINK]
+# ── Status card ────────────────────────────────────────────────────────────────
 
-    def __init__(self, genres: List[Tuple], parent=None):
+class _StatusCard(QFrame):
+    """Donut + 4-row legend."""
+
+    def __init__(self, data: List[Tuple[str, int, str]], parent=None) -> None:
         super().__init__(parent)
-        self.genres = genres
-        self.setMinimumHeight(len(genres) * 38 + 8)
-        self.setStyleSheet("background:transparent;")
+        self.setObjectName("statsPageCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-    def paintEvent(self, ev):
-        if not self.genres:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 28, 28, 28)
+        lay.setSpacing(0)
 
-        max_v   = max(v for _, v in self.genres)
-        label_w = 150
-        num_w   = 40
-        bar_w   = self.width() - label_w - num_w - 16
-        row_h   = 34
+        lay.addWidget(_section_header("YOUR LIBRARY"))
+        lay.addSpacing(24)
+        lay.addWidget(_DonutWidget(data), alignment=Qt.AlignmentFlag.AlignHCenter)
+        lay.addSpacing(28)
 
-        font = QFont()
-        font.setPointSize(10)
-        p.setFont(font)
+        # Legend rows
+        for label, value, color in data:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(10)
 
-        for i, (genre, count) in enumerate(self.genres):
-            y   = i * row_h + 4
-            col = QColor(self.COLORS[i % len(self.COLORS)])
+            dot = QLabel("●")
+            dot.setFixedWidth(16)
+            dot.setStyleSheet(f"font-size:10px;color:{color};background:transparent;")
+            row.addWidget(dot)
 
-            # Genre label
-            p.setPen(QPen(QColor(C_TEXT)))
-            p.drawText(0, y, label_w, 22,
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       genre)
+            name = QLabel(label)
+            name.setStyleSheet("font-size:13px;color:#8a91a6;background:transparent;")
+            row.addWidget(name, 1)
 
-            # Bar background
-            p.setBrush(QBrush(QColor(C_BORDER)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(label_w, y + 4, bar_w, 14, 5, 5)
+            cnt = QLabel(str(value))
+            cnt.setStyleSheet(
+                f"font-size:15px;font-weight:700;color:{color};background:transparent;"
+            )
+            cnt.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(cnt)
 
-            # Bar fill with gradient
-            fill_w = max(int((count / max_v) * bar_w), 6)
-            grad   = QLinearGradient(label_w, 0, label_w + fill_w, 0)
-            col2   = QColor(col)
-            col2.setAlpha(100)
-            grad.setColorAt(0, col)
-            grad.setColorAt(1, col2)
-            p.setBrush(QBrush(grad))
-            p.drawRoundedRect(label_w, y + 4, fill_w, 14, 5, 5)
-
-            # Count label
-            p.setPen(QPen(QColor(C_TEXT)))
-            small = QFont()
-            small.setPointSize(9)
-            p.setFont(small)
-            p.drawText(label_w + bar_w + 8, y, num_w, 22,
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       str(count))
-            p.setFont(font)
-
-        p.end()
+            lay.addLayout(row)
+            lay.addSpacing(14)
 
 
-class _RatingDist(QWidget):
-    """Bar chart of rating distribution (1–6)."""
-    LABELS = {1: "Terrible", 2: "Bad", 3: "Fair",
-               4: "Good",    5: "Great", 6: "Masterpiece"}
-    COLORS = {1: C_RED, 2: "#fb923c", 3: C_AMBER,
-               4: C_GREEN, 5: C_PURPLE, 6: C_TEAL}
+# ── Genres card ────────────────────────────────────────────────────────────────
 
-    def __init__(self, dist: List[Tuple[int, int]], parent=None):
+class _GenresCard(QFrame):
+    """Top genres with proportional bars."""
+
+    def __init__(self, genres: List[Tuple[str, int]], parent=None) -> None:
         super().__init__(parent)
-        self.dist = dist   # [(score_int, count), ...]
-        self.setMinimumHeight(len(dist) * 38 + 8)
-        self.setStyleSheet("background:transparent;")
+        self.setObjectName("statsPageCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-    def paintEvent(self, ev):
-        if not self.dist:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 28, 28, 28)
+        lay.setSpacing(0)
 
-        max_v   = max(c for _, c in self.dist)
-        label_w = 120
-        num_w   = 50
-        bar_w   = self.width() - label_w - num_w - 16
-        row_h   = 34
+        lay.addWidget(_section_header("TOP GENRES"))
+        lay.addSpacing(24)
 
-        font = QFont()
-        font.setPointSize(10)
-        p.setFont(font)
+        max_c = max((c for _, c in genres), default=1)
 
-        for i, (score, count) in enumerate(self.dist):
-            y   = i * row_h + 4
-            col = QColor(self.COLORS.get(score, C_PURPLE))
-            lbl = f"★ {score}  {self.LABELS.get(score, '')}"
+        for i, (genre, count) in enumerate(genres[:8]):
+            color = _GENRE_COLORS[i % len(_GENRE_COLORS)]
 
-            p.setPen(QPen(QColor(C_TEXT)))
-            p.drawText(0, y, label_w, 22,
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       lbl)
+            # Genre name + count on one line
+            top = QHBoxLayout()
+            top.setContentsMargins(0, 0, 0, 0)
+            top.setSpacing(0)
 
-            p.setBrush(QBrush(QColor(C_BORDER)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(label_w, y + 4, bar_w, 14, 5, 5)
+            g = QLabel(genre)
+            g.setStyleSheet("font-size:13px;color:#c0c4d6;background:transparent;")
+            top.addWidget(g)
+            top.addStretch()
 
-            fill_w = max(int((count / max_v) * bar_w), 6)
-            p.setBrush(QBrush(col))
-            p.drawRoundedRect(label_w, y + 4, fill_w, 14, 5, 5)
+            c = QLabel(str(count))
+            c.setStyleSheet(
+                f"font-size:13px;font-weight:700;color:{color};background:transparent;"
+            )
+            top.addWidget(c)
+            lay.addLayout(top)
+            lay.addSpacing(7)
 
-            p.setPen(QPen(QColor(C_TEXT)))
-            small = QFont(); small.setPointSize(9)
-            p.setFont(small)
-            p.drawText(label_w + bar_w + 8, y, num_w, 22,
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       f"{count}×")
-            p.setFont(font)
+            # Bar
+            bar = QProgressBar()
+            bar.setMaximum(max_c)
+            bar.setValue(count)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(7)
+            bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            bar.setStyleSheet(
+                f"QProgressBar{{background:{C_BORDER};border:none;border-radius:3px;}}"
+                f"QProgressBar::chunk{{background:{color};border-radius:3px;}}"
+            )
+            lay.addWidget(bar)
 
-        p.end()
+            if i < len(genres[:8]) - 1:
+                lay.addSpacing(18)
+
+
+# ── Rating card ────────────────────────────────────────────────────────────────
+
+class _RatingCard(QFrame):
+    """Rating distribution — one row per star level."""
+
+    def __init__(self, dist: List[Tuple[int, int]], parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("statsPageCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 28, 28, 28)
+        lay.setSpacing(0)
+
+        lay.addWidget(_section_header("YOUR RATINGS"))
+        lay.addSpacing(24)
+
+        max_c = max((c for _, c in dist), default=1)
+
+        for score, count in sorted(dist, key=lambda x: x[0], reverse=True):
+            color = _RATING_COLORS.get(score, C_PURPLE)
+            ltext = _RATING_LABELS.get(score, "")
+
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 8, 0, 8)
+            row.setSpacing(14)
+
+            # Star score
+            star = QLabel(f"★ {score}")
+            star.setFixedWidth(40)
+            star.setStyleSheet(
+                f"font-size:15px;font-weight:700;color:{color};background:transparent;"
+            )
+            row.addWidget(star)
+
+            # Label
+            name = QLabel(ltext)
+            name.setFixedWidth(100)
+            name.setStyleSheet("font-size:13px;color:#5a6080;background:transparent;")
+            row.addWidget(name)
+
+            # Bar
+            bar = QProgressBar()
+            bar.setMaximum(max_c)
+            bar.setValue(count)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(8)
+            bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            bar.setStyleSheet(
+                f"QProgressBar{{background:{C_BORDER};border:none;border-radius:4px;}}"
+                f"QProgressBar::chunk{{background:{color};border-radius:4px;}}"
+            )
+            row.addWidget(bar, 1)
+
+            # Count
+            cnt = QLabel(f"{count}×")
+            cnt.setFixedWidth(40)
+            cnt.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            cnt.setStyleSheet("font-size:13px;color:#4a5070;background:transparent;")
+            row.addWidget(cnt)
+
+            lay.addLayout(row)

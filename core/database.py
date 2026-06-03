@@ -1,5 +1,5 @@
 """
-AnimeTracker — Database Manager
+Miroku — Database Manager
 SQLite-backed persistence layer with schema migrations.
 """
 import sqlite3
@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 
-DB_VERSION = 2
+DB_VERSION = 3
+# Legacy data directory name (kept so existing installs keep their library).
 APP_DIR = Path.home() / ".animetracker"
 DB_PATH = APP_DIR / "anime.db"
 BACKUP_DIR = APP_DIR / "backups"
@@ -67,6 +68,8 @@ class DatabaseManager:
             self._migrate_v1(conn)
         if current < 2:
             self._migrate_v2(conn)
+        if current < 3:
+            self._migrate_v3(conn)
 
         if current == 0:
             conn.execute("INSERT INTO schema_version VALUES (?)", (DB_VERSION,))
@@ -81,6 +84,28 @@ class DatabaseManager:
                 conn.execute(col_sql)
             except Exception:
                 pass   # column already exists
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint     TEXT UNIQUE NOT NULL,
+                kind            TEXT NOT NULL,
+                anime_id        INTEGER,
+                anilist_id      INTEGER,
+                title           TEXT NOT NULL,
+                message         TEXT NOT NULL,
+                payload         TEXT DEFAULT '{}',
+                state           TEXT DEFAULT 'active',
+                first_seen      INTEGER,
+                last_seen       INTEGER,
+                remind_at       INTEGER,
+                dismissed_at    INTEGER
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_state "
+            "ON notifications(state, remind_at)"
+        )
 
         conn.commit()
 
@@ -165,7 +190,7 @@ class DatabaseManager:
         except Exception:
             pass  # column already exists
 
-    def _migrate_v2(self, conn: sqlite3.Connection):
+    def _migrate_v2(self, conn: sqlite3.Connection): 
         """Add statistics table and search FTS."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS watch_sessions (
@@ -200,6 +225,23 @@ class DatabaseManager:
                 INSERT INTO anime_fts(rowid, romaji_title, english_title, genres)
                 VALUES (new.id, new.romaji_title, new.english_title, new.genres);
             END;
+        """)
+    
+    def _migrate_v3(self, conn: sqlite3.Connection):
+        """Add watch_log table (heatmap / activity history)."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS watch_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id    INTEGER REFERENCES anime(id) ON DELETE CASCADE,
+                episode_num INTEGER NOT NULL,
+                watched_at  INTEGER NOT NULL,
+                anime_title TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_watch_log_date
+                ON watch_log(watched_at);
+            CREATE INDEX IF NOT EXISTS idx_watch_log_anime
+                ON watch_log(anime_id);
+
         """)
 
     # ─── Anime CRUD ───────────────────────────────────────────────────────────
@@ -354,6 +396,17 @@ class DatabaseManager:
             conn.execute(
                 "UPDATE anime SET last_watched_at=? WHERE id=?",
                 (now, anime_id),
+            )
+            # Log to watch_log for heatmap and history
+            title_row = conn.execute(
+                "SELECT romaji_title FROM anime WHERE id=?", (anime_id,)
+            ).fetchone()
+            title = title_row[0] if title_row else ""
+            conn.execute(
+                """INSERT OR IGNORE INTO watch_log
+                   (anime_id, episode_num, watched_at, anime_title)
+                   VALUES (?,?,?,?)""",
+                (anime_id, ep_num, now, title),
             )
         conn.commit()
 
@@ -529,6 +582,53 @@ class DatabaseManager:
             "average_score": round(avg_score, 1) if avg_score else None,
             "top_genres": top_genres,
         }
+    
+    # ─── Watch Log ────────────────────────────────────────────────────────────
+
+    def get_watch_log_year(self, year: int) -> List[Dict]:
+        start = int(datetime(year, 1, 1).timestamp())
+        end   = int(datetime(year, 12, 31, 23, 59, 59).timestamp())
+        conn  = self._get_conn()
+        rows  = conn.execute(
+            """SELECT watched_at, anime_id, episode_num, anime_title
+               FROM watch_log WHERE watched_at BETWEEN ? AND ?
+               ORDER BY watched_at ASC""",
+            (start, end),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_available_log_years(self) -> List[int]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT strftime('%Y', watched_at, 'unixepoch') AS y "
+            "FROM watch_log ORDER BY y DESC"
+        ).fetchall()
+        years = [int(r[0]) for r in rows if r[0]]
+        return years if years else [datetime.now().year]
+
+    def get_current_streak(self) -> int:
+        conn  = self._get_conn()
+        rows  = conn.execute(
+            """SELECT DISTINCT date(watched_at, 'unixepoch') AS d
+               FROM watch_log ORDER BY d DESC"""
+        ).fetchall()
+        if not rows:
+            return 0
+        from datetime import date, timedelta
+        today    = date.today()
+        streak   = 0
+        expected = today
+        for row in rows:
+            d = date.fromisoformat(row[0])
+            if d == expected:
+                streak  += 1
+                expected = expected - timedelta(days=1)
+            elif d == today - timedelta(days=1) and streak == 0:
+                streak  += 1
+                expected = d - timedelta(days=1)
+            else:
+                break
+        return streak
 
     # ─── Dropped ──────────────────────────────────────────────────────────────
 
@@ -624,3 +724,86 @@ class DatabaseManager:
             except Exception:
                 continue
         return count
+
+    # Notifications
+
+    def upsert_notification(self, data: Dict[str, Any]) -> Optional[int]:
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        payload = data.get("payload", {})
+        if not isinstance(payload, str):
+            payload = json.dumps(payload)
+        row = conn.execute(
+            "SELECT id, state, remind_at FROM notifications WHERE fingerprint=?",
+            (data["fingerprint"],),
+        ).fetchone()
+        if row:
+            if row["state"] == "dismissed":
+                return None
+            conn.execute(
+                """UPDATE notifications
+                   SET last_seen=?, title=?, message=?, payload=?
+                   WHERE id=?""",
+                (now, data["title"], data["message"], payload, row["id"]),
+            )
+            conn.commit()
+            return row["id"]
+        cur = conn.execute(
+            """INSERT INTO notifications
+               (fingerprint, kind, anime_id, anilist_id, title, message, payload,
+                state, first_seen, last_seen)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data["fingerprint"],
+                data["kind"],
+                data.get("anime_id"),
+                data.get("anilist_id"),
+                data["title"],
+                data["message"],
+                payload,
+                "active",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+    def get_due_notifications(self, limit: int = 3) -> List[Dict]:
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        rows = conn.execute(
+            """SELECT * FROM notifications
+               WHERE state='active'
+                 AND (remind_at IS NULL OR remind_at <= ?)
+               ORDER BY last_seen DESC
+               LIMIT ?""",
+            (now, limit),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item.get("payload") or "{}")
+            except Exception:
+                item["payload"] = {}
+            result.append(item)
+        return result
+
+    def dismiss_notification(self, notification_id: int):
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        conn.execute(
+            "UPDATE notifications SET state='dismissed', dismissed_at=? WHERE id=?",
+            (now, notification_id),
+        )
+        conn.commit()
+
+    def remind_notification_later(self, notification_id: int, hours: int = 24):
+        conn = self._get_conn()
+        remind_at = int(datetime.now().timestamp()) + max(1, hours) * 3600
+        conn.execute(
+            "UPDATE notifications SET state='active', remind_at=? WHERE id=?",
+            (remind_at, notification_id),
+        )
+        conn.commit()

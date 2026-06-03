@@ -1,5 +1,5 @@
 """
-AnimeTracker — AnimeStream Page
+Miroku - Stream Page
 Coming Soon section for the anime download/streaming feature.
 Shows the concept, pricing tiers, and lets users register interest.
 Payment via MTN MoMo / Orange Money → Telegram channel access.
@@ -12,11 +12,15 @@ from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QCursor, QFont
 
 
+STREAM_NAME = "Miroku Stream"
+
+
 class AnimeStreamPage(QWidget):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db       = db
-        self.settings = QSettings("AnimeTracker", "AnimeTracker")
+        from core.app_settings import app_settings
+        self.settings = app_settings()
         self._build_ui()
 
     def _build_ui(self):
@@ -46,14 +50,14 @@ class AnimeStreamPage(QWidget):
         lay.addWidget(coming_badge, alignment=Qt.AlignmentFlag.AlignLeft)
         lay.addSpacing(16)
 
-        hero_title = QLabel("AnimeStream")
+        hero_title = QLabel(STREAM_NAME)
         hero_title.setStyleSheet(
             "font-size:36px;font-weight:700;color:#f0f1f5;letter-spacing:-0.5px;"
         )
         lay.addWidget(hero_title)
 
         hero_sub = QLabel(
-            "Watch anime as it airs — in HD, directly from AnimeTracker.\n"
+            "Watch anime as it airs — in HD, directly from Miroku.\n"
             "No ads. No accounts. Just anime."
         )
         hero_sub.setStyleSheet("font-size:16px;color:#6b7280;line-height:1.6;")
@@ -109,7 +113,7 @@ class AnimeStreamPage(QWidget):
 
         notify_desc = QLabel(
             "Leave your phone number and we will send you a MoMo payment request "
-            "the day AnimeStream goes live. No spam — one message only."
+            f"the day {STREAM_NAME} goes live. No spam - one message only."
         )
         notify_desc.setStyleSheet("font-size:13px;color:#6b7280;")
         notify_desc.setWordWrap(True)
@@ -153,7 +157,7 @@ class AnimeStreamPage(QWidget):
         # ── Transparency note ─────────────────────────────────────────────
         disclaimer = QFrame()
         disclaimer.setStyleSheet(
-            "background:#0e1620;border:1px solid #1e2d45;border-radius:10px;"
+            "background:#0e1620;border-radius:10px;"
         )
         dl = QVBoxLayout(disclaimer)
         dl.setContentsMargins(20, 16, 20, 16)
@@ -164,7 +168,7 @@ class AnimeStreamPage(QWidget):
         dl.addWidget(dt)
 
         dd = QLabel(
-            "AnimeStream aggregates content from community sources and provides "
+            f"{STREAM_NAME} aggregates content from community sources and provides "
             "organised access to it. We do not host files directly. "
             "Access is to a curated Telegram channel updated by our team "
             "as new episodes become available from the community."
@@ -190,7 +194,7 @@ class AnimeStreamPage(QWidget):
     def _step_row(self, num: str, title: str, desc: str) -> QFrame:
         row = QFrame()
         row.setStyleSheet(
-            "QFrame{background:#111420;border:1px solid #1a1d28;border-radius:10px;}"
+            "QFrame{background:#111420;border-radius:10px;}"
         )
         row.setFixedHeight(72)
         lay = QHBoxLayout(row)
@@ -224,8 +228,7 @@ class AnimeStreamPage(QWidget):
         border = "#4b3fa8" if featured else "#1a1d28"
         bg     = "#151929" if featured else "#111420"
         card.setStyleSheet(
-            f"QFrame{{background:{bg};border:{'2' if featured else '1'}px "
-            f"solid {border};border-radius:12px;}}"
+            f"QFrame{{background:{bg};border-radius:12px;}}"
         )
         lay = QVBoxLayout(card)
         lay.setContentsMargins(20, 20, 20, 20)
@@ -278,7 +281,7 @@ class AnimeStreamPage(QWidget):
             return
         self.settings.setValue("animestream_phone", phone)
         from ui.toast import Toast
-        Toast.show(self.window(), f"{phone} has been saved.\n\n" "We will notify you the day AnimeStream launches.", kind="success")
+        Toast.show(self.window(), f"{phone} has been saved.\n\nWe will notify you the day {STREAM_NAME} launches.", kind="success")
         
 
     def _reset_notify(self, lay):
