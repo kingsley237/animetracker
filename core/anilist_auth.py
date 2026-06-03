@@ -1,5 +1,5 @@
 """
-AnimeTracker — AniList OAuth2 Authentication + Score Sync
+Miroku — AniList OAuth2 Authentication + Score Sync
 Allows users to log in with their AniList account and submit
 their ratings back to AniList transparently.
 
@@ -60,7 +60,8 @@ class AniListAuth(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._settings = QSettings("AnimeTracker", "AnimeTracker")
+        from core.app_settings import app_settings
+        self._settings = app_settings()
         self._token: Optional[str] = self._settings.value("anilist_token", None)
         self._username: Optional[str] = self._settings.value("anilist_username", None)
 
@@ -117,7 +118,7 @@ class AniListAuth(QObject):
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    b"<h2>AnimeTracker: Login successful! You can close this tab.</h2>"
+                    b"<h2>Miroku: Login successful! You can close this tab.</h2>"
                 )
 
             def log_message(self, format, *args):

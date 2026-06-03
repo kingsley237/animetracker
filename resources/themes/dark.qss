@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   AnimeTracker — Dark Theme QSS
+   Miroku — Dark Theme QSS
    Inspired by: AniList.co, Taiga, linear.app
    Palette: Deep slate bg · Indigo accent · Teal secondary · Warm amber highlight
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -153,24 +153,27 @@ QLineEdit#searchBar::placeholder {
 /* ── Filter pills ────────────────────────────────────────────────────────── */
 QPushButton#filterPill {
     background-color: #131620;
-    border: 1px solid #1e2130;
-    border-radius: 16px;
+    border: 1.5px solid #1e2130;
+    border-radius: 14px;
     color: #6b7280;
     font-size: 12px;
     font-weight: 500;
-    padding: 5px 14px;
+    padding: 6px 18px;
+    min-height: 28px;
+    max-height: 28px;
 }
 
 QPushButton#filterPill:hover {
     background-color: #1a1e2e;
     border-color: #2e3354;
-    color: #9da5c0;
+    color: #c7cbd9;
 }
 
 QPushButton#filterPill[active="true"] {
     background-color: #1e1847;
-    border-color: #4b3fa8;
-    color: #a594f9;
+    border-color: #7c6af7;
+    color: #c4b8ff;
+    font-weight: 600;
 }
 
 /* ── Anime card grid ─────────────────────────────────────────────────────── */
@@ -220,64 +223,35 @@ QScrollBar::handle:horizontal {
     min-width: 30px;
 }
 
-/* ── Anime card ──────────────────────────────────────────────────────────── */
-/* ── Base card ───────────────────────────────────────────────────────────── */
+/* ── Anime card (background + border in paintEvent; mask clips corners) ─── */
 QFrame#animeCard {
-    background-color: #111420;
-    border: 1.5px solid #1e2235;
-    border-radius: 10px;
-}
-
-/* ── Hover — clearly brighter border + subtle bg lift ───────────────────── */
-QFrame#animeCard:hover {
-    border: 2px solid #3d4270;
-    background-color: #141828;
-}
-
-/* ── Selected/active — strong purple border, elevated bg ────────────────── */
-QFrame#animeCard[selected="true"] {
-    border: 2.5px solid #7c6af7;
-    background-color: #181c30;
-}
-
-QFrame#animeCard[selected="true"]:hover {
-    border: 2.5px solid #9d8fff;
-    background-color: #1c2038;
+    background: transparent;
+    border: none;
 }
 
 QLabel#cardCover {
-    border-radius: 8px 8px 0 0;
-    background-color: #1a1d28;
+    background-color: transparent;
+    border: none;
 }
 
 QLabel#cardTitle {
-    font-size: 13px;
-    font-weight: 600;
-    color: #dde0ed;
-}
-
-QLabel#cardSubtitle {
-    font-size: 11px;
-    color: #4a5070;
+    font-size: 12px;
+    font-weight: 700;
+    color: #f0f1f5;
+    background: transparent;
 }
 
 QLabel#cardEpisode {
-    font-size: 11px;
-    color: #7c6af7;
-    font-weight: 500;
+    font-size: 10px;
+    color: #c0c4d6;
+    background: transparent;
 }
 
 QLabel#cardCountdown {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    background: transparent;
 }
-
-QWidget#cardBadge {
-    border-radius: 4px;
-    padding: 2px 6px;
-}
-
 /* ── Status badges ───────────────────────────────────────────────────────── */
 QLabel#badgeWatching {
     background-color: #0e2a1f;
@@ -300,13 +274,14 @@ QLabel#badgeCompleted {
 }
 
 QLabel#badgePlanned {
-    background-color: #1a1e2e;
-    color: #6b7280;
+    background-color: rgba(6, 8, 16, 0.94);
+    color: #f4f2ff;
+    border: 1px solid #9d8fff;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-    padding: 2px 7px;
-    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    letter-spacing: 0.6px;
 }
 
 QLabel#badgeUpcoming {
@@ -356,14 +331,35 @@ QProgressBar[status="upcoming"]::chunk {
 QWidget#detailPanel {
     background-color: #0a0c10;
     border-left: 1px solid #1a1d28;
-    min-width: 340px;
-    max-width: 380px;
+    min-width: 390px;
+    max-width: 390px;
 }
 
+QLabel#detailPanelTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #dfe2ec;
+}
+
+QLabel#detailHeroBanner,
 QWidget#detailBanner {
     background-color: #1a1d28;
-    min-height: 160px;
-    max-height: 160px;
+    border-radius: 8px;
+    min-height: 132px;
+    max-height: 132px;
+}
+
+QFrame#detailSummaryCard,
+QFrame#detailCard {
+    background-color: #111420;
+    border: 1px solid #1e2235;
+    border-radius: 8px;
+}
+
+QLabel#detailCover {
+    background-color: #1a1d28;
+    border: 1px solid #2a2f45;
+    border-radius: 8px;
 }
 
 QLabel#detailBannerImg {
@@ -372,7 +368,7 @@ QLabel#detailBannerImg {
 }
 
 QLabel#detailTitle {
-    font-size: 17px;
+    font-size: 18px;
     font-weight: 700;
     color: #f0f1f5;
     letter-spacing: -0.2px;
@@ -380,7 +376,20 @@ QLabel#detailTitle {
 
 QLabel#detailEngTitle {
     font-size: 12px;
-    color: #4a5070;
+    color: #7f879d;
+}
+
+QLabel#detailStudio {
+    font-size: 11px;
+    color: #626a80;
+}
+
+QFrame#detailMetricBox {
+    background-color: #0d0f14;
+    border: 1px solid #1e2235;
+    border-radius: 7px;
+    min-width: 58px;
+    max-width: 68px;
 }
 
 QLabel#detailScore {
@@ -396,14 +405,38 @@ QLabel#detailScoreLabel {
 
 QLabel#detailMeta {
     font-size: 12px;
-    color: #6b7280;
+    color: #8a91a6;
     line-height: 1.6;
+}
+
+QLabel#detailProgressCard {
+    background-color: #151929;
+    border: 1px solid #252a46;
+    border-radius: 8px;
+    color: #b9adff;
+    font-size: 12px;
+    line-height: 1.7;
+    padding: 10px 14px;
+}
+
+QLabel#detailSectionLabel {
+    font-size: 10px;
+    color: #4e566d;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
 }
 
 QLabel#detailSynopsis {
     font-size: 12px;
     color: #8b90a6;
     line-height: 1.65;
+}
+
+QLabel#detailRatingHint {
+    font-size: 12px;
+    color: #626a80;
+    margin-left: 6px;
 }
 
 /* ── Genre chips ─────────────────────────────────────────────────────────── */
@@ -701,6 +734,131 @@ QLabel#dialogSubtitle {
     color: #4a5070;
 }
 
+/* Settings dialog */
+QDialog#settingsDialog {
+    background-color: #0d0f14;
+}
+
+QWidget#settingsNav {
+    background-color: #090b10;
+    border-right: 1px solid #1e2130;
+    min-width: 204px;
+    max-width: 204px;
+}
+
+QWidget#settingsBody {
+    background-color: #0d0f14;
+}
+
+QLabel#settingsNavBrand {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f0f1f5;
+    letter-spacing: 1px;
+}
+
+QLabel#settingsNavCaption,
+QLabel#settingsNavVersion {
+    font-size: 12px;
+    color: #626a80;
+}
+
+QPushButton#settingsNavBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: #8a91a6;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    padding: 9px 11px;
+}
+
+QPushButton#settingsNavBtn:hover {
+    background-color: #11141d;
+    border-color: #202436;
+    color: #d5d8e4;
+}
+
+QPushButton#settingsNavBtn[active="true"] {
+    background-color: #151928;
+    border-color: #2c3350;
+    color: #f2f3f8;
+    font-weight: 600;
+}
+
+QLabel#settingsTitle {
+    font-size: 22px;
+    font-weight: 700;
+    color: #f0f1f5;
+}
+
+QLabel#settingsSubtitle,
+QLabel#settingsPageSubtitle,
+QLabel#settingsBodyText {
+    font-size: 13px;
+    color: #8a91a6;
+    line-height: 1.55;
+}
+
+QLabel#settingsPageTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f0f1f5;
+}
+
+QFrame#settingsCard {
+    background-color: #111420;
+    border: 1px solid #1e2235;
+    border-radius: 8px;
+}
+
+QLabel#settingsCardTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #dfe2ec;
+}
+
+QLabel#settingsHelperText,
+QLabel#settingsMutedText {
+    font-size: 12px;
+    color: #626a80;
+}
+
+QLabel#settingsValueText {
+    font-size: 13px;
+    color: #c7cbd9;
+    font-weight: 600;
+}
+
+QLabel#settingsGoodText {
+    font-size: 13px;
+    color: #34d399;
+    font-weight: 600;
+}
+
+QLabel#settingsBadText {
+    font-size: 13px;
+    color: #f87171;
+    font-weight: 600;
+}
+
+QLabel#settingsPathText {
+    background-color: #0d0f14;
+    border: 1px solid #1e2235;
+    border-radius: 6px;
+    color: #8a91a6;
+    font-family: "Consolas", "JetBrains Mono", monospace;
+    font-size: 11px;
+    padding: 8px 10px;
+}
+
+QLabel#settingsAboutName {
+    font-size: 24px;
+    font-weight: 700;
+    color: #f0f1f5;
+}
+
 /* ── Stats cards ─────────────────────────────────────────────────────────── */
 QFrame#statCard {
     background-color: #111420;
@@ -782,30 +940,118 @@ QPushButton#filterPill {
     color: #9da5c0 !important;
 }
 
-/* ── Unwatched card — red border all sides, highly visible ──────────────── */
-QFrame#animeCard[hasUnwatched="true"] {
-    background-color: #160f0f;
-    border: 2px solid #7f1d1d;
-    border-left: 4px solid #f87171;
-    border-radius: 10px;
-}
-
-/* ── Unwatched + hover — brighter red so it's still visible ─────────────── */
-QFrame#animeCard[hasUnwatched="true"]:hover {
-    background-color: #1c1010;
-    border: 2px solid #ef4444;
-    border-left: 4px solid #ff6b6b;
-}
-
-/* ── Unwatched + selected — keep red visible even when active ───────────── */
-QFrame#animeCard[hasUnwatched="true"][selected="true"] {
-    background-color: #1a1020;
-    border: 2.5px solid #ef4444;
-    border-left: 4px solid #ff6b6b;
-}
-
 /* ── Progress bar: unwatched alert state ─────────────────────────────────── */
 QProgressBar[status="alert"]::chunk {
     background-color: #f87171;
     border-radius: 3px;
 }
+
+/* ── Cover overlay badges ────────────────────────────────────────────────── */
+QLabel#coverScoreBadge {
+    background-color: rgba(18, 14, 40, 0.86);
+    color: #c4b8ff;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 2px;
+    border: 1px solid rgba(124, 106, 247, 0.45);
+}
+
+QLabel#coverEpBadge {
+    background-color: rgba(18, 14, 40, 0.86);
+    color: #e2e4ec;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 2px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+QLabel#coverBehindBadge {
+    background-color: rgba(22, 16, 0, 0.90);
+    color: #fbbf24;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 2px;
+    border: 1px solid rgba(251, 191, 36, 0.40);
+}
+
+/* ── Behind filter pill — amber tint, set via objectName ────────────────── */
+QPushButton#filterPillBehind {
+    background-color: #1a1500;
+    border: 1.5px solid #78560a;
+    border-radius: 14px;
+    color: #d97706;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 18px;
+    min-height: 28px;
+    max-height: 28px;
+}
+
+QPushButton#filterPillBehind:hover {
+    background-color: #221b00;
+    border-color: #b45309;
+    color: #fbbf24;
+}
+
+QPushButton#filterPillBehind[active="true"] {
+    background-color: #2a2000;
+    border-color: #fbbf24;
+    color: #fde68a;
+    font-weight: 600;
+}
+
+/* ── Section headers in grouped library view ────────────────────────────── */
+QLabel#libSectionHeader {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    background: transparent;
+    padding: 16px 0 8px 0;
+    color: #4a5070;
+}
+
+QFrame#statsPageCard {
+    background-color: #111420;
+    border: 1px solid #1a1d28;
+    border-radius: 10px;
+}
+
+
+/* ── Hero card (#1 entry) ────────────────────────────────────────────────── */
+QFrame#hofHeroCard {
+    background-color: #0f1118;
+    border: 1px solid #fbbf2430;
+    border-radius: 12px;
+}
+
+QFrame#hofHeroCard:hover {
+    border-color: #fbbf2466;
+}
+
+/* ── Rich list row ───────────────────────────────────────────────────────── */
+QFrame#hofRowCard {
+    background-color: #111420;
+    border: 1px solid #1a1d28;
+    border-radius: 10px;
+}
+
+QFrame#hofRowCard:hover {
+    background-color: #141828;
+    border-color: #2e3354;
+}
+
+/* ── Grid card ───────────────────────────────────────────────────────────── */
+QFrame#hofGridCard {
+    background-color: #111420;
+    border: none;
+    border-radius: 10px;
+}
+
+QFrame#hofGridCard:hover {
+    border: 2px solid #4b3fa8;
+}
+
+

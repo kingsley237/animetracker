@@ -1,5 +1,5 @@
 """
-AnimeTracker — Update Checker
+Miroku — Update Checker
 Checks GitHub Releases API on startup in a background thread.
 No auth required — uses the public API endpoint.
 
@@ -20,7 +20,7 @@ GITHUB_OWNER = "kingsley237"
 GITHUB_REPO  = "animetracker"
 
 # Current app version — bump this every release
-APP_VERSION  = "2.2.1"
+APP_VERSION  = "2.4.0"
 
 def _parse_version(v: str) -> Tuple[int, int, int]:
     """Parse 'v2.1.3' or '2.1.3' into (2, 1, 3)."""

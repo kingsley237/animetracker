@@ -1,5 +1,5 @@
 """
-AnimeTracker — Connectivity Monitor
+Miroku — Connectivity Monitor
 Real-time internet connection monitoring.
 Best practice: poll every 10s with a lightweight DNS check.
 Emits online/offline signals. On reconnect, emits reconnected so

@@ -1,5 +1,5 @@
 """
-AnimeTracker — Detail Panel
+Miroku — Detail Panel
 Fixed:
   - Episodes only shown up to last aired (next_episode_num - 1)
   - Cannot rate an episode that hasn't aired yet
@@ -21,14 +21,20 @@ from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QCursor, QFont
 
 from core.database import DatabaseManager
 
-RATING_LABELS = {1: "💀 Terrible", 2: "👎 Bad", 3: "😐 Fair",
-                 4: "👍 Good",    5: "🌟 Great", 6: "🏆 Masterpiece"}
+RATING_LABELS = {
+    1: "Terrible",
+    2: "Bad",
+    3: "Fair",
+    4: "Good",
+    5: "Great",
+    6: "Masterpiece",
+}
 
 WATCH_STATUS_LABELS = {
-    "watching":  "▶  Watching",
-    "completed": "✓  Completed",
-    "planned":   "⏳  Plan to Watch",
-    "dropped":   "✕  Dropped",
+    "watching": "Watching",
+    "completed": "Completed",
+    "planned": "Plan to Watch",
+    "dropped": "Dropped",
 }
 
 def _strip_html(txt: str) -> str:
@@ -42,8 +48,9 @@ def _score_color(s: float) -> str:
 
 
 class DetailPanel(QWidget):
-    episode_changed  = pyqtSignal(int)   # anime_id — card + stats strip refresh
-    stats_changed    = pyqtSignal()      # status changed → stats strip
+    episode_changed       = pyqtSignal(int)   # anime_id — card + stats strip refresh
+    stats_changed         = pyqtSignal()      # status changed → stats strip
+    watch_status_changed  = pyqtSignal(int, str)  # anime_id, new watch_status
     anime_dropped    = pyqtSignal(int)
     anime_deleted    = pyqtSignal(int)
 
@@ -63,55 +70,56 @@ class DetailPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Close
-        cr = QHBoxLayout()
-        cr.setContentsMargins(12, 10, 12, 0)
-        cr.addStretch()
-        x = QPushButton("✕")
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(14, 12, 14, 10)
+        top_bar.setSpacing(8)
+
+        panel_title = QLabel("Details")
+        panel_title.setObjectName("detailPanelTitle")
+        top_bar.addWidget(panel_title)
+        top_bar.addStretch()
+
+        x = QPushButton("X")
         x.setObjectName("iconBtn")
         x.setFixedSize(28, 28)
         x.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         x.clicked.connect(self.hide)
-        cr.addWidget(x)
-        outer.addLayout(cr)
+        top_bar.addWidget(x)
+        outer.addLayout(top_bar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("QScrollArea{border:none;background:transparent;}")
 
         body = QWidget()
-        body.setStyleSheet("background:transparent;")
         self._lay = QVBoxLayout(body)
-        self._lay.setContentsMargins(0, 0, 0, 24)
-        self._lay.setSpacing(0)
+        self._lay.setContentsMargins(14, 0, 14, 18)
+        self._lay.setSpacing(12)
 
         # Banner
         self.banner_lbl = QLabel()
-        self.banner_lbl.setFixedHeight(150)
+        self.banner_lbl.setObjectName("detailHeroBanner")
+        self.banner_lbl.setFixedHeight(132)
         self.banner_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.banner_lbl.setStyleSheet("background:#1a1d28;")
         self._lay.addWidget(self.banner_lbl)
 
         # Cover + title
-        hdr = QWidget()
-        hdr.setStyleSheet("background:transparent;")
+        hdr = QFrame()
+        hdr.setObjectName("detailSummaryCard")
         hl = QHBoxLayout(hdr)
-        hl.setContentsMargins(16, -28, 16, 10)
-        hl.setSpacing(14)
+        hl.setContentsMargins(14, 14, 14, 14)
+        hl.setSpacing(12)
 
         self.cover_lbl = QLabel()
-        self.cover_lbl.setFixedSize(80, 116)
-        self.cover_lbl.setStyleSheet(
-            "background:#1a1d28;border-radius:8px;border:2px solid #0a0c10;"
-        )
+        self.cover_lbl.setObjectName("detailCover")
+        self.cover_lbl.setFixedSize(88, 128)
         self.cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hl.addWidget(self.cover_lbl, 0, Qt.AlignmentFlag.AlignBottom)
+        hl.addWidget(self.cover_lbl)
 
         tb = QVBoxLayout()
-        tb.setSpacing(4)
-        tb.setContentsMargins(0, 36, 0, 0)
+        tb.setSpacing(5)
+        tb.setContentsMargins(0, 0, 0, 0)
 
         self.title_lbl = QLabel()
         self.title_lbl.setObjectName("detailTitle")
@@ -124,80 +132,70 @@ class DetailPanel(QWidget):
         tb.addWidget(self.eng_lbl)
 
         self.studio_lbl = QLabel()
-        self.studio_lbl.setStyleSheet("font-size:11px;color:#4a5070;")
+        self.studio_lbl.setObjectName("detailStudio")
+        self.studio_lbl.setWordWrap(True)
         tb.addWidget(self.studio_lbl)
 
-        hl.addLayout(tb)
-        self._lay.addWidget(hdr)
-        self._lay.addSpacing(4)
+        tb.addSpacing(6)
 
-        # Score + meta
-        mw = QWidget()
-        mw.setStyleSheet("background:transparent;")
-        ml = QHBoxLayout(mw)
-        ml.setContentsMargins(16, 0, 16, 0)
-        ml.setSpacing(20)
+        metrics = QHBoxLayout()
+        metrics.setSpacing(10)
 
-        sc_col = QVBoxLayout()
-        sc_col.setSpacing(1)
+        score_box = QFrame()
+        score_box.setObjectName("detailMetricBox")
+        sc_col = QVBoxLayout(score_box)
+        sc_col.setContentsMargins(10, 8, 10, 8)
+        sc_col.setSpacing(0)
         self.score_lbl = QLabel("–")
         self.score_lbl.setObjectName("detailScore")
+        self.score_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sc_col.addWidget(self.score_lbl)
         sl = QLabel("SCORE")
         sl.setObjectName("detailScoreLabel")
+        sl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sc_col.addWidget(sl)
-        ml.addLayout(sc_col)
+        metrics.addWidget(score_box)
 
         self.meta_lbl = QLabel()
         self.meta_lbl.setObjectName("detailMeta")
         self.meta_lbl.setWordWrap(True)
-        ml.addWidget(self.meta_lbl)
-        ml.addStretch()
-        self._lay.addWidget(mw)
-        self._lay.addSpacing(8)
+        metrics.addWidget(self.meta_lbl, stretch=1)
+        tb.addLayout(metrics)
+
+        hl.addLayout(tb, stretch=1)
+        self._lay.addWidget(hdr)
 
         # Progress info — last watched + next airing (clear, separate lines)
         self.progress_info_lbl = QLabel()
-        self.progress_info_lbl.setStyleSheet(
-            "font-size:12px;color:#a594f9;line-height:1.7;"
-            "background:#151929;border-radius:8px;padding:10px 16px;"
-            "margin:0 16px;"
-        )
+        self.progress_info_lbl.setObjectName("detailProgressCard")
         self.progress_info_lbl.setWordWrap(True)
         self.progress_info_lbl.setVisible(False)
         self._lay.addWidget(self.progress_info_lbl)
-        self._lay.addSpacing(12)
 
         # Genres
         self.genres_w = QWidget()
-        self.genres_w.setStyleSheet("background:transparent;")
         self.genres_l = QHBoxLayout(self.genres_w)
-        self.genres_l.setContentsMargins(16, 0, 16, 0)
+        self.genres_l.setContentsMargins(0, 0, 0, 0)
         self.genres_l.setSpacing(6)
         self.genres_l.addStretch()
         self._lay.addWidget(self.genres_w)
-        self._lay.addSpacing(14)
 
         # Synopsis
-        self._lay.addWidget(self._section_label("SYNOPSIS"))
-        self._lay.addSpacing(5)
+        synopsis_card = self._detail_card("Synopsis")
+        synopsis_lay = synopsis_card.layout()
         self.synopsis_lbl = QLabel()
         self.synopsis_lbl.setObjectName("detailSynopsis")
         self.synopsis_lbl.setWordWrap(True)
-        self.synopsis_lbl.setContentsMargins(16, 0, 16, 0)
         self.synopsis_lbl.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self._lay.addWidget(self.synopsis_lbl)
-        self._lay.addSpacing(16)
+        synopsis_lay.addWidget(self.synopsis_lbl)
+        self._lay.addWidget(synopsis_card)
 
         # Status actions
-        self._lay.addWidget(self._section_label("STATUS"))
-        self._lay.addSpacing(8)
-        ar = QWidget()
-        ar.setStyleSheet("background:transparent;")
-        arl = QHBoxLayout(ar)
-        arl.setContentsMargins(16, 0, 16, 0)
+        actions_card = self._detail_card("Actions")
+        arl = QHBoxLayout()
+        arl.setContentsMargins(0, 0, 0, 0)
         arl.setSpacing(8)
 
         self.status_btn = QPushButton("Watching")
@@ -217,23 +215,24 @@ class DetailPanel(QWidget):
         del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         del_btn.clicked.connect(self._delete)
         arl.addWidget(del_btn)
-        self._lay.addWidget(ar)
-        self._lay.addSpacing(18)
+        actions_card.layout().addLayout(arl)
+        self._lay.addWidget(actions_card)
 
         # Overall rating
-        self._lay.addWidget(self._section_label("OVERALL RATING"))
-        self._lay.addSpacing(6)
+        rating_card = self._detail_card("Overall rating")
         self.overall_rating = _RatingWidget(self.db, overall=True)
         self.overall_rating.rated.connect(self._on_overall_rated)
-        self._lay.addWidget(self.overall_rating)
-        self._lay.addSpacing(18)
+        rating_card.layout().addWidget(self.overall_rating)
+        self._lay.addWidget(rating_card)
 
         # Episodes
+        episodes_card = self._detail_card("")
+        episodes_lay = episodes_card.layout()
         ep_hdr = QHBoxLayout()
-        ep_hdr.setContentsMargins(16, 0, 16, 0)
-        ep_hdr.addWidget(self._section_label("EPISODES"))
+        ep_hdr.setContentsMargins(0, 0, 0, 0)
+        ep_hdr.addWidget(self._section_label("Episodes"))
         ep_hdr.addStretch()
-        self.mark_all_btn = QPushButton("Mark All Watched")
+        self.mark_all_btn = QPushButton("Mark watched")
         self.mark_all_btn.setObjectName("secondaryBtn")
         self.mark_all_btn.setStyleSheet(
             self.mark_all_btn.styleSheet() + "font-size:11px;padding:4px 10px;"
@@ -241,16 +240,15 @@ class DetailPanel(QWidget):
         self.mark_all_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.mark_all_btn.clicked.connect(self._mark_all)
         ep_hdr.addWidget(self.mark_all_btn)
-        self._lay.addLayout(ep_hdr)
-        self._lay.addSpacing(8)
+        episodes_lay.addLayout(ep_hdr)
 
         # Episode list container
         self.ep_container = QWidget()
-        self.ep_container.setStyleSheet("background:transparent;")
         self.ep_vbox = QVBoxLayout(self.ep_container)
-        self.ep_vbox.setContentsMargins(16, 0, 16, 0)
+        self.ep_vbox.setContentsMargins(0, 0, 0, 0)
         self.ep_vbox.setSpacing(5)
-        self._lay.addWidget(self.ep_container)
+        episodes_lay.addWidget(self.ep_container)
+        self._lay.addWidget(episodes_card)
         self._lay.addStretch()
 
         scroll.setWidget(body)
@@ -258,11 +256,18 @@ class DetailPanel(QWidget):
 
     def _section_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setStyleSheet(
-            "font-size:10px;color:#3b4260;font-weight:700;"
-            "letter-spacing:1.5px;padding:0 16px;"
-        )
+        lbl.setObjectName("detailSectionLabel")
         return lbl
+
+    def _detail_card(self, title: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName("detailCard")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(8)
+        if title:
+            lay.addWidget(self._section_label(title))
+        return card
 
     # ── load ───────────────────────────────────────────────────────────────────
 
@@ -287,6 +292,7 @@ class DetailPanel(QWidget):
             )
         else:
             self.score_lbl.setText("–")
+            self.score_lbl.setStyleSheet("")
 
         total  = anime.get("total_episodes") or 0
         season = (anime.get("season") or "").title()
@@ -318,16 +324,16 @@ class DetailPanel(QWidget):
         # Show: last watched ep + next airing ep separately
         prog_lines = []
         if watched > 0:
-            prog_lines.append(f"▶  Last watched: Episode {watched}")
+            prog_lines.append(f"Last watched: Episode {watched}")
         elif aired > 0:
-            prog_lines.append("▶  Not started yet")
+            prog_lines.append("Not started yet")
 
         if next_ep and next_ep_at:
             from datetime import datetime, timezone
             now_ts = int(datetime.now(timezone.utc).timestamp())
             secs   = next_ep_at - now_ts
             if secs <= 0:
-                prog_lines.append(f"🔔  Episode {next_ep - 1} just aired!")
+                prog_lines.append(f"Episode {next_ep - 1} just aired")
             else:
                 d, rem = divmod(secs, 86400)
                 h, rem = divmod(rem, 3600)
@@ -338,9 +344,9 @@ class DetailPanel(QWidget):
                     time_str = f"{h}h {m}m"
                 else:
                     time_str = f"{m}m"
-                prog_lines.append(f"⏰  Episode {next_ep} airs in {time_str}")
+                prog_lines.append(f"Episode {next_ep} airs in {time_str}")
         elif api_status == "FINISHED":
-            prog_lines.append(f"✓  Finished airing ({total or '?'} eps total)")
+            prog_lines.append(f"Finished airing ({total or '?'} eps total)")
 
         if prog_lines:
             self.progress_info_lbl.setText("\n".join(prog_lines))
@@ -424,18 +430,20 @@ class DetailPanel(QWidget):
         if not path: return
         px = QPixmap(path)
         if px.isNull(): return
-        sc = px.scaled(80, 116,
+        target_w = self.cover_lbl.width() or 88
+        target_h = self.cover_lbl.height() or 128
+        sc = px.scaled(target_w, target_h,
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation)
-        x = (sc.width()  - 80)  // 2
-        y = (sc.height() - 116) // 2
-        cr = sc.copy(x, y, 80, 116)
-        res = QPixmap(80, 116)
+        x = (sc.width() - target_w) // 2
+        y = (sc.height() - target_h) // 2
+        cr = sc.copy(x, y, target_w, target_h)
+        res = QPixmap(target_w, target_h)
         res.fill(QColor(0, 0, 0, 0))
         p = QPainter(res)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         pa = QPainterPath()
-        pa.addRoundedRect(0, 0, 80, 116, 8, 8)
+        pa.addRoundedRect(0, 0, target_w, target_h, 8, 8)
         p.setClipPath(pa)
         p.drawPixmap(0, 0, cr)
         p.end()
@@ -446,16 +454,20 @@ class DetailPanel(QWidget):
         px = QPixmap(path)
         if px.isNull(): return
         w = self.banner_lbl.width() or 380
-        sc = px.scaled(w, 150,
+        h = self.banner_lbl.height() or 132
+        sc = px.scaled(w, h,
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation)
         x = (sc.width() - w) // 2
-        self.banner_lbl.setPixmap(sc.copy(x, 0, w, 150))
+        self.banner_lbl.setPixmap(sc.copy(x, 0, w, h))
 
     def clear_images(self):
         """Reset cover and banner to placeholders. Call before loading a new anime."""
         # Cover placeholder — dark rounded rect
-        placeholder = QPixmap(80, 116)
+        placeholder = QPixmap(
+            self.cover_lbl.width() or 88,
+            self.cover_lbl.height() or 128,
+        )
         placeholder.fill(QColor("#1a1d28"))
         self.cover_lbl.setPixmap(placeholder)
         # Banner placeholder — solid dark strip
@@ -463,8 +475,7 @@ class DetailPanel(QWidget):
 
     def clear_banner(self):
         """Reset banner to solid colour placeholder."""
-        self.banner_lbl.setPixmap(QPixmap())   # empty — stylesheet bg shows
-        self.banner_lbl.setStyleSheet("background:#1a1d28;")
+        self.banner_lbl.setPixmap(QPixmap())   # empty - stylesheet bg shows
 
     # ── Episode list ───────────────────────────────────────────────────────────
 
@@ -616,7 +627,7 @@ class DetailPanel(QWidget):
         self.db.update_anime(aid, {"watch_status": new})
         self._anime["watch_status"] = new
         self.status_btn.setText(WATCH_STATUS_LABELS.get(new, new.title()))
-        self.episode_changed.emit(aid)
+        self.watch_status_changed.emit(aid, new)
         self.stats_changed.emit()
         from ui.toast import Toast
         Toast.show(
@@ -876,7 +887,7 @@ class _RatingWidget(QWidget):
         self._cur    = 0.0
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 0, 16, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
         self._stars: List[QPushButton] = []
@@ -893,7 +904,7 @@ class _RatingWidget(QWidget):
             self._stars.append(b)
 
         self.avg_lbl = QLabel()
-        self.avg_lbl.setStyleSheet("font-size:12px;color:#4a5070;margin-left:6px;")
+        self.avg_lbl.setObjectName("detailRatingHint")
         lay.addWidget(self.avg_lbl)
         lay.addStretch()
 

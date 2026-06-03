@@ -1,5 +1,5 @@
 """
-AnimeTracker — Onboarding Tutorial
+Miroku — Onboarding Tutorial
 Spotlight coach-mark overlay for new users.
 Industry standard: semi-transparent full-screen overlay with a highlighted
 'spotlight' cutout around the target widget, plus a tooltip card explaining it.

@@ -1,5 +1,5 @@
 """
-AnimeTracker — Background Workers
+Miroku — Background Workers
 QThread-based workers for non-blocking API calls and image downloads.
 """
 from PyQt6.QtCore import QThread, pyqtSignal, QObject, QRunnable, QThreadPool

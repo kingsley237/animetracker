@@ -1,5 +1,5 @@
 """
-AnimeTracker — Splash screen and deferred loading indicator.
+Miroku — Splash screen and deferred loading indicator.
 
 SplashScreen: shown at app startup while DB and workers initialize.
 LoadingOverlay: shown over any widget when an operation exceeds SLOW_THRESHOLD_MS.
@@ -21,10 +21,11 @@ class SplashScreen(QSplashScreen):
     Displays app name, version, and an indeterminate progress bar.
     """
 
-    W, H = 480, 280
+    W, H = 560, 320
 
     def __init__(self, version: str = "", screen=None):
         px = self._render(version)
+        self._base_px = px   # keep clean copy for progress redraws
         super().__init__(px, Qt.WindowType.WindowStaysOnTopHint)
         self.setMask(px.mask())
         if screen:
@@ -40,60 +41,101 @@ class SplashScreen(QSplashScreen):
 
         p = QPainter(px)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-        # Background rounded rect
-        p.setBrush(QColor("#0f1118"))
+        # ── Background ────────────────────────────────────────────────────
+        p.setBrush(QColor("#0d0f18"))
         p.setPen(QColor("#1e2235"))
         p.drawRoundedRect(1, 1, self.W - 2, self.H - 2, 16, 16)
 
-        # Accent bar top
-        grad = QLinearGradient(0, 0, self.W, 0)
-        grad.setColorAt(0.0, QColor("#7c6af7"))
-        grad.setColorAt(1.0, QColor("#34d399"))
-        p.setBrush(grad)
+        # ── Subtle inner vignette — radial darkness at corners ────────────
+        from PyQt6.QtGui import QRadialGradient
+        vg = QRadialGradient(self.W / 2, self.H / 2, self.W * 0.72)
+        vg.setColorAt(0.0, QColor(0, 0, 0, 0))
+        vg.setColorAt(1.0, QColor(0, 0, 0, 60))
+        p.setBrush(vg)
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(1, 1, self.W - 2, 4, 2, 2)
+        p.drawRoundedRect(1, 1, self.W - 2, self.H - 2, 16, 16)
 
-        # App name — large wordmark
+        # ── Logo mark — centered, upper third ────────────────────────────
         resources = Path(__file__).parent.parent / "resources"
         lettermark = self._load_pixmap(resources / "logo_lettermark_128.png")
-        wordmark = self._load_pixmap(resources / "logo_wordmark_dark.png")
 
-        y = 42
+        logo_y = 52
         if not lettermark.isNull():
             mark = lettermark.scaled(
-                64, 64, Qt.AspectRatioMode.KeepAspectRatio,
+                72, 72,
+                Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            p.drawPixmap((self.W - mark.width()) // 2, y, mark)
-            y += mark.height() + 10
-
-        if not wordmark.isNull():
-            wm = wordmark.scaledToWidth(220, Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap((self.W - wm.width()) // 2, y, wm)
-            y += wm.height() + 6
+            p.drawPixmap((self.W - mark.width()) // 2, logo_y, mark)
+            text_y = logo_y + mark.height() + 20
         else:
-            f = QFont("Segoe UI", 32, QFont.Weight.Bold)
-            p.setFont(f)
+            # Fallback — draw the play-blade icon programmatically
+            from PyQt6.QtGui import QPolygonF, QPen
+            from PyQt6.QtCore import QPointF
+            cx = self.W // 2
+            cy = logo_y + 36
+            # Triangle
+            tg = QLinearGradient(cx - 28, cy - 24, cx + 28, cy + 24)
+            tg.setColorAt(0.0, QColor("#7c6af7"))
+            tg.setColorAt(1.0, QColor("#34d399"))
+            p.setBrush(tg)
+            p.setPen(Qt.PenStyle.NoPen)
+            tri = QPolygonF([
+                QPointF(cx - 22, cy - 24),
+                QPointF(cx + 22, cy),
+                QPointF(cx - 22, cy + 24),
+            ])
+            p.drawPolygon(tri)
+            # Katana slash
+            p.setPen(QPen(QColor("#f472b6"), 3,
+                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(cx - 26, cy + 28, cx + 26, cy - 28)
+            # Tsuba
+            p.setBrush(QColor("#0d0f18"))
+            p.setPen(QPen(QColor("#f472b6"), 2))
+            p.drawEllipse(cx - 7, cy - 7, 14, 14)
+            text_y = cy + 44
+
+        # ── App name ──────────────────────────────────────────────────────
+        wordmark = self._load_pixmap(resources / "logo_wordmark_dark.png")
+        if not wordmark.isNull():
+            wm = wordmark.scaledToWidth(
+                180, Qt.TransformationMode.SmoothTransformation
+            )
+            p.drawPixmap((self.W - wm.width()) // 2, text_y, wm)
+            text_y += wm.height() + 10
+        else:
+            f_name = QFont("Segoe UI", 28, QFont.Weight.Bold)
+            f_name.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4.0)
+            p.setFont(f_name)
             p.setPen(QColor("#f0f1f5"))
-            p.drawText(0, y, self.W, 52, Qt.AlignmentFlag.AlignHCenter, "Miroku")
-            y += 58
+            p.drawText(0, text_y, self.W, 44,
+                       Qt.AlignmentFlag.AlignHCenter, "MIROKU")
+            text_y += 50
 
-        # Tagline
-        f2 = QFont("Segoe UI", 11)
-        f2.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.5)
-        p.setFont(f2)
-        p.setPen(QColor("#4a5070"))
-        p.drawText(0, y, self.W, 30, Qt.AlignmentFlag.AlignHCenter,
-                   "YOUR ANIME UNIVERSE")
+        # ── Tagline ───────────────────────────────────────────────────────
+        f_tag = QFont("Segoe UI", 9)
+        f_tag.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3.5)
+        f_tag.setWeight(QFont.Weight.Medium)
+        p.setFont(f_tag)
+        p.setPen(QColor("#3b4260"))
+        p.drawText(0, text_y, self.W, 22,
+                   Qt.AlignmentFlag.AlignHCenter, "YOUR ANIME UNIVERSE")
 
-        # Version
+        # ── Thin divider ──────────────────────────────────────────────────
+        from PyQt6.QtGui import QPen
+        p.setPen(QPen(QColor("#1a1d28"), 1))
+        p.drawLine(40, self.H - 52, self.W - 40, self.H - 52)
+
+       # ── Version — bottom right ────────────────────────────────────────
         if version:
-            f3 = QFont("Segoe UI", 9)
-            p.setFont(f3)
+            f_ver = QFont("Segoe UI", 8)
+            p.setFont(f_ver)
             p.setPen(QColor("#2e3250"))
-            p.drawText(0, self.H - 28, self.W, 20,
-                       Qt.AlignmentFlag.AlignHCenter, f"v{version}")
+            p.drawText(self.W - 70, self.H - 20, 60, 14,
+                       Qt.AlignmentFlag.AlignRight, f"v{version}")
 
         p.end()
         return px
@@ -101,13 +143,31 @@ class SplashScreen(QSplashScreen):
     def _load_pixmap(self, path: Path) -> QPixmap:
         return QPixmap(str(path)) if path.exists() else QPixmap()
 
-    def set_status(self, msg: str):
+    def set_status(self, msg: str, progress: int = 0) -> None:
         self.showMessage(
-            msg,
-            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+            f"  {msg}",
+            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft,
             QColor("#4a5070"),
         )
         QApplication_processEvents()
+
+    def _draw_progress(self, pct: int) -> None:
+        """Redraw the splash pixmap with a filled progress bar at the bottom."""
+        base = self._base_px.copy()
+        p = QPainter(base)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Fill the gradient bar proportionally
+        fill_w = int((self.W - 2) * max(0, min(pct, 100)) / 100)
+        grad = QLinearGradient(0, 0, self.W, 0)
+        grad.setColorAt(0.0, QColor("#7c6af7"))
+        grad.setColorAt(0.5, QColor("#a78bfa"))
+        grad.setColorAt(1.0, QColor("#34d399"))
+        p.setBrush(grad)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(1, self.H - 6, fill_w, 5, 2, 2)
+        p.end()
+        self.setPixmap(base)
 
 
 def QApplication_processEvents():

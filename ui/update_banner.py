@@ -1,5 +1,5 @@
 """
-AnimeTracker — Update Toast Notification
+Miroku — Update Toast Notification
 Industry standard pattern: floating toast anchored top-right,
 does NOT affect layout at all. Appears over the content like a
 notification — same as VS Code, Obsidian, Slack update notifications.

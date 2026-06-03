@@ -1,11 +1,8 @@
 """
-AnimeTracker — Add Anime Dialog
+Miroku — Add Anime Dialog
 
-Business rules enforced:
-  ✓ RELEASING  → Watching (default, user may switch to Planned)
-  ✓ NOT_YET_RELEASED → Plan to Watch only
-  ✓ FINISHED / CANCELLED → BLOCKED. App is for tracking live/upcoming anime.
-     User gets an informative message and cannot add it.
+Library is for currently airing and upcoming anime only.
+Finished or cancelled titles can be added to Hall of Fame instead.
 """
 from typing import Optional, List, Dict, Any
 
@@ -46,8 +43,10 @@ class AddAnimeDialog(QDialog):
         self.db = db
         self._results: List[Dict] = []
         self._selected: Optional[Dict] = None
+        self._hof_mode = False
         self.added_title = ""
         self.added_status = ""
+        self.added_to_hof = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._do_search)
@@ -56,8 +55,6 @@ class AddAnimeDialog(QDialog):
         self.setMinimumSize(700, 560)
         self.setStyleSheet("background:#0f1118;")
         self._build_ui()
-
-    # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -69,14 +66,13 @@ class AddAnimeDialog(QDialog):
         lay.addWidget(title)
 
         note = QLabel(
-            "AnimeTracker is for currently airing and upcoming anime.\n"
-            "You can view info on finished titles but not add them to your library."
+            "Miroku tracks currently airing and upcoming anime in your library.\n"
+            "Finished titles can be saved to Hall of Fame — your all-time favorites list."
         )
         note.setStyleSheet("font-size:12px;color:#4a5070;line-height:1.5;")
         note.setWordWrap(True)
         lay.addWidget(note)
 
-        # Search + status row
         row = QHBoxLayout()
         self.search_bar = QLineEdit()
         self.search_bar.setObjectName("searchBar")
@@ -91,12 +87,10 @@ class AddAnimeDialog(QDialog):
         row.addWidget(self.status_combo)
         lay.addLayout(row)
 
-        # Status hint
         self.hint = QLabel("")
         self.hint.setStyleSheet("font-size:11px;color:#fbbf24;min-height:16px;")
         lay.addWidget(self.hint)
 
-        # Loading bar
         self.bar = QProgressBar()
         self.bar.setFixedHeight(2)
         self.bar.setRange(0, 0)
@@ -107,7 +101,6 @@ class AddAnimeDialog(QDialog):
         )
         lay.addWidget(self.bar)
 
-        # Results scroll
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -122,12 +115,10 @@ class AddAnimeDialog(QDialog):
         scroll.setWidget(self.results_w)
         lay.addWidget(scroll)
 
-        # Preview strip
         self.preview = _PreviewStrip()
         self.preview.setVisible(False)
         lay.addWidget(self.preview)
 
-        # Buttons
         btns = QHBoxLayout()
         btns.addStretch()
         cancel = QPushButton("Cancel")
@@ -144,8 +135,6 @@ class AddAnimeDialog(QDialog):
         btns.addWidget(self.add_btn)
         lay.addLayout(btns)
 
-    # ── Search ────────────────────────────────────────────────────────────────
-
     def _do_search(self):
         q = self.search_bar.text().strip()
         if len(q) < 2:
@@ -158,7 +147,6 @@ class AddAnimeDialog(QDialog):
 
     def _on_results(self, results: List[Dict]):
         self._results = results
-        # Clear
         for i in reversed(range(self.results_vbox.count())):
             w = self.results_vbox.itemAt(i).widget()
             if w:
@@ -190,22 +178,37 @@ class AddAnimeDialog(QDialog):
 
         media = self._results[idx]
         self._selected = media
+        finished = _api_finished(media)
 
-        if _api_finished(media):
-            # Finished anime: show info, block add
-            self.add_btn.setEnabled(False)
-            self.hint.setText(
-                "⛔  This anime has finished airing. "
-                "AnimeTracker only tracks active & upcoming anime."
-            )
-            self.hint.setStyleSheet("font-size:11px;color:#f87171;")
-            self.preview.load(media)
+        if finished:
+            self._hof_mode = True
+            self.status_combo.setVisible(False)
+            anilist_id = media.get("id")
+            in_hof = False
+            if anilist_id:
+                existing = self.db.get_anime_by_anilist_id(anilist_id)
+                if existing:
+                    from ui.hall_of_fame import _in_hof
+                    in_hof = _in_hof(self.db, existing["id"])
+            self.add_btn.setText("Add to Hall of Fame")
+            self.add_btn.setEnabled(not in_hof)
+            if in_hof:
+                self.hint.setText("🏆  Already in your Hall of Fame.")
+                self.hint.setStyleSheet("font-size:11px;color:#4a5070;")
+            else:
+                self.hint.setText(
+                    "🏆  Finished airing — add to Hall of Fame, not your active library."
+                )
+                self.hint.setStyleSheet("font-size:11px;color:#a594f9;")
+            self.preview.load(media, finished=True)
             self.preview.setVisible(True)
             return
 
+        self._hof_mode = False
+        self.status_combo.setVisible(True)
+        self.add_btn.setText("Add to Library")
         self.add_btn.setEnabled(True)
 
-        # Update status combo
         allowed = _allowed_labels(media)
         default = _smart_default(media)
         self.status_combo.blockSignals(True)
@@ -218,7 +221,7 @@ class AddAnimeDialog(QDialog):
         self.status_combo.blockSignals(False)
 
         hints = {
-            "RELEASING":        ("⚡ Currently airing — added as Watching", "#34d399"),
+            "RELEASING": ("⚡ Currently airing — added as Watching", "#34d399"),
             "NOT_YET_RELEASED": ("⏳ Not yet released — added as Plan to Watch", "#fbbf24"),
         }
         api_s = (media.get("status") or "").upper()
@@ -226,21 +229,24 @@ class AddAnimeDialog(QDialog):
         self.hint.setText(txt)
         self.hint.setStyleSheet(f"font-size:11px;color:{col};")
 
-        self.preview.load(media)
+        self.preview.load(media, finished=False)
         self.preview.setVisible(True)
-
-    # ── Add ───────────────────────────────────────────────────────────────────
 
     def _add(self):
         if not self._selected:
             return
         media = self._selected
 
+        if self._hof_mode:
+            self._add_to_hof(media)
+            return
+
         if _api_finished(media):
             QMessageBox.warning(
-                self, "Cannot Add",
+                self,
+                "Use Hall of Fame",
                 "This anime has finished airing.\n"
-                "AnimeTracker is designed for currently airing and upcoming anime only."
+                "Add it from Hall of Fame instead of your active library.",
             )
             return
 
@@ -253,7 +259,11 @@ class AddAnimeDialog(QDialog):
         anilist_id = media.get("id")
         if anilist_id and self.db.get_anime_by_anilist_id(anilist_id):
             from ui.toast import Toast
-            Toast.show(self.window(), f"'{(media.get('title') or {}).get('romaji','')}' is already in your library.", kind="info")
+            Toast.show(
+                self.window(),
+                f"'{(media.get('title') or {}).get('romaji', '')}' is already in your library.",
+                kind="info",
+            )
             return
 
         self.add_btn.setEnabled(False)
@@ -263,40 +273,80 @@ class AddAnimeDialog(QDialog):
             return get_anime_by_id(anilist_id) if anilist_id else media
 
         w = Worker(fetch)
-        w.signals.result.connect(lambda m: self._commit(m, watch_status))
-        w.signals.error.connect(lambda e: (
-            self.add_btn.setEnabled(True), self.add_btn.setText("Add to Library")
-        ))
+        w.signals.result.connect(lambda m: self._commit_library(m, watch_status))
+        w.signals.error.connect(
+            lambda e: (
+                self.add_btn.setEnabled(True),
+                self.add_btn.setText("Add to Library"),
+            )
+        )
         run_worker(w)
 
-    def _commit(self, media: Dict, watch_status: str):
-        t    = media.get("title", {})
-        cov  = media.get("coverImage") or {}
-        nae  = media.get("nextAiringEpisode") or {}
-        sd   = media.get("startDate") or {}
+    def _add_to_hof(self, media: Dict):
+        anilist_id = media.get("id")
+        self.add_btn.setEnabled(False)
+        self.add_btn.setText("Adding…")
+
+        def fetch():
+            return get_anime_by_id(anilist_id) if anilist_id else media
+
+        def done(full_media):
+            from ui.hall_of_fame import add_anilist_media_to_hof
+            ok, title = add_anilist_media_to_hof(self.db, full_media)
+            if not ok:
+                from ui.toast import Toast
+                if title == "already_in_hof":
+                    Toast.show(
+                        self.window(),
+                        "This anime is already in your Hall of Fame.",
+                        kind="info",
+                    )
+                self.add_btn.setEnabled(True)
+                self.add_btn.setText("Add to Hall of Fame")
+                return
+            self.added_title = title
+            self.added_to_hof = True
+            self.accept()
+
+        w = Worker(fetch)
+        w.signals.result.connect(done)
+        w.signals.error.connect(
+            lambda e: (
+                self.add_btn.setEnabled(True),
+                self.add_btn.setText("Add to Hall of Fame"),
+                QMessageBox.critical(self, "Error", str(e)),
+            )
+        )
+        run_worker(w)
+
+    def _commit_library(self, media: Dict, watch_status: str):
+        t = media.get("title", {})
+        cov = media.get("coverImage") or {}
+        nae = media.get("nextAiringEpisode") or {}
+        sd = media.get("startDate") or {}
         stud = [s["name"] for s in (media.get("studios", {}).get("nodes") or [])]
 
         self.db.add_anime({
-            "anilist_id":     media.get("id"),
-            "romaji_title":   t.get("romaji", "Unknown"),
-            "english_title":  t.get("english") or "",
-            "native_title":   t.get("native") or "",
-            "watch_status":   watch_status,
-            "status":         media.get("status", ""),
-            "cover_url":      cov.get("extraLarge") or cov.get("large") or cov.get("medium") or "",
-            "banner_url":     media.get("bannerImage") or "",
-            "description":    media.get("description") or "",
-            "genres":         media.get("genres") or [],
-            "studios":        stud,
+            "anilist_id": media.get("id"),
+            "romaji_title": t.get("romaji", "Unknown"),
+            "english_title": t.get("english") or "",
+            "native_title": t.get("native") or "",
+            "watch_status": watch_status,
+            "status": media.get("status", ""),
+            "cover_url": cov.get("extraLarge") or cov.get("large") or cov.get("medium") or "",
+            "banner_url": media.get("bannerImage") or "",
+            "description": media.get("description") or "",
+            "genres": media.get("genres") or [],
+            "studios": stud,
             "total_episodes": media.get("episodes"),
-            "season":         media.get("season") or "",
-            "season_year":    media.get("seasonYear"),
-            "average_score":  media.get("averageScore"),
-            "popularity":     media.get("popularity"),
-            "trailer_id":     (media.get("trailer") or {}).get("id"),
-            "trailer_site":   (media.get("trailer") or {}).get("site"),
-            "start_date":     format_air_date(sd),
-            "next_episode_at":  nae.get("airingAt"),
+            "season": media.get("season") or "",
+            "season_year": media.get("seasonYear"),
+            "average_score": media.get("averageScore"),
+            "popularity": media.get("popularity"),
+            "trailer_id": (media.get("trailer") or {}).get("id"),
+            "trailer_site": (media.get("trailer") or {}).get("site"),
+            "start_date": format_air_date(sd),
+            "next_episode_at": nae.get("airingAt"),
             "next_episode_num": nae.get("episode"),
         })
         self.added_title = t.get("romaji", "Unknown")
@@ -304,14 +354,14 @@ class AddAnimeDialog(QDialog):
         self.accept()
 
 
-# ── Internal widgets ──────────────────────────────────────────────────────────
-
 class _ResultRow(QFrame):
     selected = pyqtSignal(int)
 
-    _BASE = ("QFrame{background:#111420;border:1px solid #1a1d28;border-radius:8px;}"
-             "QFrame:hover{background:#141828;border-color:#252a40;}")
-    _SEL  = "QFrame{background:#151929;border:1px solid #4b3fa8;border-radius:8px;}"
+    _BASE = (
+        "QFrame{background:#111420;border:1px solid #1a1d28;border-radius:8px;}"
+        "QFrame:hover{background:#141828;border-color:#252a40;}"
+    )
+    _SEL = "QFrame{background:#151929;border-radius:8px;}"
 
     def __init__(self, media: Dict, idx: int, parent=None):
         super().__init__(parent)
@@ -333,7 +383,7 @@ class _ResultRow(QFrame):
         info = QVBoxLayout()
         info.setSpacing(2)
         t = media.get("title", {})
-        romaji  = t.get("romaji", "")
+        romaji = t.get("romaji", "")
         english = t.get("english", "")
 
         t1 = QLabel(romaji[:58])
@@ -345,10 +395,14 @@ class _ResultRow(QFrame):
             info.addWidget(t2)
 
         api_s = (media.get("status") or "").upper()
-        s_cols = {"RELEASING":"#34d399","FINISHED":"#6b7280","NOT_YET_RELEASED":"#fbbf24"}
-        s_lbls = {"RELEASING":"● AIRING","FINISHED":"● FINISHED","NOT_YET_RELEASED":"● UPCOMING"}
+        s_cols = {"RELEASING": "#34d399", "FINISHED": "#6b7280", "NOT_YET_RELEASED": "#fbbf24"}
+        s_lbls = {
+            "RELEASING": "● AIRING",
+            "FINISHED": "● FINISHED",
+            "NOT_YET_RELEASED": "● UPCOMING",
+        }
         sl = QLabel(s_lbls.get(api_s, api_s))
-        sl.setStyleSheet(f"font-size:10px;font-weight:700;color:{s_cols.get(api_s,'#6b7280')};")
+        sl.setStyleSheet(f"font-size:10px;font-weight:700;color:{s_cols.get(api_s, '#6b7280')};")
         info.addWidget(sl)
         row.addLayout(info)
         row.addStretch()
@@ -371,10 +425,13 @@ class _ResultRow(QFrame):
         row.addLayout(meta)
 
     def set_cover(self, path: str):
-        if not path: return
-        px = QPixmap(path).scaled(38, 54,
+        if not path:
+            return
+        px = QPixmap(path).scaled(
+            38, 54,
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation)
+            Qt.TransformationMode.SmoothTransformation,
+        )
         self.cover.setPixmap(px)
 
     def set_selected(self, s: bool):
@@ -390,7 +447,7 @@ class _PreviewStrip(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(50)
-        self.setStyleSheet("background:#0e1620;border:1px solid #1e2d45;border-radius:8px;")
+        self.setStyleSheet("background:#0e1620;border-radius:8px;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 8, 14, 8)
         lay.setSpacing(10)
@@ -405,8 +462,14 @@ class _PreviewStrip(QFrame):
         self.genres.setStyleSheet("font-size:11px;color:#4a5070;")
         lay.addWidget(self.genres)
 
-    def load(self, media: Dict):
+    def load(self, media: Dict, finished: bool = False):
         t = (media.get("title") or {}).get("romaji", "")
         eps = media.get("episodes") or "?"
+        if finished:
+            self.icon.setText("🏆")
+            self.icon.setStyleSheet("font-size:14px;color:#a594f9;")
+        else:
+            self.icon.setText("✓")
+            self.icon.setStyleSheet("font-size:14px;color:#34d399;")
         self.text.setText(f"{t}  ·  {eps} episodes")
         self.genres.setText("  ·  ".join((media.get("genres") or [])[:3]))
