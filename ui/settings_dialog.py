@@ -344,8 +344,8 @@ class SettingsDialog(QDialog):
         top = QHBoxLayout()
 
         resources = Path(__file__).parent.parent / "resources"
-        logo_path = resources / "logo_lettermark_256.png"
-        icon_path = logo_path if logo_path.exists() else resources / "icon_256.png"
+        logo_path = resources / "miroku_lettermark_1024.png"
+        icon_path = logo_path if logo_path.exists() else resources / "miroku_lettermark_512.png"
         if icon_path.exists():
             icon = QLabel()
             px = QPixmap(str(icon_path)).scaled(

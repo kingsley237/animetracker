@@ -48,6 +48,20 @@ NAV_SECTIONS = [
 _FILTER_PAGES = {"library"}
 
 
+def _build_app_icon() -> QIcon:
+    resources = Path(__file__).parent.parent / "resources"
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
+        path = resources / f"miroku_lettermark_{size}.png"
+        if path.exists():
+            icon.addFile(str(path))
+    if icon.isNull():
+        ico = resources / "miroku_app_icon.ico"
+        if ico.exists():
+            icon = QIcon(str(ico))
+    return icon
+
+
 class MainWindow(QMainWindow):
     def __init__(self, db: DatabaseManager):
         super().__init__()
@@ -67,12 +81,13 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Miroku")
         self.setMinimumSize(1100, 700)
-        self.showMaximized()   # Always open fullscreen
 
         # Window icon
-        icon_path = Path(__file__).parent.parent / "resources" / "icon.ico"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
+        app_icon = _build_app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+
+        self.showMaximized()   # Always open fullscreen
 
         self._load_theme()
         self._build_ui()
@@ -196,12 +211,12 @@ class MainWindow(QMainWindow):
         ll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         resources = Path(__file__).parent.parent / "resources"
-        lettermark_path = resources / "logo_lettermark_64.png"
-        icon_path = lettermark_path if lettermark_path.exists() else resources / "icon_64.png"
+        lettermark_path = resources / "miroku_lettermark_512.png"
+        icon_path = lettermark_path if lettermark_path.exists() else resources / "miroku_lettermark_256.png"
         if icon_path.exists():
             icon_lbl = QLabel()
             px = QPixmap(str(icon_path)).scaled(
-                40, 40, Qt.AspectRatioMode.KeepAspectRatio,
+                44, 44, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             icon_lbl.setPixmap(px)
@@ -209,21 +224,6 @@ class MainWindow(QMainWindow):
             icon_lbl.setFixedSize(48, 44)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        wordmark_path = resources / "logo_wordmark_dark.png"
-        if wordmark_path.exists():
-            logo = QLabel()
-            px = QPixmap(str(wordmark_path)).scaledToWidth(
-                128, Qt.TransformationMode.SmoothTransformation
-            )
-            logo.setPixmap(px)
-            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            logo.setFixedHeight(max(28, px.height()))
-        else:
-            logo = QLabel("MIROKU")
-            logo.setObjectName("appLogo")
-            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ll.addWidget(logo, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         sub = QLabel("Anime progress tracker")
         sub.setObjectName("appLogoSub")

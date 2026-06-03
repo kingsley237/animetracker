@@ -9,9 +9,8 @@ Inputs:
   miroku_icon.svg      fallback source kept for compatibility
 
 Outputs:
-  icon.ico             Windows executable/titlebar icon
-  icon_*.png           legacy square app icons
-  logo_lettermark_*.png UI/splash lettermark assets
+  miroku_app_icon.ico   Windows executable/titlebar icon
+  miroku_lettermark_*.png UI/splash lettermark assets
 """
 import struct
 import sys
@@ -137,16 +136,12 @@ def main():
         data = _render_svg_png(source, size)
         pngs[size] = data
 
-        icon_out = HERE / f"icon_{size}.png"
+        icon_out = HERE / f"miroku_lettermark_{size}.png"
         icon_out.write_bytes(data)
         print(f"  wrote {icon_out}")
 
-        logo_out = HERE / f"logo_lettermark_{size}.png"
-        logo_out.write_bytes(data)
-        print(f"  wrote {logo_out}")
-
-    _write_ico(HERE / "icon.ico", pngs, ICO_SIZES)
-    print("  wrote icon.ico")
+    _write_ico(HERE / "miroku_app_icon.ico", pngs, ICO_SIZES)
+    print("  wrote miroku_app_icon.ico")
 
 
 if __name__ == "__main__":
