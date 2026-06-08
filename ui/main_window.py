@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self._load_library()
         self._check_connection()
         self._check_for_updates()
+        self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
@@ -281,6 +282,17 @@ class MainWindow(QMainWindow):
         self.page_title.setObjectName("pageTitle")
         hr.addWidget(self.page_title)
         hr.addStretch()
+
+        from ui.anilist_user_menu import AniListUserMenu
+        self.anilist_user_menu = AniListUserMenu(page)
+        self.anilist_user_menu.connect_requested.connect(
+            lambda: self._open_settings("account")
+        )
+        self.anilist_user_menu.account_settings_requested.connect(
+            lambda: self._open_settings("account")
+        )
+        hr.addWidget(self.anilist_user_menu)
+        hr.addSpacing(10)
 
         self.refresh_btn = QPushButton("↻  Refresh Airing")
         self.refresh_btn.setObjectName("secondaryBtn")
@@ -1038,9 +1050,20 @@ class MainWindow(QMainWindow):
                         kind="success",
                     )
 
-    def _open_settings(self):
+    def _setup_anilist_session(self):
+        from core.anilist_auth import get_anilist_auth
+
+        auth = get_anilist_auth(self)
+        auth.session_changed.connect(self._refresh_anilist_user_menu)
+
+    def _refresh_anilist_user_menu(self):
+        if hasattr(self, "anilist_user_menu"):
+            self.anilist_user_menu.refresh()
+
+    def _open_settings(self, initial_page: str = "account"):
         from ui.settings_dialog import SettingsDialog
-        SettingsDialog(self.db, self).exec()
+        SettingsDialog(self.db, self, initial_page=initial_page).exec()
+        self._refresh_anilist_user_menu()
 
     # ── Timers ─────────────────────────────────────────────────────────────────
 

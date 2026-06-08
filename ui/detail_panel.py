@@ -960,8 +960,8 @@ class _RatingWidget(QWidget):
 
     def _maybe_sync_to_anilist(self, our_score: int):
         """If logged into AniList, offer to sync the rating."""
-        from core.anilist_auth import AniListAuth, SCORE_MAP
-        auth = AniListAuth()
+        from core.anilist_auth import SCORE_MAP, get_anilist_auth
+        auth = get_anilist_auth()
         if not auth.is_logged_in():
             return
         # Get anilist_id for this anime

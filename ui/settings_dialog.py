@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QFrame, QFileDialog, QMessageBox, QCheckBox,
     QProgressBar, QStackedWidget, QScrollArea, QComboBox,
+    QLineEdit,
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QCursor, QPixmap
@@ -19,11 +20,12 @@ from workers.workers import ImportWorker, run_worker
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, db: DatabaseManager, parent=None):
+    def __init__(self, db: DatabaseManager, parent=None, initial_page: str = "account"):
         super().__init__(parent)
         from core.app_settings import app_settings
         self.db = db
         self.settings = app_settings()
+        self._initial_page = initial_page
         self._json_path: Optional[str] = None
         self._nav_buttons: dict[str, QPushButton] = {}
 
@@ -76,7 +78,7 @@ class SettingsDialog(QDialog):
         body_lay.addWidget(self.stack)
 
         root.addWidget(body, stretch=1)
-        self._select_page("account")
+        self._select_page(self._initial_page)
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
@@ -116,7 +118,8 @@ class SettingsDialog(QDialog):
 
     def _select_page(self, key: str):
         order = ["account", "preferences", "data", "about"]
-        self.stack.setCurrentIndex(order.index(key))
+        idx = order.index(key) if key in order else 0
+        self.stack.setCurrentIndex(idx)
         for pid, btn in self._nav_buttons.items():
             btn.setProperty("active", "true" if pid == key else "false")
             btn.style().unpolish(btn)
@@ -131,22 +134,72 @@ class SettingsDialog(QDialog):
             "Connect AniList when you want Miroku to offer rating sync."
         ))
 
-        card, cl = self._card("Connection")
-
         try:
-            from core.anilist_auth import AniListAuth, ANILIST_CLIENT_ID
-            self._auth = AniListAuth()
-            al_configured = bool(ANILIST_CLIENT_ID)
+            from core.anilist_auth import (
+                REDIRECT_URI,
+                credentials_configured,
+                get_anilist_auth,
+                get_client_credentials,
+            )
+            self._auth = get_anilist_auth(self)
+            al_configured = credentials_configured()
+            client_id, client_secret = get_client_credentials()
         except Exception:
             self._auth = None
             al_configured = False
+            client_id, client_secret = "", ""
+            REDIRECT_URI = "http://localhost:7731/callback"
 
-        if not al_configured:
-            cl.addWidget(self._body_text(
-                "AniList sync is not configured yet. Add the Client ID and "
-                "Secret in core/anilist_auth.py to enable score syncing."
-            ))
-        elif self._auth and self._auth.is_logged_in():
+        cred_card, cred_lay = self._card("API credentials")
+        cred_lay.addWidget(self._body_text(
+            "Create your own AniList developer app at anilist.co/settings/developer. "
+            "Each install needs its own Client ID and Secret — the old bundled "
+            "credentials no longer work."
+        ))
+        cred_lay.addWidget(self._helper_text(
+            f"Set the redirect URI to exactly: {REDIRECT_URI}"
+        ))
+
+        id_row = QHBoxLayout()
+        id_row.addWidget(self._body_text("Client ID"))
+        id_row.addStretch()
+        self._al_client_id = QLineEdit(client_id)
+        self._al_client_id.setPlaceholderText("Your AniList client ID")
+        self._al_client_id.setFixedWidth(280)
+        id_row.addWidget(self._al_client_id)
+        cred_lay.addLayout(id_row)
+
+        secret_row = QHBoxLayout()
+        secret_row.addWidget(self._body_text("Client Secret"))
+        secret_row.addStretch()
+        self._al_client_secret = QLineEdit(client_secret)
+        self._al_client_secret.setPlaceholderText("Your AniList client secret")
+        self._al_client_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self._al_client_secret.setFixedWidth(280)
+        secret_row.addWidget(self._al_client_secret)
+        cred_lay.addLayout(secret_row)
+
+        save_row = QHBoxLayout()
+        self._al_cred_status = QLabel(
+            "Credentials saved." if al_configured else "Save credentials before connecting."
+        )
+        self._al_cred_status.setObjectName(
+            "settingsGoodText" if al_configured else "settingsMutedText"
+        )
+        save_row.addWidget(self._al_cred_status)
+        save_row.addStretch()
+
+        save_btn = QPushButton("Save credentials")
+        save_btn.setObjectName("secondaryBtn")
+        save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        save_btn.clicked.connect(self._al_save_credentials)
+        save_row.addWidget(save_btn)
+        cred_lay.addLayout(save_row)
+        lay.addWidget(cred_card)
+
+        card, cl = self._card("Connection")
+
+        if self._auth and self._auth.is_logged_in():
             row = QHBoxLayout()
             self._al_status = QLabel(
                 f"Connected as {self._auth.get_username()}"
@@ -168,17 +221,29 @@ class SettingsDialog(QDialog):
             ))
 
             row = QHBoxLayout()
-            login_btn = QPushButton("Connect AniList")
-            login_btn.setObjectName("primaryBtn")
-            login_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            login_btn.clicked.connect(self._al_login)
-            row.addWidget(login_btn)
+            self._al_login_btn = QPushButton("Connect AniList")
+            self._al_login_btn.setObjectName("primaryBtn")
+            self._al_login_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            self._al_login_btn.clicked.connect(self._al_login)
+            self._al_login_btn.setEnabled(al_configured)
+            row.addWidget(self._al_login_btn)
+
+            self._al_cancel_btn = QPushButton("Cancel")
+            self._al_cancel_btn.setObjectName("secondaryBtn")
+            self._al_cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            self._al_cancel_btn.setVisible(False)
+            self._al_cancel_btn.clicked.connect(self._al_cancel)
+            row.addWidget(self._al_cancel_btn)
+
             row.addStretch()
             cl.addLayout(row)
 
-            self._al_result = QLabel("")
+            self._al_result = QLabel(
+                "Not connected." if al_configured else "Save API credentials above first."
+            )
             self._al_result.setObjectName("settingsMutedText")
             cl.addWidget(self._al_result)
+            self._al_connect_signals()
 
         lay.addWidget(card)
         lay.addStretch()
@@ -399,42 +464,113 @@ class SettingsDialog(QDialog):
 
     # AniList actions
 
-    def _al_login(self):
-        from core.anilist_auth import AniListAuth
-        auth = AniListAuth()
-        auth.login_success.connect(self._al_login_done)
-        auth.login_failed.connect(self._al_login_fail)
+    def _al_set_busy(self, busy: bool):
+        if hasattr(self, "_al_login_btn"):
+            self._al_login_btn.setEnabled(not busy)
+        if hasattr(self, "_al_cancel_btn"):
+            self._al_cancel_btn.setVisible(busy)
+
+    def _al_set_result(self, text: str, tone: str = "muted"):
+        if not hasattr(self, "_al_result"):
+            return
+        self._al_result.setText(text)
+        name = {
+            "good": "settingsGoodText",
+            "bad": "settingsBadText",
+            "muted": "settingsMutedText",
+        }.get(tone, "settingsMutedText")
+        self._al_result.setObjectName(name)
+        self._al_result.style().unpolish(self._al_result)
+        self._al_result.style().polish(self._al_result)
+
+    def _al_connect_signals(self):
+        if self._auth is None:
+            return
+        for sig, slot in (
+            (self._auth.login_success, self._al_login_done),
+            (self._auth.login_failed, self._al_login_fail),
+            (self._auth.login_status, self._al_login_status),
+        ):
+            try:
+                sig.disconnect(slot)
+            except TypeError:
+                pass
+            sig.connect(slot)
+
+    def _al_save_credentials(self):
+        from core.anilist_auth import save_client_credentials, credentials_configured
+
+        client_id = self._al_client_id.text().strip()
+        client_secret = self._al_client_secret.text().strip()
+        if not client_id or not client_secret:
+            self._al_cred_status.setText("Enter both Client ID and Secret.")
+            self._al_cred_status.setObjectName("settingsBadText")
+            self._al_cred_status.style().unpolish(self._al_cred_status)
+            self._al_cred_status.style().polish(self._al_cred_status)
+            return
+
+        save_client_credentials(client_id, client_secret)
+        self._al_cred_status.setText("Credentials saved.")
+        self._al_cred_status.setObjectName("settingsGoodText")
+        self._al_cred_status.style().unpolish(self._al_cred_status)
+        self._al_cred_status.style().polish(self._al_cred_status)
+
+        if hasattr(self, "_al_login_btn"):
+            self._al_login_btn.setEnabled(credentials_configured())
         if hasattr(self, "_al_result"):
-            self._al_result.setText("Browser opened. Finish login on AniList.")
-        auth.start_login()
-        self._auth_ref = auth
+            self._al_set_result("Credentials saved. You can connect now.", "good")
+
+    def _al_login(self):
+        from core.anilist_auth import credentials_configured, get_anilist_auth
+
+        if not credentials_configured():
+            self._al_set_result(
+                "Save your AniList Client ID and Secret above first.",
+                "bad",
+            )
+            return
+
+        self._auth = get_anilist_auth(self)
+        self._al_connect_signals()
+        self._al_set_busy(True)
+        self._al_set_result("Starting a fresh AniList login…", "muted")
+        self._auth.start_login()
+
+    def _al_cancel(self):
+        if self._auth is not None:
+            self._auth.cancel_login()
+        self._al_set_busy(False)
+        self._al_set_result("Cancelling login…", "muted")
+
+    def _al_login_status(self, message: str):
+        self._al_set_result(message, "muted")
 
     def _al_login_done(self, username: str):
-        if hasattr(self, "_al_result"):
-            self._al_result.setText(f"Connected as {username}")
-            self._al_result.setObjectName("settingsGoodText")
-            self._al_result.style().unpolish(self._al_result)
-            self._al_result.style().polish(self._al_result)
+        self._al_set_busy(False)
         from ui.toast import Toast
         Toast.show(self.window(), f"AniList connected as {username}.", kind="success")
+        self._refresh_account_page()
 
     def _al_login_fail(self, error: str):
-        if hasattr(self, "_al_result"):
-            self._al_result.setText(f"Login failed: {error}")
-            self._al_result.setObjectName("settingsBadText")
-            self._al_result.style().unpolish(self._al_result)
-            self._al_result.style().polish(self._al_result)
+        self._al_set_busy(False)
+        self._al_set_result(error, "bad")
+
+    def _refresh_account_page(self):
+        current = self.stack.currentIndex()
+        old = self.stack.widget(0)
+        self.stack.removeWidget(old)
+        old.deleteLater()
+        self.stack.insertWidget(0, self._page_account())
+        self.stack.setCurrentIndex(current)
 
     def _al_logout(self):
-        from core.anilist_auth import AniListAuth
-        AniListAuth().logout()
-        if hasattr(self, "_al_status"):
-            self._al_status.setText("Logged out")
-            self._al_status.setObjectName("settingsMutedText")
-            self._al_status.style().unpolish(self._al_status)
-            self._al_status.style().polish(self._al_status)
+        from core.anilist_auth import get_anilist_auth
+
+        self._auth = get_anilist_auth(self)
+        self._auth.logout()
         from ui.toast import Toast
         Toast.show(self.window(), "AniList disconnected.", kind="info")
+        self._refresh_account_page()
 
     # Data actions
 

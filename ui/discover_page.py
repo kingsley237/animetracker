@@ -304,7 +304,8 @@ class DiscoverPage(QWidget):
         self.grid_w = QWidget()
         self.grid_w.setStyleSheet("background:transparent;")
         self.grid   = QGridLayout(self.grid_w)
-        self.grid.setSpacing(14)
+        self.grid.setHorizontalSpacing(14)
+        self.grid.setVerticalSpacing(14)
         self.grid.setContentsMargins(0, 4, 0, 4)
         self.grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.scroll.setWidget(self.grid_w)
@@ -419,12 +420,13 @@ class DiscoverPage(QWidget):
     def _on_data(self, results: List[Dict], append: bool = False):
         if not append:
             self._clear()
-        COLS   = max(2, (self.scroll.width() - 20) // (DiscoverCard.W + 14))
+        COLS, card_w = self._grid_metrics()
         offset = len(self._cards)
         self.load_more_btn.setVisible(len(results) >= 20)
 
         for i, media in enumerate(results):
             card = DiscoverCard(media, self.db, self)
+            card.set_card_width(card_w)
             card.add_requested.connect(self._do_add)
             card.info_requested.connect(self._show_info)
             idx = offset + i
@@ -576,10 +578,32 @@ class DiscoverPage(QWidget):
         """Reflow card grid to fit current width — called on every resize."""
         if not self._cards:
             return
-        COLS = max(2, (self.scroll.width() - 20) // (DiscoverCard.W + 14))
-        # Re-place all cards
+        cols, card_w = self._grid_metrics()
         for i, card in enumerate(self._cards):
-            self.grid.addWidget(card, i // COLS, i % COLS)
+            card.set_card_width(card_w)
+            self.grid.removeWidget(card)
+            self.grid.addWidget(card, i // cols, i % cols)
+
+    def _grid_metrics(self) -> tuple[int, int]:
+        """Return columns and card width that fill the current viewport."""
+        spacing = self.grid.horizontalSpacing()
+        viewport_w = max(1, self.scroll.viewport().width())
+        margins = self.grid.contentsMargins()
+        available = max(1, viewport_w - margins.left() - margins.right())
+
+        cols = max(2, (available + spacing) // (DiscoverCard.MIN_W + spacing))
+        card_w = (available - spacing * (cols - 1)) // cols
+
+        while card_w > DiscoverCard.MAX_W:
+            cols += 1
+            card_w = (available - spacing * (cols - 1)) // cols
+
+        while card_w < DiscoverCard.MIN_W and cols > 2:
+            cols -= 1
+            card_w = (available - spacing * (cols - 1)) // cols
+
+        card_w = max(DiscoverCard.MIN_W, min(DiscoverCard.MAX_W, card_w))
+        return int(cols), int(card_w)
 
     def _update_sort_options(self, mode: str) -> None:
         """Rebuild sort combo to show only options relevant to the current tab."""
@@ -603,17 +627,20 @@ class DiscoverCard(QFrame):
     add_requested  = pyqtSignal(dict)
     info_requested = pyqtSignal(dict)
 
-    W  = 192   # card width
-    CH = 250   # cover height
-    # Info strip height is dynamic (no fixed card height) — let layout decide
+    MIN_W = 192
+    MAX_W = 236
+    BASE_W = 192
+    BASE_CH = 250
 
     def __init__(self, media: Dict, db: DatabaseManager, parent=None):
         super().__init__(parent)
         self._media = media
         self.db     = db
+        self._cover_path: Optional[str] = None
+        self.W = self.MIN_W
+        self.CH = self._cover_height_for(self.W)
         self.setObjectName("discoverCard")
         self.setFixedWidth(self.W)
-        # No fixed height — info strip will expand to fit content
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -629,12 +656,12 @@ class DiscoverCard(QFrame):
         outer.addWidget(self.cover)
 
         # ── Info strip ────────────────────────────────────────────────────
-        info = QWidget()
-        info.setFixedWidth(self.W)
-        info.setStyleSheet(
+        self._info_w = QWidget()
+        self._info_w.setFixedWidth(self.W)
+        self._info_w.setStyleSheet(
             "background:#111420;border-radius:0 0 10px 10px;"
         )
-        il = QVBoxLayout(info)
+        il = QVBoxLayout(self._info_w)
         il.setContentsMargins(10, 9, 10, 10)
         il.setSpacing(4)
 
@@ -748,11 +775,28 @@ class DiscoverCard(QFrame):
             btn_row.addWidget(add_btn)
 
         il.addLayout(btn_row)
-        outer.addWidget(info)
+        outer.addWidget(self._info_w)
+
+    @classmethod
+    def _cover_height_for(cls, width: int) -> int:
+        return max(180, int(round(width * (cls.BASE_CH / cls.BASE_W))))
+
+    def set_card_width(self, width: int) -> None:
+        width = max(self.MIN_W, min(self.MAX_W, int(width)))
+        if width == self.W:
+            return
+        self.W = width
+        self.CH = self._cover_height_for(width)
+        self.setFixedWidth(self.W)
+        self.cover.setFixedSize(self.W, self.CH)
+        self._info_w.setFixedWidth(self.W)
+        if self._cover_path:
+            self.set_cover(self._cover_path)
 
     def set_cover(self, path: str):
         if not path:
             return
+        self._cover_path = path
         px = QPixmap(path)
         if px.isNull():
             return
@@ -765,12 +809,13 @@ class DiscoverCard(QFrame):
         y = max(0, (sc.height() - self.CH) // 2)
         cr = sc.copy(x, y, self.W, self.CH)
 
+        radius = max(6, int(round(self.W * 10 / self.BASE_W)))
         res = QPixmap(self.W, self.CH)
         res.fill(QColor(0, 0, 0, 0))
         p = QPainter(res)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path_obj = QPainterPath()
-        path_obj.addRoundedRect(0, 0, self.W, self.CH, 10, 10)
+        path_obj.addRoundedRect(0, 0, self.W, self.CH, radius, radius)
         p.setClipPath(path_obj)
         p.drawPixmap(0, 0, cr)
         p.end()
