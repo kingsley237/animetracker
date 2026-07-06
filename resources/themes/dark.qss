@@ -352,8 +352,9 @@ QWidget#detailBanner {
 QFrame#detailSummaryCard,
 QFrame#detailCard {
     background-color: #111420;
-    border: 1px solid #1e2235;
+    border: none;
     border-radius: 8px;
+    padding: 0px;
 }
 
 QLabel#detailCover {
@@ -386,7 +387,7 @@ QLabel#detailStudio {
 
 QFrame#detailMetricBox {
     background-color: #0d0f14;
-    border: 1px solid #1e2235;
+    border: none;
     border-radius: 7px;
     min-width: 58px;
     max-width: 68px;
@@ -468,10 +469,14 @@ QFrame#episodeRow:hover {
 }
 
 QLabel#epNum {
+    background: transparent;
+    border: none;
     font-size: 12px;
     font-weight: 600;
-    color: #4a5070;
+    color: #9da5c0;
     min-width: 28px;
+    padding: 0px;
+    margin: 0px;
 }
 
 QLabel#epStatus {
@@ -486,6 +491,8 @@ QPushButton#starBtn {
     font-size: 20px;
     color: #2a2d42;
     padding: 2px;
+    min-width: 20px;
+    min-height: 20px;
 }
 
 QPushButton#starBtn:hover {
@@ -560,6 +567,82 @@ QPushButton#anilistUserNameBtn {
 
 QPushButton#anilistUserNameBtn:hover {
     color: #f0f1f5;
+    text-decoration: underline;
+}
+
+QPushButton#anilistConnectBtn {
+    background-color: #1a1d28;
+    color: #c7cbd9;
+    border: 1px solid #2a2d42;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton#anilistConnectBtn:hover {
+    background-color: #252a40;
+    border-color: #4b3fa8;
+    color: #f0f1f5;
+}
+
+QMenu#anilistAccountMenu {
+    background-color: #0f1118;
+    border: 1px solid #252a40;
+    border-radius: 8px;
+    padding: 6px 0;
+}
+
+QMenu#anilistAccountMenu::item {
+    padding: 8px 22px;
+    color: #c7cbd9;
+}
+
+QMenu#anilistAccountMenu::item:selected {
+    background-color: #252a40;
+    color: #f0f1f5;
+}
+
+QMenu#anilistAccountMenu::item:disabled {
+    color: #7c6af7;
+    font-weight: 700;
+}
+
+QMenu#animeLinkMenu {
+    background-color: #0f1118;
+    border: 1px solid #252a40;
+    border-radius: 8px;
+    padding: 6px 0;
+}
+
+QMenu#animeLinkMenu::item {
+    padding: 8px 20px;
+    color: #c7cbd9;
+}
+
+QMenu#animeLinkMenu::item:selected {
+    background-color: #252a40;
+    color: #f0f1f5;
+}
+
+QPushButton#cardLinkBtn {
+    background-color: rgba(6, 8, 16, 0.92);
+    color: #a594f9;
+    border: 1px solid #4b3fa8;
+    border-radius: 13px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 0;
+}
+
+QPushButton#cardLinkBtn:hover {
+    background-color: #252a40;
+    color: #f0f1f5;
+    border-color: #7c6af7;
+}
+
+QFrame#detailScrim {
+    background-color: rgba(0, 0, 0, 0.45);
 }
 
 QPushButton#dangerBtn {
@@ -584,6 +667,7 @@ QPushButton#iconBtn {
     padding: 5px;
     color: #4a5070;
     font-size: 16px;
+    min-height: 28px;
 }
 
 QPushButton#iconBtn:hover {

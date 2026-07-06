@@ -159,26 +159,40 @@ class MainWindow(QMainWindow):
 
         content_row.addWidget(self.stack, stretch=1)
 
-        # Detail panel — fixed width, hidden by default
+        # Content host — detail panel overlays here (does not reflow the grid)
+        self._content_host = QWidget()
+        host_lay = QVBoxLayout(self._content_host)
+        host_lay.setContentsMargins(0, 0, 0, 0)
+        host_lay.setSpacing(0)
+        host_lay.addLayout(content_row)
+
+        self._detail_scrim = QFrame(self._content_host)
+        self._detail_scrim.setObjectName("detailScrim")
+        self._detail_scrim.hide()
+        self._detail_scrim.mousePressEvent = lambda e: self._close_detail_panel()
+
         from ui.detail_panel import DetailPanel
-        self.detail_panel = DetailPanel(self.db, self)
+        self.detail_panel = DetailPanel(self.db, self._content_host)
         self.detail_panel.setFixedWidth(390)
-        self.detail_panel.setVisible(False)
+        self.detail_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.detail_panel.setStyleSheet(
+            "background-color:#0a0c10;border-left:1px solid #1a1d28;"
+        )
+        self.detail_panel.hide()
+        self.detail_panel.close_requested.connect(self._close_detail_panel)
         self.detail_panel.episode_changed.connect(self._on_episode_changed)
         self.detail_panel.watch_status_changed.connect(self._on_watch_status_changed)
         self.detail_panel.stats_changed.connect(self._update_stats_strip)
         self.detail_panel.anime_dropped.connect(self._on_anime_dropped)
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
-        content_row.addWidget(self.detail_panel)
+        self.detail_panel.links_changed.connect(self._on_detail_links_changed)
 
-        # central_content holds ONLY the content row — banner floats above it
+        # central_content holds ONLY the content host — banner floats above it
         self.central_content = QWidget()
         central_vbox = QVBoxLayout(self.central_content)
         central_vbox.setContentsMargins(0, 0, 0, 0)
         central_vbox.setSpacing(0)
-        content_widget = QWidget()
-        content_widget.setLayout(content_row)
-        central_vbox.addWidget(content_widget)
+        central_vbox.addWidget(self._content_host)
         root.addWidget(self.central_content)
 
         # Toast banner — parented to central widget so it floats over content
@@ -454,22 +468,42 @@ class MainWindow(QMainWindow):
         return bar
 
     def _close_detail_panel(self):
-        self.detail_panel.setVisible(False)
+        self.detail_panel.hide()
+        self._detail_scrim.hide()
         self.selected_anime_id = None
         self._deselect_all_cards()
+        if hasattr(self, "notification_banner"):
+            self.notification_banner.resume_after_detail()
+            if self.notification_banner.isVisible():
+                self.notification_banner.raise_()
+
+    def _position_detail_overlay(self):
+        host = self._content_host
+        w, h = host.width(), host.height()
+        panel_w = self.detail_panel.width() or 390
+        self.detail_panel.setGeometry(w - panel_w, 0, panel_w, h)
+        self._detail_scrim.setGeometry(0, 0, w, h)
 
     def _open_detail_panel(self):
-        self.detail_panel.setFixedWidth(390)
-        self.detail_panel.setVisible(True)
+        self._position_detail_overlay()
+        self._detail_scrim.show()
+        self._detail_scrim.lower()
+        self.detail_panel.show()
+        self.detail_panel.raise_()
+        if hasattr(self, "notification_banner"):
+            self.notification_banner.pause_for_detail()
+            self.notification_banner.lower()
+
+    def _on_detail_links_changed(self):
+        if self.selected_anime_id and self.selected_anime_id in self._cards:
+            self._cards[self.selected_anime_id].refresh_links()
 
     # ── Navigation ─────────────────────────────────────────────────────────────
 
     def _navigate(self, page_id: str):
         self.current_page = page_id
         self._set_nav_active(page_id)
-        self.detail_panel.setVisible(False)
-        self.selected_anime_id = None
-        self._deselect_all_cards()
+        self._close_detail_panel()
 
         if page_id == "discover":
             if self._discover_page is None:
@@ -599,8 +633,8 @@ class MainWindow(QMainWindow):
                     next_ep = a.get("next_episode_num")
                     total   = a.get("total_episodes") or 0
                     api_s   = (a.get("status") or "").upper()
-                    aired   = (next_ep - 1) if (next_ep and next_ep > 1) else (
-                               total if (total and api_s in ("FINISHED","CANCELLED")) else 0)
+                    aired   = total if (total and api_s in ("FINISHED", "CANCELLED")) else (
+                               (next_ep - 1) if (next_ep and next_ep > 1) else 0)
                     watched = self.db.get_watched_count(a["id"])
                     if aired > 0 and watched < aired:
                         result.append(a)
@@ -778,9 +812,7 @@ class MainWindow(QMainWindow):
     def _on_card_clicked(self, anime_id: int):
         # Toggle detail panel
         if self.selected_anime_id == anime_id and self.detail_panel.isVisible():
-            self.detail_panel.setVisible(False)
-            self.selected_anime_id = None
-            self._deselect_all_cards()
+            self._close_detail_panel()
             return
 
         self.selected_anime_id = anime_id
@@ -911,8 +943,7 @@ class MainWindow(QMainWindow):
         if not self._anime_belongs_on_current_view(new_status, anime_id):
             self._remove_card_from_grid(anime_id)
             if self.selected_anime_id == anime_id:
-                self.detail_panel.setVisible(False)
-                self.selected_anime_id = None
+                self._close_detail_panel()
             return
 
         anime = self.db.get_anime_by_id(anime_id)
@@ -947,8 +978,8 @@ class MainWindow(QMainWindow):
             next_ep = anime.get("next_episode_num")
             total = anime.get("total_episodes") or 0
             api_s = (anime.get("status") or "").upper()
-            aired = (next_ep - 1) if (next_ep and next_ep > 1) else (
-                total if (total and api_s in ("FINISHED", "CANCELLED")) else 0
+            aired = total if (total and api_s in ("FINISHED", "CANCELLED")) else (
+                (next_ep - 1) if (next_ep and next_ep > 1) else 0
             )
             watched = self.db.get_watched_count(anime_id)
             return aired > 0 and watched < aired
@@ -981,8 +1012,7 @@ class MainWindow(QMainWindow):
             self._load_library()
 
     def _on_anime_dropped(self, anime_id: int):
-        self.detail_panel.setVisible(False)
-        self.selected_anime_id = None
+        self._close_detail_panel()
         self._load_library(
             watch_status=None if self.current_page == "library" else
             {"watching":"watching","completed":"completed","planned":"planned"}.get(self.current_page)
@@ -990,8 +1020,7 @@ class MainWindow(QMainWindow):
         self._update_stats_strip()
 
     def _on_anime_deleted(self, anime_id: int):
-        self.detail_panel.setVisible(False)
-        self.selected_anime_id = None
+        self._close_detail_panel()
         self._load_library()
         self._update_stats_strip()
 
@@ -1124,7 +1153,8 @@ class MainWindow(QMainWindow):
                 updates["next_episode_at"]  = nae.get("airingAt")
                 updates["next_episode_num"] = nae.get("episode")
             else:
-                updates["next_episode_at"] = None
+                updates["next_episode_at"]  = None
+                updates["next_episode_num"] = None
             self.db.update_anime(anime["id"], updates)
             if anime["id"] in self._cards:
                 refreshed = self.db.get_anime_by_id(anime["id"])
@@ -1221,8 +1251,12 @@ class MainWindow(QMainWindow):
             self.notification_banner.show_notifications(notifications)
         else:
             self.notification_banner.clear_if_idle()
+        if any(n.get("kind") in ("auto_completed", "auto_planned") for n in notifications):
+            self._load_library_for_current_page()
 
     def _open_notification_anime(self, anime_id: int):
+        if hasattr(self, "notification_banner"):
+            self.notification_banner.pause_for_detail()
         self._open_anime_from_calendar(anime_id)
 
     def _mark_notification_episode(self, anime_id: int, episode: int):
@@ -1285,7 +1319,10 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        QTimer.singleShot(60, self._load_library)
+        if hasattr(self, "_cards"):
+            QTimer.singleShot(60, self._load_library)
+        if hasattr(self, "detail_panel") and self.detail_panel.isVisible():
+            self._position_detail_overlay()
         if hasattr(self, "update_banner") and self.update_banner.isVisible():
             self.update_banner._reposition()
         if hasattr(self, "notification_banner") and self.notification_banner.isVisible():

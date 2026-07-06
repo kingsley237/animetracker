@@ -24,6 +24,9 @@ class NotificationBanner(QFrame):
         "upcoming_date": ("#a594f9", "#15102c"),
         "upcoming_trailer": ("#38bdf8", "#071826"),
         "new_season": ("#f87171", "#240909"),
+        "auto_completed": ("#34d399", "#071f17"),
+        "auto_planned": ("#9da5c0", "#151821"),
+        "incomplete_completion": ("#fbbf24", "#201804"),
     }
 
     def __init__(self, parent=None):
@@ -31,6 +34,7 @@ class NotificationBanner(QFrame):
         self._queue: List[Dict] = []
         self._current: Dict | None = None
         self._queued_ids: set[int] = set()
+        self._paused_for_detail = False
         self.setObjectName("richNotification")
         self.setFixedWidth(420)
         self.setMinimumHeight(120)
@@ -55,14 +59,27 @@ class NotificationBanner(QFrame):
                 continue
             self._queue.append(notification)
             self._queued_ids.add(nid)
-        if not self.isVisible():
+        if not self.isVisible() and not self._paused_for_detail:
             self._show_next()
 
     def clear_if_idle(self):
         if self._current is None and not self._queue:
             self.hide()
 
+    def pause_for_detail(self):
+        """Hide notifications while the detail drawer is open."""
+        self._paused_for_detail = True
+        self.hide()
+
+    def resume_after_detail(self):
+        """Resume queued notifications after the detail drawer closes."""
+        self._paused_for_detail = False
+        if self._queue and not self.isVisible():
+            self._show_next()
+
     def _show_next(self):
+        if self._paused_for_detail:
+            return
         self._clear()
         if not self._queue:
             self._current = None
@@ -168,6 +185,9 @@ class NotificationBanner(QFrame):
             "upcoming_date": "RELEASE DATE",
             "upcoming_trailer": "TRAILER",
             "new_season": "NEW SEASON",
+            "auto_completed": "COMPLETED",
+            "auto_planned": "MOVED TO PLANNED",
+            "incomplete_completion": "UNFINISHED",
         }.get(kind, "MIROKU")
 
     def _open(self, anime_id: int):
@@ -184,16 +204,19 @@ class NotificationBanner(QFrame):
 
     def _remind(self, notification_id: int):
         self.remind_later.emit(notification_id)
-        self._show_next()
+        if not self._paused_for_detail:
+            self._show_next()
 
     def _dismiss(self, notification_id: int):
         self.dismissed.emit(notification_id)
-        self._show_next()
+        if not self._paused_for_detail:
+            self._show_next()
 
     def _dismiss_current(self):
         if self._current:
             self.dismissed.emit(self._current["id"])
-        self._show_next()
+        if not self._paused_for_detail:
+            self._show_next()
 
     def _reposition(self):
         parent = self.parentWidget()

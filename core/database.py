@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 
-DB_VERSION = 3
+DB_VERSION = 4
 # Legacy data directory name (kept so existing installs keep their library).
 APP_DIR = Path.home() / ".animetracker"
 DB_PATH = APP_DIR / "anime.db"
@@ -70,6 +70,8 @@ class DatabaseManager:
             self._migrate_v2(conn)
         if current < 3:
             self._migrate_v3(conn)
+        if current < 4:
+            self._migrate_v4(conn)
 
         if current == 0:
             conn.execute("INSERT INTO schema_version VALUES (?)", (DB_VERSION,))
@@ -242,6 +244,22 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_watch_log_anime
                 ON watch_log(anime_id);
 
+        """)
+
+    def _migrate_v4(self, conn: sqlite3.Connection):
+        """Per-anime quick links (streaming, Telegram, etc.)."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS anime_links (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id    INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                label       TEXT NOT NULL,
+                url         TEXT NOT NULL,
+                platform    TEXT DEFAULT 'other',
+                sort_order  INTEGER DEFAULT 0,
+                created_at  INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_anime_links_anime
+                ON anime_links(anime_id, sort_order);
         """)
 
     # ─── Anime CRUD ───────────────────────────────────────────────────────────
@@ -807,3 +825,74 @@ class DatabaseManager:
             (remind_at, notification_id),
         )
         conn.commit()
+
+    # ─── Anime links ──────────────────────────────────────────────────────────
+
+    def get_anime_links(self, anime_id: int) -> List[Dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM anime_links WHERE anime_id=? ORDER BY sort_order, id",
+            (anime_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_anime_link(
+        self,
+        anime_id: int,
+        label: str,
+        url: str,
+        platform: str = "other",
+    ) -> int:
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        max_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM anime_links WHERE anime_id=?",
+            (anime_id,),
+        ).fetchone()[0]
+        cur = conn.execute(
+            """INSERT INTO anime_links
+               (anime_id, label, url, platform, sort_order, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (anime_id, label, url, platform, max_order + 1, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+    def update_anime_link(
+        self,
+        link_id: int,
+        *,
+        label: Optional[str] = None,
+        url: Optional[str] = None,
+        platform: Optional[str] = None,
+    ):
+        conn = self._get_conn()
+        updates = {}
+        if label is not None:
+            updates["label"] = label
+        if url is not None:
+            updates["url"] = url
+        if platform is not None:
+            updates["platform"] = platform
+        if not updates:
+            return
+        sets = ", ".join(f"{k}=?" for k in updates)
+        conn.execute(
+            f"UPDATE anime_links SET {sets} WHERE id=?",
+            list(updates.values()) + [link_id],
+        )
+        conn.commit()
+
+    def delete_anime_link(self, link_id: int):
+        conn = self._get_conn()
+        conn.execute("DELETE FROM anime_links WHERE id=?", (link_id,))
+        conn.commit()
+
+    def has_anime_links(self, anime_id: int) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT 1 FROM anime_links WHERE anime_id=? LIMIT 1",
+            (anime_id,),
+        ).fetchone()
+        return row is not None
+

@@ -296,6 +296,18 @@ class SettingsDialog(QDialog):
         dl.addWidget(self._helper_text(
             "Keeps anime pages richer when banner art is available."
         ))
+
+        links_browser_cb = QCheckBox("Always open quick links in browser")
+        links_browser_cb.setChecked(
+            self.settings.value("links_always_open_browser", False, type=bool)
+        )
+        links_browser_cb.stateChanged.connect(
+            lambda v: self.settings.setValue("links_always_open_browser", bool(v))
+        )
+        dl.addWidget(links_browser_cb)
+        dl.addWidget(self._helper_text(
+            "When off, Telegram and other app links open in their native apps when available."
+        ))
         lay.addWidget(display)
 
         cache, cl = self._card("Image cache")

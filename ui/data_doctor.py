@@ -98,10 +98,10 @@ class _Scanner:
             ).fetchone()[0]
 
             aired = 0
-            if next_ep and next_ep > 1:
-                aired = next_ep - 1
-            elif total and api_status in ("FINISHED", "CANCELLED"):
+            if total and api_status in ("FINISHED", "CANCELLED"):
                 aired = total
+            elif next_ep and next_ep > 1:
+                aired = next_ep - 1
 
             # ── Issue 1: watched > total (the 10/7 bug) ───────────────────
             if total > 0 and watched > total:
