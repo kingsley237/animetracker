@@ -11,25 +11,6 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
-APP_USER_MODEL_ID = "Miroku.Desktop.App"
-
-
-def _set_windows_app_id():
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        shell32 = ctypes.windll.shell32
-        shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [
-            ctypes.c_wchar_p
-        ]
-        shell32.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
-        shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
-    except Exception:
-        pass
-
-_set_windows_app_id()
-
 # WebEngine MUST be imported before QApplication — Qt requirement
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401

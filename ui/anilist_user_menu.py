@@ -100,7 +100,7 @@ class AniListUserMenu(QWidget):
         lay.addWidget(self._logged_in_w)
 
         self._connect_btn = QPushButton("Connect AniList")
-        self._connect_btn.setObjectName("secondaryBtn")
+        self._connect_btn.setObjectName("anilistConnectBtn")
         self._connect_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._connect_btn.clicked.connect(self.connect_requested.emit)
         lay.addWidget(self._connect_btn)
@@ -189,6 +189,7 @@ class AniListUserMenu(QWidget):
             return
 
         menu = QMenu(self)
+        menu.setObjectName("anilistAccountMenu")
         username = auth.get_username() or "AniList User"
 
         header = menu.addAction(username)

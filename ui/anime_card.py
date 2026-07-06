@@ -20,7 +20,7 @@ from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QProgressBar,
-    QSizePolicy,
+    QSizePolicy, QPushButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from PyQt6.QtGui import (
@@ -68,6 +68,8 @@ class _BorderOverlay(QWidget):
             border_color, width = QColor("#9d8fff"), 1.5
         elif accent == "completed":
             border_color, width = QColor("#34d399"), 1.5
+        elif accent == "incomplete":
+            border_color, width = QColor("#fbbf24"), 2.0
         else:
             border_color, width = QColor("#2a3048"), 1.0
 
@@ -148,7 +150,6 @@ class AnimeCard(QFrame):
 
     clicked       = pyqtSignal(int)
     watch_toggled = pyqtSignal(int)
-
     def __init__(self, anime: Dict[str, Any], db: DatabaseManager,
                  parent=None):
         super().__init__(parent)
@@ -403,7 +404,6 @@ class AnimeCard(QFrame):
 
     def update_data(self, anime: Dict[str, Any]):
         self._anime      = anime
-        self._next_ep_at = anime.get("next_episode_at")
 
         watched    = self.db.get_watched_count(anime["id"]) if anime["id"] > 0 else 0
         total      = anime.get("total_episodes") or 0
@@ -411,14 +411,29 @@ class AnimeCard(QFrame):
         ws         = anime.get("watch_status", "watching")
         api_status = (anime.get("status") or "").upper()
 
-        if next_ep and next_ep > 1:
-            aired = next_ep - 1
-        elif total and api_status in ("FINISHED", "CANCELLED"):
+        # A finished/cancelled show has no real "next episode" — ignore any
+        # stale next_episode_at left over from before it stopped airing.
+        self._next_ep_at = (
+            None if api_status in ("FINISHED", "CANCELLED")
+            else anime.get("next_episode_at")
+        )
+
+        if total and api_status in ("FINISHED", "CANCELLED"):
             aired = total
+        elif next_ep and next_ep > 1:
+            aired = next_ep - 1
         else:
             aired = 0
 
         has_behind = aired > 0 and watched < aired
+        is_ended = api_status in ("FINISHED", "CANCELLED")
+        # Only flag as "behind" the urgent/airing way when the show is still
+        # actually releasing episodes — a finished show with unwatched eps
+        # is just backlog, not a new episode you're missing.
+        still_airing_behind = has_behind and not is_ended
+        # Marked "completed" by the user but episodes are still unwatched —
+        # e.g. they clicked Complete early, or new episodes were retconned in.
+        is_incomplete_completion = ws == "completed" and total and watched < total
 
         # ── Title ─────────────────────────────────────────────────────────
         title = anime.get("english_title") or anime.get("romaji_title", "")
@@ -431,8 +446,16 @@ class AnimeCard(QFrame):
         )
 
         # ── Episode label ──────────────────────────────────────────────────
+        self.ep_label.setStyleSheet(
+            "font-size:10px;font-weight:700;color:#fbbf24;background:transparent;"
+            if is_incomplete_completion else
+            "font-size:10px;color:#c0c4d6;background:transparent;"
+        )
         if ws == "completed":
-            self.ep_label.setText(f"{watched}/{total or '?'} eps")
+            if is_incomplete_completion:
+                self.ep_label.setText(f"{watched}/{total} eps · {total - watched} left")
+            else:
+                self.ep_label.setText(f"{watched}/{total or '?'} eps")
         elif ws == "watching":
             if aired:
                 self.ep_label.setText(f"{watched}/{aired} aired")
@@ -457,22 +480,29 @@ class AnimeCard(QFrame):
             self.ep_label.setText(f"{watched} watched")
 
         # ── Status badge ───────────────────────────────────────────────────
-        if ws == "completed":
+        if ws == "completed" and is_incomplete_completion:
+            n = total - watched
+            self._set_badge("badgeIncomplete", f"{n} UNWATCHED")
+        elif ws == "completed":
             self._set_badge("badgeCompleted", "FINISHED")
         elif ws == "planned" and api_status == "NOT_YET_RELEASED":
             self._set_badge("badgeUpcoming", "UPCOMING")
         elif ws == "planned":
             self._set_badge("badgePlanned", "PLANNED")
-        elif has_behind:
+        elif still_airing_behind:
             n = aired - watched
             self._set_badge("badgeAlert", f"+{n} EP{'S' if n > 1 else ''}")
+        elif is_ended:
+            self._set_badge("badgeCompleted", "FINISHED")
         else:
             self._set_badge("badgeWatching", "AIRING")
 
         # ── Card accent border (painted in paintEvent) ───────────────────
-        if has_behind and ws == "watching":
+        if still_airing_behind and ws == "watching":
             accent = "behind"
-        elif ws == "completed":
+        elif ws == "completed" and is_incomplete_completion:
+            accent = "incomplete"
+        elif ws == "completed" or (ws == "watching" and is_ended):
             accent = "completed"
         elif ws == "planned":
             accent = "planned"
@@ -491,6 +521,7 @@ class AnimeCard(QFrame):
         self.progress_bar.setValue(min(watched, denom))
 
         prog_color = (
+            "#fbbf24" if is_incomplete_completion else
             "#34d399" if ws == "completed" else
             "#fbbf24" if has_behind       else
             "#7c6af7"
@@ -503,9 +534,15 @@ class AnimeCard(QFrame):
 
         # ── Top badges ─────────────────────────────────────────────────────
         sc = anime.get("average_score")
-        if has_behind and ws == "watching":
+        if still_airing_behind and ws == "watching":
             n = aired - watched
             self.behind_badge_lbl.setText(f"  {n} behind  ")
+            self.behind_badge_lbl.adjustSize()
+            self.behind_badge_lbl.setVisible(True)
+            self.score_badge_lbl.setVisible(False)
+        elif is_incomplete_completion:
+            n = total - watched
+            self.behind_badge_lbl.setText(f"  {n} unwatched  ")
             self.behind_badge_lbl.adjustSize()
             self.behind_badge_lbl.setVisible(True)
             self.score_badge_lbl.setVisible(False)
@@ -538,6 +575,25 @@ class AnimeCard(QFrame):
         self._info_w.raise_()
 
         self._refresh_overlay()
+        self.refresh_links()
+
+    def refresh_links(self):
+        has_links = self.anime_id > 0 and self.db.has_anime_links(self.anime_id)
+        return
+
+    def _open_links_menu(self):
+        from ui.anime_links import LinkOpenMenu
+        links = self.db.get_anime_links(self.anime_id)
+        if not links:
+            return
+        if len(links) == 1:
+            from core.link_opener import open_link, detect_platform
+            link = links[0]
+            open_link(link["url"], platform=link.get("platform") or detect_platform(link["url"]))
+            return
+        menu = LinkOpenMenu(self.anime_id, self.db, self)
+        menu.links_changed.connect(self.refresh_links)
+        menu.exec(self.mapToGlobal(self.rect().center()))
 
     def _set_badge(self, obj_name: str, text: str):
         self.status_badge.setObjectName(obj_name)
@@ -566,6 +622,17 @@ class AnimeCard(QFrame):
                 "background-color:rgba(6,8,16,0.94);"
                 "color:#bbf7d0;"
                 "border:1px solid #34d399;"
+                "border-radius:4px;"
+                "font-size:9px;font-weight:700;"
+                "padding:2px 8px;letter-spacing:0.6px;"
+            )
+        elif obj_name == "badgeIncomplete":
+            # Distinct from FINISHED (green) and AIRING alert (red) — this
+            # means the user marked it complete but hasn't watched everything.
+            self.status_badge.setStyleSheet(
+                "background-color:rgba(6,8,16,0.94);"
+                "color:#fde68a;"
+                "border:1px solid #fbbf24;"
                 "border-radius:4px;"
                 "font-size:9px;font-weight:700;"
                 "padding:2px 8px;letter-spacing:0.6px;"
@@ -656,3 +723,10 @@ class AnimeCard(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.anime_id)
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        if self.anime_id > 0 and self.db.has_anime_links(self.anime_id):
+            self._open_links_menu()
+            event.accept()
+            return
+        super().contextMenuEvent(event)

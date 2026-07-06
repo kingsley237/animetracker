@@ -74,13 +74,16 @@ def _get_classics(page: int = 1, per_page: int = 24, sort: str = "SCORE_DESC",
     return (data or {}).get("Page", {}).get("media", [])
 
 
-def _get_trending_sorted(page: int = 1, per_page: int = 24, sort: str = "TRENDING_DESC") -> List[Dict]:
-    """Trending with configurable sort."""
+def _get_trending_sorted(page: int = 1, per_page: int = 24, sort: str = "TRENDING_DESC",
+                         genre: Optional[str] = None) -> List[Dict]:
+    """Trending with configurable sort and optional genre filter."""
+    genre_filter = f'genre_in: ["{genre}"],' if genre else ""
     gql = f"""
     query ($page: Int, $perPage: Int, $sort: [MediaSort]) {{
         Page(page: $page, perPage: $perPage) {{
             media(
                 type: ANIME, isAdult: false, sort: $sort,
+                {genre_filter}
                 format_in: [TV, TV_SHORT, ONA, MOVIE]
             ) {{
                 {MEDIA_FIELDS_SLIM}
@@ -259,6 +262,7 @@ class DiscoverPage(QWidget):
         for g in get_genres_list():
             self.genre_combo.addItem(g)
         self.genre_combo.setFixedWidth(130)
+        self.genre_combo.currentIndexChanged.connect(self._apply)
         self.cb_lay.addWidget(self.genre_combo)
 
         # Sort filter
@@ -269,6 +273,7 @@ class DiscoverPage(QWidget):
         for label, _ in SORT_OPTIONS:
             self.sort_combo.addItem(label)
         self.sort_combo.setFixedWidth(180)
+        self.sort_combo.currentIndexChanged.connect(self._apply)
         self.cb_lay.addWidget(self.sort_combo)
 
         apply_btn = QPushButton("Apply")
@@ -325,6 +330,7 @@ class DiscoverPage(QWidget):
 
         self._set_active("seasonal")
         self._update_sort_options("seasonal")
+        self._apply()
 
     def load(self):
         if not self._loaded:
@@ -338,7 +344,7 @@ class DiscoverPage(QWidget):
         self._set_active(mode)
         self.season_w.setVisible(mode == "seasonal")
         self._update_sort_options(mode)
-        self._fetch()
+        self._apply()
 
     def _set_active(self, mode: str):
         for m, b in self._tabs.items():
@@ -393,7 +399,9 @@ class DiscoverPage(QWidget):
                 trending_sort = sort_key if sort_key in (
                     "TRENDING_DESC", "POPULARITY_DESC", "SCORE_DESC"
                 ) else "TRENDING_DESC"
-                return _get_trending_sorted(page=page, per_page=24, sort=trending_sort)
+                return _get_trending_sorted(
+                    page=page, per_page=24, sort=trending_sort, genre=genre
+                )
             elif mode == "upcoming":
                 return get_upcoming_anime(page=page, per_page=24)
             elif mode == "classics":

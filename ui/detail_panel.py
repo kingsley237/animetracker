@@ -53,6 +53,8 @@ class DetailPanel(QWidget):
     watch_status_changed  = pyqtSignal(int, str)  # anime_id, new watch_status
     anime_dropped    = pyqtSignal(int)
     anime_deleted    = pyqtSignal(int)
+    close_requested  = pyqtSignal()
+    links_changed    = pyqtSignal()
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -83,13 +85,14 @@ class DetailPanel(QWidget):
         x.setObjectName("iconBtn")
         x.setFixedSize(28, 28)
         x.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        x.clicked.connect(self.hide)
+        x.clicked.connect(self.close_requested.emit)
         top_bar.addWidget(x)
         outer.addLayout(top_bar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         body = QWidget()
@@ -191,6 +194,14 @@ class DetailPanel(QWidget):
         )
         synopsis_lay.addWidget(self.synopsis_lbl)
         self._lay.addWidget(synopsis_card)
+
+        # Quick links (streaming, Telegram, etc.)
+        links_card = self._detail_card("Quick links")
+        from ui.anime_links import LinksManagerWidget
+        self.links_manager = LinksManagerWidget(self.db)
+        self.links_manager.links_changed.connect(self.links_changed.emit)
+        links_card.layout().addWidget(self.links_manager)
+        self._lay.addWidget(links_card)
 
         # Status actions
         actions_card = self._detail_card("Actions")
@@ -305,10 +316,10 @@ class DetailPanel(QWidget):
         next_ep_at = anime.get("next_episode_at")
         watched    = self.db.get_watched_count(anime["id"]) if anime.get("id") and anime["id"] > 0 else 0
 
-        if next_ep and next_ep > 1:
-            aired = next_ep - 1
-        elif total and api_status in ("FINISHED", "CANCELLED"):
+        if total and api_status in ("FINISHED", "CANCELLED"):
             aired = total
+        elif next_ep and next_ep > 1:
+            aired = next_ep - 1
         else:
             aired = 0
 
@@ -322,13 +333,21 @@ class DetailPanel(QWidget):
 
         # ── Progress block — clear, unambiguous ──────────────────────
         # Show: last watched ep + next airing ep separately
+        detail_ws = anime.get("watch_status", "watching")
+        is_incomplete_completion = detail_ws == "completed" and total and watched < total
+
         prog_lines = []
-        if watched > 0:
+        if is_incomplete_completion:
+            prog_lines.append(
+                f"⚠ Marked Completed but {total - watched} episode(s) unwatched "
+                f"({watched}/{total})"
+            )
+        elif watched > 0:
             prog_lines.append(f"Last watched: Episode {watched}")
         elif aired > 0:
             prog_lines.append("Not started yet")
 
-        if next_ep and next_ep_at:
+        if next_ep and next_ep_at and api_status not in ("FINISHED", "CANCELLED"):
             from datetime import datetime, timezone
             now_ts = int(datetime.now(timezone.utc).timestamp())
             secs   = next_ep_at - now_ts
@@ -345,12 +364,20 @@ class DetailPanel(QWidget):
                 else:
                     time_str = f"{m}m"
                 prog_lines.append(f"Episode {next_ep} airs in {time_str}")
-        elif api_status == "FINISHED":
+        elif api_status in ("FINISHED", "CANCELLED"):
             prog_lines.append(f"Finished airing ({total or '?'} eps total)")
 
         if prog_lines:
             self.progress_info_lbl.setText("\n".join(prog_lines))
             self.progress_info_lbl.setVisible(True)
+            if is_incomplete_completion:
+                self.progress_info_lbl.setStyleSheet(
+                    "background-color:#1f1a0a;border:1px solid #fbbf24;"
+                    "border-radius:8px;color:#fde68a;font-size:12px;"
+                    "line-height:1.7;padding:10px 14px;font-weight:600;"
+                )
+            else:
+                self.progress_info_lbl.setStyleSheet("")
         else:
             self.progress_info_lbl.setVisible(False)
 
@@ -380,6 +407,11 @@ class DetailPanel(QWidget):
 
         # Episode list
         self._build_episodes(anime)
+
+        if anime.get("id", 0) > 0:
+            self.links_manager.load(anime["id"])
+        else:
+            self.links_manager.load(-1)
 
     def _fetch_missing_meta(self, anime: Dict):
         """Fetch synopsis/studios/score from AniList for imported anime with no data."""
@@ -493,12 +525,13 @@ class DetailPanel(QWidget):
         now_ts   = int(datetime.now(timezone.utc).timestamp())
 
         # How many episodes have actually aired?
-        if next_ep and next_ep > 1:
-            # episodes 1 … (next_ep - 1) have aired
-            aired_count = next_ep - 1
-        elif total and (not next_ep):
+        api_status = (anime.get("status") or "").upper()
+        if total and (not next_ep or api_status in ("FINISHED", "CANCELLED")):
             # Finished / no next ep scheduled
             aired_count = total
+        elif next_ep and next_ep > 1:
+            # episodes 1 … (next_ep - 1) have aired
+            aired_count = next_ep - 1
         else:
             aired_count = 0
 
@@ -532,8 +565,12 @@ class DetailPanel(QWidget):
                 self._dim_label(f"+ {aired_count - 60} more aired episodes")
             )
 
-        # Show upcoming (not yet aired) episodes as locked
-        if next_ep and total and next_ep <= total:
+        # Show upcoming (not yet aired) episodes as locked — only makes sense
+        # for a show that's still actually releasing episodes. A finished/
+        # cancelled show's stale next_episode_num equals its last aired
+        # episode, which would otherwise get listed twice.
+        if (next_ep and total and next_ep <= total
+                and api_status not in ("FINISHED", "CANCELLED")):
             self.ep_vbox.addWidget(self._dim_label("── Upcoming (not yet aired) ──"))
             for ep_n in range(next_ep, min(next_ep + 3, total + 1)):
                 locked = _LockedEpRow(ep_n, ep_n + offset)
@@ -695,7 +732,9 @@ class DetailPanel(QWidget):
             return
         next_ep = self._anime.get("next_episode_num") or 0
         total   = self._anime.get("total_episodes") or 0
-        count   = next_ep - 1 if next_ep > 1 else total
+        count   = total if api_s in ("FINISHED", "CANCELLED") and total else (
+            next_ep - 1 if next_ep > 1 else total
+        )
         if count == 0: return
         for ep in range(1, count + 1):
             self.db.set_episode_watched(self._anime["id"], ep, True)
@@ -725,6 +764,11 @@ class _EpRow(QFrame):
         self.setObjectName("episodeRow")
         self.setFixedHeight(44)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setStyleSheet(
+            "QFrame#episodeRow{background:#0d0f14;border:1px solid #1a1d28;"
+            "border-radius:7px;}"
+            "QFrame#episodeRow:hover{border-color:#2a3150;}"
+        )
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 4, 8, 4)
@@ -744,6 +788,7 @@ class _EpRow(QFrame):
         for v in range(1, 7):
             b = QPushButton("★")
             b.setObjectName("starBtn")
+            b.setFlat(True)
             b.setFixedSize(18, 18)
             b.setStyleSheet("font-size:11px;")
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -778,11 +823,12 @@ class _EpRow(QFrame):
         if locked:
             self.setCursor(Qt.CursorShape.ForbiddenCursor)
             self.setStyleSheet(
-                "QFrame#episodeRow{background:#0d0f14;"
-                "border-color:#141720;opacity:0.5;}"
+                "QFrame#episodeRow{background:#0d0f14;border:1px solid #141720;"
+                "border-radius:7px;opacity:0.55;}"
             )
         else:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._refresh()
 
     def _refresh(self):
         # Row style
@@ -790,13 +836,24 @@ class _EpRow(QFrame):
             self.watch_btn.setText("✓")
             self.watch_btn.setStyleSheet(
                 "QPushButton{background:#0e2a1f;color:#34d399;border-radius:6px;"
-                "font-size:13px;font-weight:700;}"
+                "font-size:13px;font-weight:700;border:1px solid #1f4b35;}"
             )
-            self.setStyleSheet("QFrame#episodeRow{background:#0c1a14;border-color:#1a3a28;}")
+            self.setStyleSheet(
+                "QFrame#episodeRow{background:#0c1a14;border:1px solid #1a3a28;"
+                "border-radius:7px;}"
+                "QFrame#episodeRow:hover{border-color:#2b6346;}"
+            )
         else:
             self.watch_btn.setText("○")
-            self.watch_btn.setStyleSheet("")
-            self.setStyleSheet("")
+            self.watch_btn.setStyleSheet(
+                "QPushButton{background:#111420;color:#7c849b;border:1px solid #1e2235;"
+                "border-radius:6px;font-size:13px;font-weight:700;}"
+            )
+            self.setStyleSheet(
+                "QFrame#episodeRow{background:#0d0f14;border:1px solid #1a1d28;"
+                "border-radius:7px;}"
+                "QFrame#episodeRow:hover{border-color:#2a3150;}"
+            )
 
 
         # Stars only visible when watched
@@ -894,6 +951,7 @@ class _RatingWidget(QWidget):
         for v in range(1, 7):
             b = QPushButton("★")
             b.setObjectName("starBtn")
+            b.setFlat(True)
             b.setFixedSize(32, 32)
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             b.setToolTip(RATING_LABELS.get(v, str(v)))
