@@ -8,7 +8,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 
 DB_VERSION = 4
@@ -494,6 +494,18 @@ class DatabaseManager:
         val = row[0]
         return round(val, 1) if val is not None else None
 
+    def get_overall_rating(self, anime_id: int) -> Optional[float]:
+        """The user's explicit overall rating (episode_num=0), as opposed to
+        get_average_rating() which blends it together with every per-episode
+        rating. Use this whenever you need "what did the user actually rate
+        this show overall" rather than a derived average."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT score FROM ratings WHERE anime_id=? AND episode_num=0",
+            (anime_id,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
     def get_remarkable_anime(self) -> Dict[str, Any]:
         """Return per-anime highlights for the stats page."""
         conn = self._get_conn()
@@ -590,6 +602,21 @@ class DatabaseManager:
 
         top_genres = sorted(genre_map.items(), key=lambda x: x[1], reverse=True)[:8]
 
+        studio_counts = conn.execute(
+            "SELECT studios FROM anime WHERE studios != '[]' AND hof_only=0"
+        ).fetchall()
+
+        studio_map: Dict[str, int] = {}
+        for row in studio_counts:
+            try:
+                studios = json.loads(row[0])
+                for s in studios:
+                    studio_map[s] = studio_map.get(s, 0) + 1
+            except Exception:
+                pass
+
+        top_studios = sorted(studio_map.items(), key=lambda x: x[1], reverse=True)[:8]
+
         return {
             "total": total,
             "watching": watching,
@@ -599,8 +626,25 @@ class DatabaseManager:
             "total_episodes_watched": total_watched,
             "average_score": round(avg_score, 1) if avg_score else None,
             "top_genres": top_genres,
+            "top_studios": top_studios,
         }
-    
+
+    def get_decade_breakdown(self) -> List[Tuple[int, int]]:
+        """Count of anime per decade (by season_year), chronological order."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT season_year FROM anime "
+            "WHERE hof_only=0 AND season_year IS NOT NULL"
+        ).fetchall()
+        counts: Dict[int, int] = {}
+        for r in rows:
+            year = r[0]
+            if not year:
+                continue
+            decade = (int(year) // 10) * 10
+            counts[decade] = counts.get(decade, 0) + 1
+        return sorted(counts.items(), key=lambda x: x[0])
+
     # ─── Watch Log ────────────────────────────────────────────────────────────
 
     def get_watch_log_year(self, year: int) -> List[Dict]:
@@ -623,6 +667,28 @@ class DatabaseManager:
         ).fetchall()
         years = [int(r[0]) for r in rows if r[0]]
         return years if years else [datetime.now().year]
+
+    def get_longest_streak(self) -> int:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT DISTINCT date(watched_at, 'unixepoch') AS d
+               FROM watch_log ORDER BY d ASC"""
+        ).fetchall()
+        if not rows:
+            return 0
+        from datetime import date, timedelta
+        longest  = 1
+        current  = 1
+        prev: Optional[date] = None
+        for row in rows:
+            d = date.fromisoformat(row[0])
+            if prev is not None and d == prev + timedelta(days=1):
+                current += 1
+            elif prev is not None and d != prev:
+                current = 1
+            longest = max(longest, current)
+            prev = d
+        return longest
 
     def get_current_streak(self) -> int:
         conn  = self._get_conn()

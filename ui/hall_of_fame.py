@@ -1,15 +1,26 @@
 """
-Miroku — Hall of Fame  (v2 redesign)
+Miroku — Hall of Fame  (Gallery / Cinematic redesign)
 
-Features
---------
-A  Grid / List view toggle
-B  Tier system  (S / A / B / C / D) — stored in DB, drag-assignable
-C  Rich row card — banner blur bg, 88 px cover, genre chips, date inducted
-D  #1 Hero card — full-width banner, gold crown, large title
-E  Trailer button — opens existing TrailerPlayer
-F  AniList score vs your rating side by side
-G  Export as image — saves a PNG of your full Hall of Fame grid
+This is a structural rebuild, not a style pass. The old page was a
+vertical list of cards; this one is a media gallery:
+
+  - A cinematic hero zone up top: a blurred, scrim-darkened backdrop of
+    your Champion's banner art, with the page header, clickable tier
+    filter chips, and the Champion's own info sitting directly on it —
+    like a streaming service's featured banner, not a stat block.
+  - Tiers render as horizontal-scrolling poster Shelves (Netflix-row
+    style) instead of stacked rows. A Wall view (dense poster grid) is
+    the alternative for browsing everything at once.
+  - Clicking any poster opens a full-screen cinematic Detail Overlay —
+    its own blurred backdrop, inline note editing, and ‹ › arrows (or
+    Left/Right arrow keys) to browse straight through your whole
+    collection without closing it.
+  - "Surprise Me" jumps the overlay to a random pick from your
+    collection — a small delight feature, not just a utility.
+
+Everything else (tiers, manual reordering, notes, trailers, PNG
+export) still works — it just now lives inside the overlay instead of
+being crammed onto every row.
 
 DB note
 -------
@@ -19,23 +30,22 @@ Migration runs safely on first load via ALTER TABLE … ADD COLUMN IF NOT EXISTS
 from __future__ import annotations
 
 import json
-import os
-import re
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import (
-    Qt, QSize, QTimer, pyqtSignal,
-)
+from PyQt6.QtCore import Qt, QRectF, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import (
-    QColor, QCursor, QFont, QPainter, QPainterPath, QPixmap,
+    QColor, QCursor, QFont, QKeyEvent, QLinearGradient, QPainter,
+    QPainterPath, QPen, QPixmap,
 )
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-    QTextEdit, QVBoxLayout, QWidget,
+    QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QStackedLayout, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from core.database import DatabaseManager
@@ -53,7 +63,162 @@ TIER_KEYS   = [t[0] for t in TIERS]
 TIER_COLORS = {t[0]: t[2] for t in TIERS}
 TIER_LABELS = {t[0]: t[1] for t in TIERS}
 
-RANK_COLORS = {1: "#fbbf24", 2: "#c0c0c0", 3: "#cd7f32"}   # gold / silver / bronze
+CHAMPION_FALLBACK_COLOR = "#fbbf24"
+NEUTRAL_RANK_COLOR = "#9da5c0"
+
+HERO_HEIGHT = 460
+
+
+# ── Shared pixmap helpers ───────────────────────────────────────────────────────
+
+def _rounded_scaled_pixmap(path: str, w: int, h: int, radius: int = 8,
+                            ring_color: Optional[str] = None) -> Optional[QPixmap]:
+    """Cover-fit crop + rounded corners, with an optional tier-colored
+    ring — the same treatment applied to every cover surface in the
+    page (champion, posters, overlay) so they read as one component
+    family instead of each inventing its own border style."""
+    px = QPixmap(path)
+    if px.isNull():
+        return None
+    px = px.scaled(
+        w, h,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    cx = (px.width() - w) // 2
+    cy = (px.height() - h) // 2
+    px = px.copy(cx, cy, w, h)
+    rounded = QPixmap(w, h)
+    rounded.fill(QColor(0, 0, 0, 0))
+    pt = QPainter(rounded)
+    pt.setRenderHint(QPainter.RenderHint.Antialiasing)
+    clip = QPainterPath()
+    clip.addRoundedRect(0.0, 0.0, float(w), float(h), radius, radius)
+    pt.setClipPath(clip)
+    pt.drawPixmap(0, 0, px)
+    pt.end()
+
+    if ring_color:
+        pt2 = QPainter(rounded)
+        pt2.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(ring_color))
+        pen.setWidthF(2.4)
+        pt2.setPen(pen)
+        pt2.setBrush(Qt.BrushStyle.NoBrush)
+        inset = 1.2
+        ring = QPainterPath()
+        ring.addRoundedRect(
+            QRectF(inset, inset, w - inset * 2, h - inset * 2), radius - 1, radius - 1
+        )
+        pt2.drawPath(ring)
+        pt2.end()
+    return rounded
+
+
+def _backdrop_pixmap(path: str, w: int, h: int, blur_radius: int = 36) -> Optional[QPixmap]:
+    """Cover-fit crop + blur + dark scrim, all baked into one static
+    pixmap. Baking the blur via an offscreen QGraphicsScene (instead of
+    a live QGraphicsBlurEffect left attached to a widget) avoids a real
+    z-order bug: a blurred widget's effect compositing does not reliably
+    respect sibling stacking order inside a QStackedLayout, so foreground
+    text ended up rendered *behind* the "blurred" image. A plain QLabel
+    showing an already-composited pixmap has no such ambiguity."""
+    src = QPixmap(path)
+    if src.isNull() or w <= 0 or h <= 0:
+        return None
+
+    scaled = src.scaled(
+        w, h,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    cx = (scaled.width() - w) // 2
+    cy = (scaled.height() - h) // 2
+    cropped = scaled.copy(cx, cy, w, h)
+
+    scene = QGraphicsScene()
+    item = QGraphicsPixmapItem(cropped)
+    effect = QGraphicsBlurEffect()
+    effect.setBlurRadius(blur_radius)
+    item.setGraphicsEffect(effect)
+    scene.addItem(item)
+
+    result = QPixmap(w, h)
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    scene.render(painter, QRectF(0, 0, w, h), QRectF(0, 0, w, h))
+
+    grad = QLinearGradient(0, 0, 0, h)
+    grad.setColorAt(0.0, QColor(10, 12, 18, 210))
+    grad.setColorAt(1.0, QColor(10, 12, 18, 248))
+    painter.fillRect(0, 0, w, h, grad)
+    painter.end()
+    return result
+
+
+class _FullBleedContainer(QWidget):
+    """A container whose direct children are each resized to fill it,
+    in insertion order — later children paint on top. Used for the
+    backdrop image + foreground content in the hero zone and overlay
+    banner, using plain sibling z-order (no QStackedLayout)."""
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        for child in self.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            child.setGeometry(0, 0, self.width(), self.height())
+
+
+def _meta_line_html(entry: Dict, db: DatabaseManager) -> str:
+    """One merged, color-coded line: your score · AniList score · year · eps."""
+    parts: List[str] = []
+    avg = db.get_average_rating(entry["id"])
+    if avg is not None:
+        parts.append(f"<span style='color:#fbbf24;font-weight:700;'>★ {avg:.1f}</span>")
+    sc = entry.get("average_score")
+    if sc:
+        parts.append(f"<span style='color:#a594f9;'>AL {sc / 10:.1f}</span>")
+    bits = []
+    yr = entry.get("season_year")
+    if yr:
+        bits.append(str(yr))
+    eps = entry.get("total_episodes")
+    if eps:
+        bits.append(f"{eps} eps")
+    if bits:
+        parts.append(f"<span style='color:#9da5c0;'>{' · '.join(bits)}</span>")
+    return "&nbsp;&nbsp;·&nbsp;&nbsp;".join(parts)
+
+
+def _genre_chip_row(genres: List[str], cap: int = 4) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setSpacing(6)
+    shown = genres[:cap]
+    overflow = len(genres) - len(shown)
+    for g in shown:
+        chip = QLabel(g)
+        chip.setStyleSheet(
+            "background:rgba(124,106,247,26);color:#c4b8ff;"
+            "border:1px solid #4b3fa855;border-radius:8px;"
+            "font-size:10px;padding:2px 8px;"
+        )
+        row.addWidget(chip)
+    if overflow > 0:
+        more = QLabel(f"+{overflow}")
+        more.setStyleSheet(
+            "background:transparent;color:#6b7280;font-size:10px;padding:2px 4px;"
+        )
+        row.addWidget(more)
+    row.addStretch()
+    return row
+
+
+def _toolbar_btn(text: str, obj: str) -> QPushButton:
+    b = QPushButton(text)
+    b.setObjectName(obj)
+    b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+    b.setFixedHeight(34)
+    return b
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -66,7 +231,6 @@ def _migrate(db: DatabaseManager) -> None:
         "(rank INTEGER PRIMARY KEY, anime_id INTEGER UNIQUE, "
         " note TEXT, tier TEXT, added_at INTEGER)"
     )
-    # Safe migration — add tier column to existing tables
     try:
         conn.execute("ALTER TABLE hall_of_fame ADD COLUMN tier TEXT")
     except Exception:
@@ -97,7 +261,6 @@ def _load_hof(db: DatabaseManager) -> List[Dict]:
 
 def _save_hof_order(db: DatabaseManager, ordered_ids: List[int]) -> None:
     conn = db._get_conn()
-    now = int(datetime.now(timezone.utc).timestamp())
     for rank, aid in enumerate(ordered_ids, 1):
         conn.execute(
             "UPDATE hall_of_fame SET rank=? WHERE anime_id=?", (rank, aid)
@@ -204,108 +367,652 @@ def add_anilist_media_to_hof(
     return True, t.get("romaji", "Anime")
 
 
+# ── Elevated card (soft self-painted shadow, used by Wall view) ───────────────
+
+class _ElevatedCard(QWidget):
+    """Wraps a card widget in a self-painted soft shadow.
+
+    QGraphicsDropShadowEffect paints outside the source widget's own
+    geometry, and inside a scrolling layout that overflow gets clipped
+    unpredictably by neighboring widgets. Reserving the shadow's margin
+    inside *this* widget's own layout margins keeps the effect
+    self-contained so it can never be clipped by a sibling.
+    """
+
+    def __init__(
+        self, inner: QWidget, radius: int = 12, margin: int = 14,
+        strength: int = 110, color: str = "#000000", parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._inner    = inner
+        self._radius   = radius
+        self._margin   = margin
+        self._strength = strength
+        self._color    = QColor(color)
+        self.setSizePolicy(inner.sizePolicy())
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(margin, margin - 5, margin, margin + 7)
+        lay.addWidget(inner)
+
+    def paintEvent(self, ev) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self._inner.geometry()
+        steps = 6
+        for i in range(steps, 0, -1):
+            t = i / steps
+            grow  = self._margin * t
+            alpha = max(1, int(self._strength * (1 - t) ** 2 / steps))
+            c = QColor(self._color)
+            c.setAlpha(min(255, alpha))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(c)
+            rr = QRectF(r).adjusted(-grow * 0.6, -grow * 0.25, grow * 0.6, grow * 1.15)
+            path = QPainterPath()
+            path.addRoundedRect(
+                rr, self._radius + grow * 0.35, self._radius + grow * 0.35
+            )
+            p.drawPath(path)
+        p.end()
+        super().paintEvent(ev)
+
+
+# ── Poster card (shared by Shelves and Wall view) ──────────────────────────────
+
+class _PosterCard(QFrame):
+    """Cover-forward poster. Cover art, bottom gradient, tier ring, tier
+    badge, title, and score are all baked together into one
+    QPainter-composed pixmap — one rendering path instead of stacking
+    separate QLabel overlays on top of a QLabel cover, which is what
+    silently clipped the tier-letter text before. The tier ring matches
+    the Champion and overlay cover treatment, so every cover surface on
+    the page reads as the same component."""
+
+    clicked = pyqtSignal(int)
+
+    CARD_W = 156
+    CARD_H = 226
+    RADIUS = 12
+
+    def __init__(self, entry: Dict, db: DatabaseManager, parent=None) -> None:
+        super().__init__(parent)
+        self._aid   = entry["id"]
+        self._entry = entry
+        self.setObjectName("hofPosterCard")
+        self.setFixedSize(self.CARD_W, self.CARD_H)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+        self._cover_lbl = QLabel(self)
+        self._cover_lbl.setFixedSize(self.CARD_W, self.CARD_H)
+        self._cover_lbl.setStyleSheet("background:transparent;")
+        self._compose(None)
+
+    def _compose(self, cover_px: Optional[QPixmap]) -> None:
+        tier  = (self._entry.get("tier") or "").strip().upper()
+        color = TIER_COLORS.get(tier)
+
+        canvas = QPixmap(self.CARD_W, self.CARD_H)
+        canvas.fill(QColor(0, 0, 0, 0))
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        clip = QPainterPath()
+        clip.addRoundedRect(0.0, 0.0, float(self.CARD_W), float(self.CARD_H),
+                            self.RADIUS, self.RADIUS)
+        p.setClipPath(clip)
+
+        if cover_px is not None:
+            p.drawPixmap(0, 0, cover_px)
+        else:
+            p.fillRect(0, 0, self.CARD_W, self.CARD_H, QColor("#111420"))
+
+        grad = QLinearGradient(0, self.CARD_H - 86, 0, self.CARD_H)
+        grad.setColorAt(0.0, QColor(0, 0, 0, 0))
+        grad.setColorAt(1.0, QColor(0, 0, 0, 245))
+        p.fillRect(0, self.CARD_H - 86, self.CARD_W, 86, grad)
+
+        if color:
+            badge_w, badge_h = 25, 22
+            bx, by = self.CARD_W - badge_w - 8, 8
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(color))
+            badge_path = QPainterPath()
+            badge_path.addRoundedRect(bx, by, badge_w, badge_h, 5, 5)
+            p.drawPath(badge_path)
+            p.setPen(QColor("#0d0f14"))
+            f = QFont()
+            f.setPointSize(10)
+            f.setWeight(QFont.Weight.Black)
+            p.setFont(f)
+            p.drawText(QRectF(bx, by, badge_w, badge_h),
+                       Qt.AlignmentFlag.AlignCenter, tier)
+
+        title = self._entry.get("english_title") or self._entry.get("romaji_title", "")
+        p.setPen(QColor("#f5f6ff"))
+        f2 = QFont()
+        f2.setPointSize(9)
+        f2.setWeight(QFont.Weight.Bold)
+        p.setFont(f2)
+        title_rect = QRectF(10, self.CARD_H - 64, self.CARD_W - 20, 36)
+        p.drawText(title_rect, int(Qt.TextFlag.TextWordWrap) | Qt.AlignmentFlag.AlignLeft,
+                   title[:36])
+
+        sc = self._entry.get("average_score")
+        if sc:
+            p.setPen(QColor("#a594f9"))
+            f3 = QFont()
+            f3.setPointSize(8)
+            f3.setWeight(QFont.Weight.DemiBold)
+            p.setFont(f3)
+            p.drawText(QRectF(10, self.CARD_H - 24, self.CARD_W - 20, 16),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"★ {sc / 10:.1f}")
+        p.end()
+
+        if color:
+            p2 = QPainter(canvas)
+            p2.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor(color))
+            pen.setWidthF(2.4)
+            p2.setPen(pen)
+            p2.setBrush(Qt.BrushStyle.NoBrush)
+            inset = 1.2
+            ring = QPainterPath()
+            ring.addRoundedRect(
+                QRectF(inset, inset, self.CARD_W - inset * 2, self.CARD_H - inset * 2),
+                self.RADIUS - 1, self.RADIUS - 1,
+            )
+            p2.drawPath(ring)
+            p2.end()
+
+        self._cover_lbl.setPixmap(canvas)
+
+    def set_cover(self, path: str) -> None:
+        if not path:
+            return
+        px = QPixmap(path)
+        if px.isNull():
+            return
+        px = px.scaled(
+            self.CARD_W, self.CARD_H,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        cx = (px.width() - self.CARD_W) // 2
+        cy = (px.height() - self.CARD_H) // 2
+        px = px.copy(cx, cy, self.CARD_W, self.CARD_H)
+        self._compose(px)
+
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._aid)
+        super().mousePressEvent(ev)
+
+
+# ── Shelf (horizontal-scrolling poster row) ────────────────────────────────────
+
+class _Shelf(QWidget):
+    """A tier's posters as a horizontal-scrolling shelf, with ‹ › nav
+    buttons paging the scroll area. `cards` exposes (entry, card) pairs
+    so the page can drive image loading."""
+
+    poster_clicked = pyqtSignal(int)
+
+    def __init__(self, entries: List[Dict], db: DatabaseManager, parent=None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background:transparent;")
+        self.cards: List[Tuple[Dict, _PosterCard]] = []
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        prev_btn = QPushButton("‹")
+        prev_btn.setObjectName("shelfNavBtn")
+        prev_btn.setFixedSize(32, 32)
+        prev_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        prev_btn.clicked.connect(lambda: self._page(-1))
+        lay.addWidget(prev_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("hofShelfScroll")
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setFixedHeight(_PosterCard.CARD_H + 34)
+
+        inner = QWidget()
+        inner.setStyleSheet("background:transparent;")
+        inner_lay = QHBoxLayout(inner)
+        inner_lay.setContentsMargins(10, 10, 10, 20)
+        inner_lay.setSpacing(16)
+        for entry in entries:
+            tier_val = (entry.get("tier") or "").strip().upper()
+            card = _PosterCard(entry, db)
+            card.clicked.connect(self.poster_clicked.emit)
+            shadow_color = TIER_COLORS.get(tier_val, "#000000")
+            wrapped = _ElevatedCard(
+                card, radius=_PosterCard.RADIUS, margin=9,
+                strength=45 if tier_val in TIER_COLORS else 60,
+                color=shadow_color,
+            )
+            inner_lay.addWidget(wrapped)
+            self.cards.append((entry, card))
+        inner_lay.addStretch()
+        self._scroll.setWidget(inner)
+        lay.addWidget(self._scroll, 1)
+
+        next_btn = QPushButton("›")
+        next_btn.setObjectName("shelfNavBtn")
+        next_btn.setFixedSize(32, 32)
+        next_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        next_btn.clicked.connect(lambda: self._page(1))
+        lay.addWidget(next_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def _page(self, direction: int) -> None:
+        bar = self._scroll.horizontalScrollBar()
+        bar.setValue(bar.value() + direction * 500)
+
+
+# ── Cinematic detail overlay ────────────────────────────────────────────────────
+
+class _DetailOverlay(QWidget):
+    """Full-window overlay opened from any poster. Its own blurred
+    backdrop, inline note editing, and ‹ › / arrow-key navigation
+    through the whole collection without closing."""
+
+    closed             = pyqtSignal()
+    remove_requested   = pyqtSignal(int)
+    note_edited        = pyqtSignal(int, str)
+    tier_changed       = pyqtSignal(int, str)
+    trailer_requested  = pyqtSignal(str, str)
+    move_up_requested  = pyqtSignal(int)
+    move_down_requested = pyqtSignal(int)
+    nav_requested      = pyqtSignal(int)   # -1 / +1
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("hofOverlayScrim")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._aid: Optional[int] = None
+        self._entry: Dict = {}
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(36, 36, 36, 36)
+        outer.setSpacing(14)
+
+        self._prev_btn = QPushButton("‹")
+        self._prev_btn.setObjectName("overlayNavBtn")
+        self._prev_btn.setFixedSize(44, 44)
+        self._prev_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._prev_btn.clicked.connect(lambda: self.nav_requested.emit(-1))
+        outer.addWidget(self._prev_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._panel = QFrame()
+        self._panel.setObjectName("hofOverlayPanel")
+        self._panel.setMaximumWidth(860)
+        self._panel.setMinimumWidth(620)
+        outer.addWidget(self._panel, 1)
+
+        self._next_btn = QPushButton("›")
+        self._next_btn.setObjectName("overlayNavBtn")
+        self._next_btn.setFixedSize(44, 44)
+        self._next_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._next_btn.clicked.connect(lambda: self.nav_requested.emit(1))
+        outer.addWidget(self._next_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._panel_lay = QVBoxLayout(self._panel)
+        self._panel_lay.setContentsMargins(0, 0, 0, 0)
+        self._panel_lay.setSpacing(0)
+
+        self._banner_lbl: Optional[QLabel] = None
+        self._cover_lbl: Optional[QLabel] = None
+
+    def mousePressEvent(self, ev) -> None:
+        if not self._panel.geometry().contains(ev.pos()):
+            self.closed.emit()
+        super().mousePressEvent(ev)
+
+    def keyPressEvent(self, ev: QKeyEvent) -> None:
+        if ev.key() == Qt.Key.Key_Escape:
+            self.closed.emit()
+        elif ev.key() == Qt.Key.Key_Left:
+            self.nav_requested.emit(-1)
+        elif ev.key() == Qt.Key.Key_Right:
+            self.nav_requested.emit(1)
+        else:
+            super().keyPressEvent(ev)
+
+    def populate(self, entry: Dict, db: DatabaseManager) -> None:
+        self._aid = entry["id"]
+        self._entry = entry
+
+        while self._panel_lay.count():
+            item = self._panel_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # ── Mini banner strip (blurred backdrop + close button) ───────────
+        banner_area = _FullBleedContainer()
+        banner_area.setFixedHeight(150)
+
+        self._banner_lbl = QLabel(banner_area)
+        self._banner_lbl.setObjectName("hofBackdropImage")
+        self._banner_lbl.setScaledContents(True)
+        self._banner_lbl.setGeometry(0, 0, 1, 150)
+
+        top_row_w = QWidget(banner_area)
+        top_row_w.setStyleSheet("background:transparent;")
+        top_row_w.setGeometry(0, 0, 1, 150)
+        trl = QHBoxLayout(top_row_w)
+        trl.setContentsMargins(18, 16, 18, 0)
+        trl.addStretch()
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("overlayCloseBtn")
+        close_btn.setFixedSize(34, 34)
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.clicked.connect(self.closed.emit)
+        trl.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._panel_lay.addWidget(banner_area)
+
+        # ── Scrollable body ────────────────────────────────────────────────
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        body = QWidget()
+        body.setStyleSheet("background:transparent;")
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(30, 22, 30, 26)
+        blay.setSpacing(14)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(20)
+
+        self._cover_lbl = QLabel()
+        self._cover_lbl.setFixedSize(126, 182)
+        self._cover_lbl.setStyleSheet("background:#1a1d28;border-radius:8px;")
+        top_row.addWidget(self._cover_lbl, 0, Qt.AlignmentFlag.AlignTop)
+
+        info = QVBoxLayout()
+        info.setSpacing(8)
+
+        tier_val = (entry.get("tier") or "").strip().upper()
+        if tier_val in TIER_COLORS:
+            badge_row = QHBoxLayout()
+            badge_row.setSpacing(6)
+            tb = QLabel(f" {tier_val} — {TIER_LABELS[tier_val]} ")
+            tb.setStyleSheet(
+                f"background:{TIER_COLORS[tier_val]};color:#0d0f14;"
+                "font-size:11px;font-weight:900;border-radius:5px;padding:2px 6px;"
+            )
+            badge_row.addWidget(tb)
+            badge_row.addStretch()
+            info.addLayout(badge_row)
+
+        title = entry.get("english_title") or entry.get("romaji_title", "")
+        tl = QLabel(title)
+        tl.setWordWrap(True)
+        tl.setStyleSheet(
+            "font-size:24px;font-weight:900;color:#f5f6ff;"
+            "background:transparent;letter-spacing:-0.4px;"
+        )
+        info.addWidget(tl)
+
+        meta_html = _meta_line_html(entry, db)
+        if meta_html:
+            ml = QLabel(meta_html)
+            ml.setStyleSheet("font-size:13px;background:transparent;")
+            info.addWidget(ml)
+
+        info.addLayout(_genre_chip_row(entry.get("genres") or [], cap=6))
+        info.addStretch()
+        top_row.addLayout(info, 1)
+        blay.addLayout(top_row)
+
+        note_lbl = QLabel("Personal note")
+        note_lbl.setStyleSheet(
+            "font-size:11px;color:#6b7280;font-weight:700;"
+            "letter-spacing:0.4px;background:transparent;"
+        )
+        blay.addWidget(note_lbl)
+
+        self._note_edit = QTextEdit()
+        self._note_edit.setPlaceholderText("What made this special for you?")
+        self._note_edit.setPlainText(entry.get("note") or "")
+        self._note_edit.setFixedHeight(72)
+        blay.addWidget(self._note_edit)
+
+        added = entry.get("added_at")
+        if added:
+            try:
+                date_str = datetime.fromtimestamp(added).strftime(
+                    "Added to Hall of Fame on %d %b %Y"
+                )
+                dl = QLabel(date_str)
+                dl.setStyleSheet("font-size:11px;color:#4a5070;background:transparent;")
+                blay.addWidget(dl)
+            except Exception:
+                pass
+
+        # ── Actions ─────────────────────────────────────────────────────────
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+
+        if entry.get("trailer_id"):
+            t_btn = QPushButton("▶  Trailer")
+            t_btn.setObjectName("secondaryBtn")
+            t_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            t_btn.clicked.connect(
+                lambda: self.trailer_requested.emit(
+                    entry.get("trailer_id", ""), entry.get("trailer_site", "youtube")
+                )
+            )
+            actions.addWidget(t_btn)
+
+        up_btn = QPushButton("▲")
+        up_btn.setObjectName("iconBtn")
+        up_btn.setFixedSize(30, 30)
+        up_btn.setToolTip("Move up")
+        up_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        up_btn.clicked.connect(lambda: self.move_up_requested.emit(self._aid))
+        actions.addWidget(up_btn)
+
+        down_btn = QPushButton("▼")
+        down_btn.setObjectName("iconBtn")
+        down_btn.setFixedSize(30, 30)
+        down_btn.setToolTip("Move down")
+        down_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        down_btn.clicked.connect(lambda: self.move_down_requested.emit(self._aid))
+        actions.addWidget(down_btn)
+
+        tier_combo = QComboBox()
+        tier_combo.setFixedWidth(150)
+        tier_combo.addItem("No tier", "")
+        for k, lbl, _ in TIERS:
+            tier_combo.addItem(f"{k} — {lbl}", k)
+        cur = (entry.get("tier") or "").strip().upper()
+        for i in range(tier_combo.count()):
+            if tier_combo.itemData(i) == cur:
+                tier_combo.setCurrentIndex(i)
+                break
+        tier_combo.currentIndexChanged.connect(
+            lambda idx, c=tier_combo: self.tier_changed.emit(self._aid, c.itemData(idx))
+        )
+        actions.addWidget(tier_combo)
+        actions.addStretch()
+
+        save_btn = QPushButton("Save Note")
+        save_btn.setObjectName("secondaryBtn")
+        save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        save_btn.clicked.connect(self._save_note)
+        actions.addWidget(save_btn)
+
+        rm_btn = QPushButton("Remove")
+        rm_btn.setObjectName("dangerBtn")
+        rm_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        rm_btn.clicked.connect(lambda: self.remove_requested.emit(self._aid))
+        actions.addWidget(rm_btn)
+
+        blay.addLayout(actions)
+        blay.addStretch()
+
+        body_scroll.setWidget(body)
+        self._panel_lay.addWidget(body_scroll, 1)
+
+    def _save_note(self) -> None:
+        self.note_edited.emit(self._aid, self._note_edit.toPlainText().strip())
+
+    def set_banner(self, path: str) -> None:
+        if self._banner_lbl and path:
+            px = _backdrop_pixmap(path, 900, 150)
+            if px:
+                self._banner_lbl.setPixmap(px)
+
+    def set_cover(self, path: str) -> None:
+        if self._cover_lbl and path:
+            tier_val = (self._entry.get("tier") or "").strip().upper()
+            px = _rounded_scaled_pixmap(path, 126, 182, ring_color=TIER_COLORS.get(tier_val))
+            if px:
+                self._cover_lbl.setPixmap(px)
+
+
 # ── Main page ──────────────────────────────────────────────────────────────────
 
 class HallOfFamePage(QWidget):
-    """Hall of Fame — full redesign with grid/list views, tiers, export."""
+    """Hall of Fame — Gallery / Cinematic redesign."""
 
     def __init__(self, db: DatabaseManager, parent=None) -> None:
         super().__init__(parent)
         self.db         = db
         self._entries:  List[Dict] = []
-        self._view_mode = "list"   # "list" | "grid"
+        self._view_mode = "shelves"   # "shelves" | "wall"
+        self._active_tier_filter: Optional[str] = None
+        self._tier_pills: List[Tuple[QPushButton, str, str]] = []
+        self._champion_id: Optional[int] = None
+        self._overlay_order: List[Dict] = []
+        self._overlay_index = 0
         self._build_ui()
 
     # ── Build ──────────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 12)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header ────────────────────────────────────────────────────────
+        self._hero = self._build_hero_zone()
+        root.addWidget(self._hero)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._content_w = QWidget()
+        self._content_w.setStyleSheet("background:transparent;")
+        self._content_lay = QVBoxLayout(self._content_w)
+        self._content_lay.setContentsMargins(32, 26, 32, 48)
+        self._content_lay.setSpacing(22)
+
+        self.scroll.setWidget(self._content_w)
+        root.addWidget(self.scroll, 1)
+
+        self._overlay = _DetailOverlay(self)
+        self._overlay.setVisible(False)
+        self._overlay.closed.connect(self._close_overlay)
+        self._overlay.remove_requested.connect(self._remove_from_overlay)
+        self._overlay.note_edited.connect(self._edit_note)
+        self._overlay.tier_changed.connect(self._change_tier)
+        self._overlay.trailer_requested.connect(self._open_trailer)
+        self._overlay.move_up_requested.connect(self._move_up)
+        self._overlay.move_down_requested.connect(self._move_down)
+        self._overlay.nav_requested.connect(self._overlay_navigate)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        if self._overlay.isVisible():
+            self._overlay.setGeometry(self.rect())
+
+    def _build_hero_zone(self) -> QWidget:
+        # QStackedLayout(StackAll) — safe here because the backdrop is a
+        # pre-baked static pixmap (see `_backdrop_pixmap`), not a live
+        # QGraphicsEffect. That combination is what broke z-ordering
+        # before. Using a real layout also means `hero` naturally sizes
+        # itself from fg's actual content height instead of a hardcoded
+        # guess that content could silently overflow past.
+        hero = QWidget()
+        hero.setMinimumHeight(HERO_HEIGHT)
+        stack = QStackedLayout(hero)
+        stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        stack.setContentsMargins(0, 0, 0, 0)
+
+        self._backdrop_lbl = QLabel()
+        self._backdrop_lbl.setObjectName("hofBackdropImage")
+        self._backdrop_lbl.setScaledContents(True)
+        stack.addWidget(self._backdrop_lbl)
+
+        fg = QWidget()
+        fg.setStyleSheet("background:transparent;")
+        flay = QVBoxLayout(fg)
+        flay.setContentsMargins(32, 22, 32, 26)
+        flay.setSpacing(14)
+
         hdr = QHBoxLayout()
         hdr.setSpacing(10)
-
         col = QVBoxLayout()
         col.setSpacing(4)
         title = QLabel("🏆  Hall of Fame")
         title.setObjectName("pageTitle")
         col.addWidget(title)
-        sub = QLabel(
-            "Your personal all-time greatest anime — ranked, tiered, celebrated."
-        )
-        sub.setStyleSheet("font-size:13px;color:#4a5070;")
+        sub = QLabel("Your personal all-time greatest anime — ranked, tiered, celebrated.")
+        sub.setObjectName("pageSubtitle")
         col.addWidget(sub)
         hdr.addLayout(col)
         hdr.addStretch()
 
-        # View toggle
-        self._list_btn = self._toolbar_btn("≡  List", "navBtn")
-        self._list_btn.clicked.connect(lambda: self._set_view("list"))
-        self._list_btn.setProperty("active", "true")
-        hdr.addWidget(self._list_btn)
+        self._shelves_btn = _toolbar_btn("▤  Shelves", "navBtn")
+        self._shelves_btn.setProperty("active", "true")
+        self._shelves_btn.clicked.connect(lambda: self._set_view("shelves"))
+        hdr.addWidget(self._shelves_btn)
 
-        self._grid_btn = self._toolbar_btn("⊞  Grid", "navBtn")
-        self._grid_btn.clicked.connect(lambda: self._set_view("grid"))
-        hdr.addWidget(self._grid_btn)
+        self._wall_btn = _toolbar_btn("⊞  Wall", "navBtn")
+        self._wall_btn.clicked.connect(lambda: self._set_view("wall"))
+        hdr.addWidget(self._wall_btn)
 
-        # Export
-        exp_btn = self._toolbar_btn("↓  Export", "secondaryBtn")
-        exp_btn.clicked.connect(self._export_image)
-        hdr.addWidget(exp_btn)
+        surprise_btn = _toolbar_btn("🔀  Surprise Me", "secondaryBtn")
+        surprise_btn.clicked.connect(self._surprise_me)
+        hdr.addWidget(surprise_btn)
 
-        # Add
+        export_btn = _toolbar_btn("↓  Export", "secondaryBtn")
+        export_btn.clicked.connect(self._export_image)
+        hdr.addWidget(export_btn)
+
         add_btn = QPushButton("+ Add Anime")
         add_btn.setObjectName("primaryBtn")
         add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         add_btn.clicked.connect(self._open_add)
         hdr.addWidget(add_btn)
 
-        root.addLayout(hdr)
-        root.addSpacing(20)
+        flay.addLayout(hdr)
 
-        # ── Tier legend strip ─────────────────────────────────────────────
         self._tier_strip = self._make_tier_strip()
-        root.addWidget(self._tier_strip)
-        root.addSpacing(16)
+        flay.addWidget(self._tier_strip)
 
-        # ── Scroll area (holds either list or grid content) ───────────────
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        flay.addStretch(1)
 
-        self._content_w = QWidget()
-        self._content_w.setStyleSheet("background:transparent;")
-        self._content_lay = QVBoxLayout(self._content_w)
-        self._content_lay.setContentsMargins(0, 0, 0, 0)
-        self._content_lay.setSpacing(0)
+        self._champion_slot = QWidget()
+        self._champion_slot.setStyleSheet("background:transparent;")
+        self._champion_slot_lay = QVBoxLayout(self._champion_slot)
+        self._champion_slot_lay.setContentsMargins(0, 0, 0, 0)
+        flay.addWidget(self._champion_slot)
 
-        self.scroll.setWidget(self._content_w)
-        root.addWidget(self.scroll)
-
-        # ── Empty state ───────────────────────────────────────────────────
-        self.empty = QLabel(
-            "🏆\n\nYour Hall of Fame is empty.\n\n"
-            "Add your all-time favourite anime\n"
-            "and rank them in order of greatness."
-        )
-        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setStyleSheet(
-            "font-size:14px;color:#3b4260;line-height:1.8;"
-        )
-        self.empty.setWordWrap(True)
-        root.addWidget(self.empty)
-
-    def _toolbar_btn(self, text: str, obj: str) -> QPushButton:
-        b = QPushButton(text)
-        b.setObjectName(obj)
-        b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        b.setFixedHeight(34)
-        return b
+        stack.addWidget(fg)
+        stack.setCurrentWidget(fg)
+        return hero
 
     def _make_tier_strip(self) -> QWidget:
         w = QWidget()
@@ -313,16 +1020,41 @@ class HallOfFamePage(QWidget):
         lay = QHBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
+        self._tier_pills = []
         for key, label, color in TIERS:
-            pill = QLabel(f"  {key}  {label}  ")
-            pill.setStyleSheet(
-                f"background:rgba(0,0,0,0.3);color:{color};"
-                f"border:1px solid {color}44;border-radius:8px;"
-                "font-size:11px;font-weight:700;padding:3px 0;"
-            )
+            pill = QPushButton(f"{key} · {label}")
+            pill.setObjectName("tierFilterPill")
+            pill.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            pill.setFixedHeight(30)
+            pill.clicked.connect(lambda _=False, k=key: self._toggle_tier_filter(k))
             lay.addWidget(pill)
+            self._tier_pills.append((pill, key, color))
         lay.addStretch()
+        self._restyle_tier_pills()
         return w
+
+    def _restyle_tier_pills(self) -> None:
+        for pill, key, color in self._tier_pills:
+            active = self._active_tier_filter == key
+            rgb = QColor(color).getRgb()[:3]
+            if active:
+                pill.setStyleSheet(
+                    f"QPushButton{{background:rgba{rgb + (30,)};"
+                    f"border:1.5px solid {color};border-radius:14px;"
+                    f"color:{color};font-size:12px;font-weight:700;padding:5px 14px;}}"
+                )
+            else:
+                pill.setStyleSheet(
+                    f"QPushButton{{background:rgba(10,12,18,0.55);"
+                    f"border:1px solid {color}55;border-radius:14px;"
+                    f"color:{color};font-size:12px;font-weight:500;padding:5px 14px;}}"
+                    f"QPushButton:hover{{border-color:{color}a0;}}"
+                )
+
+    def _toggle_tier_filter(self, key: str) -> None:
+        self._active_tier_filter = None if self._active_tier_filter == key else key
+        self._restyle_tier_pills()
+        self._render()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -330,126 +1062,288 @@ class HallOfFamePage(QWidget):
         self._entries = _load_hof(self.db)
         self._render()
 
-    # ── View switching ─────────────────────────────────────────────────────────
-
     def _set_view(self, mode: str) -> None:
         self._view_mode = mode
-        for btn, m in [(self._list_btn, "list"), (self._grid_btn, "grid")]:
+        for btn, m in [(self._shelves_btn, "shelves"), (self._wall_btn, "wall")]:
             btn.setProperty("active", "true" if m == mode else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
         self._render()
 
-    # ── Render dispatcher ──────────────────────────────────────────────────────
+    def _compute_champion(self) -> Optional[Tuple[Dict, Optional[str], Optional[str]]]:
+        if not self._entries:
+            return None
+        for key, _label, color in TIERS:
+            for e in self._entries:
+                if (e.get("tier") or "").strip().upper() == key:
+                    return e, key, color
+        return self._entries[0], None, None
+
+    def _filtered_entries(self) -> List[Dict]:
+        if self._active_tier_filter is None:
+            return list(self._entries)
+        return [
+            e for e in self._entries
+            if (e.get("tier") or "").strip().upper() == self._active_tier_filter
+        ]
+
+    # ── Render ─────────────────────────────────────────────────────────────────
 
     def _render(self) -> None:
-        # Clear content
         while self._content_lay.count():
             item = self._content_lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        has = bool(self._entries)
-        self.empty.setVisible(not has)
-        self._tier_strip.setVisible(has)
-        self.scroll.setVisible(has)
+        champion = self._compute_champion()
+        if champion:
+            entry, tier_key, color = champion
+            self._champion_id = entry["id"]
+            self._populate_champion(entry, tier_key, color or CHAMPION_FALLBACK_COLOR)
+        else:
+            self._champion_id = None
+            self._backdrop_lbl.setPixmap(QPixmap())
+            self._populate_empty_champion()
 
-        if not has:
+        self._tier_strip.setVisible(bool(self._entries))
+        self.scroll.setVisible(bool(self._entries))
+        if not self._entries:
             return
 
-        if self._view_mode == "grid":
-            self._render_grid()
+        filtered = self._filtered_entries()
+        if self._active_tier_filter and not filtered:
+            self._render_no_matches()
+            return
+
+        body_entries = [e for e in filtered if e["id"] != self._champion_id]
+
+        if self._view_mode == "wall":
+            self._render_wall(body_entries, showcased=(not body_entries and filtered))
         else:
-            self._render_list()
+            self._render_shelves(body_entries, showcased=(not body_entries and filtered))
 
-    # ── List view ──────────────────────────────────────────────────────────────
+    def _populate_champion(self, entry: Dict, tier_key: Optional[str], color: str) -> None:
+        while self._champion_slot_lay.count():
+            item = self._champion_slot_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
 
-    def _render_list(self) -> None:
-        """Render tiered list. Entries without a tier go into 'Untiered'."""
-        # Group by tier
+        row = QHBoxLayout()
+        row.setSpacing(22)
+
+        self._champion_cover_lbl = QLabel()
+        self._champion_cover_lbl.setFixedSize(112, 160)
+        self._champion_cover_lbl.setStyleSheet("background:#1a1d28;border-radius:8px;")
+        row.addWidget(self._champion_cover_lbl)
+
+        info = QVBoxLayout()
+        info.setSpacing(7)
+
+        crown_row = QHBoxLayout()
+        crown_row.setSpacing(8)
+        crown = QLabel("👑  Champion")
+        crown.setStyleSheet(
+            f"font-size:13px;font-weight:900;color:{color};"
+            "background:transparent;letter-spacing:0.4px;"
+        )
+        crown_row.addWidget(crown)
+        if tier_key:
+            tb = QLabel(f" {tier_key} ")
+            tb.setStyleSheet(
+                f"background:{color};color:#0d0f14;font-size:10px;"
+                "font-weight:900;border-radius:4px;padding:1px 4px;"
+            )
+            crown_row.addWidget(tb)
+        crown_row.addStretch()
+        info.addLayout(crown_row)
+
+        title = entry.get("english_title") or entry.get("romaji_title", "")
+        tl = QLabel(title)
+        tl.setWordWrap(True)
+        tl.setStyleSheet(
+            "font-size:25px;font-weight:900;color:#f5f6ff;"
+            "background:transparent;letter-spacing:-0.5px;"
+        )
+        info.addWidget(tl)
+
+        meta_html = _meta_line_html(entry, self.db)
+        if meta_html:
+            ml = QLabel(meta_html)
+            ml.setStyleSheet("font-size:13px;background:transparent;")
+            info.addWidget(ml)
+
+        info.addLayout(_genre_chip_row(entry.get("genres") or [], cap=4))
+        row.addLayout(info, 1)
+
+        actions = QVBoxLayout()
+        actions.setSpacing(8)
+        actions.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        details_btn = QPushButton("View Details")
+        details_btn.setObjectName("primaryBtn")
+        details_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        details_btn.clicked.connect(self._open_champion_details)
+        actions.addWidget(details_btn)
+
+        if entry.get("trailer_id"):
+            t_btn = QPushButton("▶  Trailer")
+            t_btn.setObjectName("secondaryBtn")
+            t_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            t_btn.clicked.connect(
+                lambda: self._open_trailer(
+                    entry.get("trailer_id", ""), entry.get("trailer_site", "youtube")
+                )
+            )
+            actions.addWidget(t_btn)
+
+        row.addLayout(actions)
+        self._champion_slot_lay.addLayout(row)
+
+        if entry.get("banner_url"):
+            self._load_banner(entry, lambda p: self._backdrop_lbl.setPixmap(
+                _backdrop_pixmap(p, 1600, HERO_HEIGHT) or QPixmap()
+            ))
+        else:
+            self._backdrop_lbl.setPixmap(QPixmap())
+        self._load_cover(entry, lambda p: self._champion_cover_lbl.setPixmap(
+            _rounded_scaled_pixmap(p, 112, 160, ring_color=color) or QPixmap()
+        ))
+
+    def _populate_empty_champion(self) -> None:
+        while self._champion_slot_lay.count():
+            item = self._champion_slot_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+
+        col = QVBoxLayout()
+        col.setSpacing(10)
+        lbl = QLabel("Your Hall of Fame is empty.")
+        lbl.setStyleSheet(
+            "font-size:18px;font-weight:700;color:#e2e4ec;background:transparent;"
+        )
+        col.addWidget(lbl)
+        sub = QLabel("Add your all-time favourite anime to crown a Champion.")
+        sub.setStyleSheet("font-size:13px;color:#8a91a6;background:transparent;")
+        col.addWidget(sub)
+        cta = QPushButton("+ Add Anime")
+        cta.setObjectName("primaryBtn")
+        cta.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        cta.clicked.connect(self._open_add)
+        col.addWidget(cta, 0, Qt.AlignmentFlag.AlignLeft)
+        self._champion_slot_lay.addLayout(col)
+
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+
+    def _render_no_matches(self) -> None:
+        label = TIER_LABELS.get(self._active_tier_filter, self._active_tier_filter)
+        msg = QLabel(f"No titles in {label} yet.")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setStyleSheet(
+            "font-size:13px;color:#4a5070;background:transparent;padding:40px 0;"
+        )
+        self._content_lay.addWidget(msg)
+        clear_btn = QPushButton("Clear filter")
+        clear_btn.setObjectName("secondaryBtn")
+        clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        clear_btn.clicked.connect(lambda: self._toggle_tier_filter(self._active_tier_filter))
+        self._content_lay.addWidget(clear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._content_lay.addStretch(1)
+
+    def _showcased_notice(self) -> QWidget:
+        msg = QLabel("Your Champion from this tier is already showcased above. ↑")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setStyleSheet(
+            "font-size:13px;color:#4a5070;background:transparent;padding:24px 0;"
+        )
+        return msg
+
+    def _render_shelves(self, entries: List[Dict], showcased: bool = False) -> None:
         tiered: Dict[str, List[Dict]] = {k: [] for k in TIER_KEYS}
         untiered: List[Dict] = []
-        for e in self._entries:
+        for e in entries:
             t = (e.get("tier") or "").strip().upper()
             if t in tiered:
                 tiered[t].append(e)
             else:
                 untiered.append(e)
 
-        rank_counter = 1
-
-        # #1 hero card (always first entry regardless of tier)
-        if self._entries:
-            hero = self._entries[0]
-            hero_w = _HeroCard(hero, self.db)
-            hero_w.remove_requested.connect(self._remove)
-            hero_w.note_edited.connect(self._edit_note)
-            hero_w.tier_changed.connect(self._change_tier)
-            hero_w.trailer_requested.connect(self._open_trailer)
-            self._content_lay.addWidget(hero_w)
-            self._content_lay.addSpacing(20)
-            self._load_entry_images(hero, hero_w)
-            rank_counter = 2
-            # Remove hero from tiered/untiered so it doesn't appear twice
-            hero_id = hero.get("id")
-            for lst in tiered.values():
-                lst[:] = [e for e in lst if e.get("id") != hero_id]
-            untiered = [e for e in untiered if e.get("id") != hero_id]
-
-        # Tiered sections
+        any_shown = False
         for key, label, color in TIERS:
             members = tiered[key]
             if not members:
                 continue
-            self._content_lay.addWidget(
-                self._tier_section_header(key, label, color, len(members))
-            )
-            self._content_lay.addSpacing(8)
-            for entry in members:
-                row = _HofRow(rank_counter, entry, self.db)
-                row.remove_requested.connect(self._remove)
-                row.note_edited.connect(self._edit_note)
-                row.move_up.connect(self._move_up)
-                row.move_down.connect(self._move_down)
-                row.tier_changed.connect(self._change_tier)
-                row.trailer_requested.connect(self._open_trailer)
-                self._content_lay.addWidget(row)
-                self._content_lay.addSpacing(8)
-                self._load_entry_images(entry, row)
-                rank_counter += 1
-            self._content_lay.addSpacing(12)
+            any_shown = True
+            self._content_lay.addWidget(self._tier_section_header(key, label, color, len(members)))
+            self._content_lay.addSpacing(10)
+            shelf = _Shelf(members, self.db)
+            shelf.poster_clicked.connect(self._on_poster_clicked)
+            self._content_lay.addWidget(shelf)
+            self._content_lay.addSpacing(20)
+            for entry, card in shelf.cards:
+                self._load_cover(entry, card.set_cover)
 
-        # Untiered section
         if untiered:
-            hdr = QLabel("— UNTIERED —")
-            hdr.setStyleSheet(
-                "font-size:10px;color:#3b4260;font-weight:700;"
-                "letter-spacing:1.5px;padding:8px 0 4px;"
-            )
-            self._content_lay.addWidget(hdr)
-            self._content_lay.addSpacing(8)
-            for entry in untiered:
-                row = _HofRow(rank_counter, entry, self.db)
-                row.remove_requested.connect(self._remove)
-                row.note_edited.connect(self._edit_note)
-                row.move_up.connect(self._move_up)
-                row.move_down.connect(self._move_down)
-                row.tier_changed.connect(self._change_tier)
-                row.trailer_requested.connect(self._open_trailer)
-                self._content_lay.addWidget(row)
-                self._content_lay.addSpacing(8)
-                self._load_entry_images(entry, row)
-                rank_counter += 1
+            any_shown = True
+            self._content_lay.addWidget(self._untiered_header(len(untiered)))
+            self._content_lay.addSpacing(10)
+            shelf = _Shelf(untiered, self.db)
+            shelf.poster_clicked.connect(self._on_poster_clicked)
+            self._content_lay.addWidget(shelf)
+            for entry, card in shelf.cards:
+                self._load_cover(entry, card.set_cover)
+
+        if not any_shown and showcased:
+            self._content_lay.addWidget(self._showcased_notice())
 
         self._content_lay.addStretch(1)
 
-    def _tier_section_header(
-        self, key: str, label: str, color: str, count: int
-    ) -> QWidget:
+    def _render_wall(self, entries: List[Dict], showcased: bool = False) -> None:
+        if not entries:
+            if showcased:
+                self._content_lay.addWidget(self._showcased_notice())
+            self._content_lay.addStretch(1)
+            return
+
+        grid = QGridLayout()
+        grid.setSpacing(16)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        COLS = 6
+        for idx, entry in enumerate(entries):
+            tier_val = (entry.get("tier") or "").strip().upper()
+            card = _PosterCard(entry, self.db)
+            card.clicked.connect(self._on_poster_clicked)
+            shadow_color = TIER_COLORS.get(tier_val, "#000000")
+            wrapped = _ElevatedCard(
+                card, radius=10, margin=9,
+                strength=45 if tier_val in TIER_COLORS else 65,
+                color=shadow_color,
+            )
+            grid.addWidget(wrapped, idx // COLS, idx % COLS)
+            self._load_cover(entry, card.set_cover)
+
+        w = QWidget()
+        w.setStyleSheet("background:transparent;")
+        w.setLayout(grid)
+        self._content_lay.addWidget(w)
+        self._content_lay.addStretch(1)
+
+    def _tier_section_header(self, key: str, label: str, color: str, count: int) -> QWidget:
         w = QWidget()
         w.setStyleSheet("background:transparent;")
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(0, 8, 0, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(10)
 
         badge = QLabel(f" {key} ")
@@ -469,88 +1363,122 @@ class HallOfFamePage(QWidget):
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet(f"background:{color}33;border:none;max-height:1px;")
-        line.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         lay.addWidget(line, 1)
         return w
 
-    # ── Grid view ──────────────────────────────────────────────────────────────
-
-    def _render_grid(self) -> None:
-        """Compact poster grid — 6 columns, rank badge overlay."""
-        COLS   = 6
-        CARD_W = 140
-        CARD_H = 200
-
-        grid = QGridLayout()
-        grid.setSpacing(12)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-
-        for idx, entry in enumerate(self._entries):
-            card = _GridCard(idx + 1, entry, self.db)
-            card.clicked.connect(self._on_grid_card_clicked)
-            grid.addWidget(card, idx // COLS, idx % COLS)
-            # Load cover
-            self._load_cover_for_widget(entry, card)
-
+    def _untiered_header(self, count: int) -> QWidget:
         w = QWidget()
         w.setStyleSheet("background:transparent;")
-        w.setLayout(grid)
-        self._content_lay.addWidget(w)
-        self._content_lay.addStretch(1)
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        lbl = QLabel(f"Untiered  ·  {count} title{'s' if count != 1 else ''}")
+        lbl.setStyleSheet(
+            "font-size:13px;font-weight:700;color:#4a5070;background:transparent;"
+        )
+        lay.addWidget(lbl)
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background:#1a1d28;border:none;max-height:1px;")
+        line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        lay.addWidget(line, 1)
+        return w
 
-    # ── Image loading helpers ──────────────────────────────────────────────────
+    # ── Image loading ────────────────────────────────────────────────────────
 
-    def _load_entry_images(
-        self, entry: Dict, widget: QWidget
-    ) -> None:
-        """Load cover + banner for a list row / hero card."""
-        self._load_cover_for_widget(entry, widget)
-        banner_url = entry.get("banner_url", "")
-        if banner_url and hasattr(widget, "set_banner"):
-            from core.image_cache import get_cached_path
-            bc = get_cached_path(banner_url)
-            if bc:
-                widget.set_banner(str(bc))
-            else:
-                bw = ImageWorker(banner_url, entry.get("id", 0), "banner")
-                bw.signals.result.connect(
-                    lambda r, w=widget: (
-                        w.set_banner(r[2])
-                        if r and r[2] and hasattr(w, "set_banner")
-                        else None
-                    )
-                )
-                run_worker(bw)
-
-    def _load_cover_for_widget(self, entry: Dict, widget: QWidget) -> None:
+    def _load_cover(self, entry: Dict, on_ready) -> None:
         local = entry.get("cover_local", "")
         url   = entry.get("cover_url", "")
         if local and Path(local).exists():
-            if hasattr(widget, "set_cover"):
-                widget.set_cover(local)
+            on_ready(local)
             return
         if url and url.startswith("http"):
             from core.image_cache import get_cached_path
             cached = get_cached_path(url)
             if cached:
-                if hasattr(widget, "set_cover"):
-                    widget.set_cover(str(cached))
+                on_ready(str(cached))
                 return
             iw = ImageWorker(url, entry.get("id", 0), "cover")
-            iw.signals.result.connect(
-                lambda r, w=widget: (
-                    w.set_cover(r[2])
-                    if r and r[2] and hasattr(w, "set_cover")
-                    else None
-                )
-            )
+            iw.signals.result.connect(lambda r: on_ready(r[2]) if r and r[2] else None)
             run_worker(iw)
         elif url:
-            if hasattr(widget, "set_cover"):
-                widget.set_cover(url)
+            on_ready(url)
+
+    def _load_banner(self, entry: Dict, on_ready) -> None:
+        url = entry.get("banner_url", "")
+        if not url:
+            return
+        from core.image_cache import get_cached_path
+        cached = get_cached_path(url)
+        if cached:
+            on_ready(str(cached))
+            return
+        bw = ImageWorker(url, entry.get("id", 0), "banner")
+        bw.signals.result.connect(lambda r: on_ready(r[2]) if r and r[2] else None)
+        run_worker(bw)
+
+    def _load_overlay_images(self, entry: Dict) -> None:
+        self._load_cover(entry, self._overlay.set_cover)
+        self._load_banner(entry, self._overlay.set_banner)
+
+    # ── Overlay control ────────────────────────────────────────────────────────
+
+    def _on_poster_clicked(self, anime_id: int) -> None:
+        entry = next((e for e in self._entries if e["id"] == anime_id), None)
+        if entry:
+            self._open_overlay_for(entry)
+
+    def _open_champion_details(self) -> None:
+        entry = next((e for e in self._entries if e["id"] == self._champion_id), None)
+        if entry:
+            self._open_overlay_for(entry)
+
+    def _surprise_me(self) -> None:
+        if not self._entries:
+            from ui.toast import Toast
+            Toast.show(self.window(), "Add some anime to your Hall of Fame first!", kind="info")
+            return
+        entry = random.choice(self._entries)
+        self._open_overlay_for(entry)
+
+    def _open_overlay_for(self, entry: Dict) -> None:
+        self._overlay_order = self._entries
+        self._overlay_index = next(
+            (i for i, e in enumerate(self._overlay_order) if e["id"] == entry["id"]), 0
+        )
+        self._show_overlay_current()
+
+    def _show_overlay_current(self) -> None:
+        if not self._overlay_order:
+            return
+        entry = self._overlay_order[self._overlay_index]
+        self._overlay.populate(entry, self.db)
+        self._load_overlay_images(entry)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.setVisible(True)
+        self._overlay.raise_()
+        self._overlay.setFocus()
+
+    def _overlay_navigate(self, direction: int) -> None:
+        if not self._overlay_order:
+            return
+        self._overlay_index = (self._overlay_index + direction) % len(self._overlay_order)
+        self._show_overlay_current()
+
+    def _close_overlay(self) -> None:
+        self._overlay.setVisible(False)
+
+    def _sync_overlay_if_open(self, anime_id: int) -> None:
+        if not self._overlay.isVisible():
+            return
+        self._overlay_order = self._entries
+        idx = next((i for i, e in enumerate(self._entries) if e["id"] == anime_id), None)
+        if idx is None:
+            self._close_overlay()
+            return
+        self._overlay_index = idx
+        self._show_overlay_current()
 
     # ── Actions ────────────────────────────────────────────────────────────────
 
@@ -561,23 +1489,21 @@ class HallOfFamePage(QWidget):
             if getattr(dlg, "added_title", ""):
                 from ui.toast import Toast
                 Toast.show(
-                    self.window(),
-                    f"'{dlg.added_title}' added to Hall of Fame.",
-                    kind="success",
+                    self.window(), f"'{dlg.added_title}' added to Hall of Fame.", kind="success"
                 )
+
+    def _remove_from_overlay(self, anime_id: int) -> None:
+        self._close_overlay()
+        self._remove(anime_id)
 
     def _remove(self, anime_id: int) -> None:
         name = next(
-            (e.get("romaji_title", "?") for e in self._entries
-             if e["id"] == anime_id),
-            "?",
+            (e.get("romaji_title", "?") for e in self._entries if e["id"] == anime_id), "?"
         )
         if (
             QMessageBox.question(
-                self,
-                "Remove from Hall of Fame",
-                f"Remove '{name}' from your Hall of Fame?\n"
-                "(The anime stays in your library.)",
+                self, "Remove from Hall of Fame",
+                f"Remove '{name}' from your Hall of Fame?\n(The anime stays in your library.)",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             == QMessageBox.StandardButton.Yes
@@ -585,69 +1511,43 @@ class HallOfFamePage(QWidget):
             _remove_from_hof(self.db, anime_id)
             self.load()
             from ui.toast import Toast
-            Toast.show(
-                self.window(),
-                f"'{name}' removed from Hall of Fame.",
-                kind="success",
-            )
+            Toast.show(self.window(), f"'{name}' removed from Hall of Fame.", kind="success")
 
     def _edit_note(self, anime_id: int, note: str) -> None:
         _update_hof_note(self.db, anime_id, note)
+        self.load()
+        self._sync_overlay_if_open(anime_id)
         from ui.toast import Toast
         Toast.show(self.window(), "Note saved.", kind="success")
 
     def _change_tier(self, anime_id: int, tier: str) -> None:
+        if not tier:
+            return
         _update_hof_tier(self.db, anime_id, tier)
+        name = next((e.get("romaji_title", "") for e in self._entries if e["id"] == anime_id), "")
         self.load()
+        self._sync_overlay_if_open(anime_id)
         from ui.toast import Toast
-        name = next(
-            (e.get("romaji_title", "") for e in self._entries
-             if e["id"] == anime_id),
-            "",
-        )
         label = TIER_LABELS.get(tier, tier)
-        Toast.show(
-            self.window(),
-            f"'{name}' moved to Tier {tier} — {label}.",
-            kind="success",
-        )
+        Toast.show(self.window(), f"'{name}' moved to Tier {tier} — {label}.", kind="success")
 
     def _move_up(self, anime_id: int) -> None:
-        idx = next(
-            (i for i, e in enumerate(self._entries) if e["id"] == anime_id), -1
-        )
+        idx = next((i for i, e in enumerate(self._entries) if e["id"] == anime_id), -1)
         if idx <= 0:
             return
-        self._entries[idx], self._entries[idx - 1] = (
-            self._entries[idx - 1],
-            self._entries[idx],
-        )
+        self._entries[idx], self._entries[idx - 1] = self._entries[idx - 1], self._entries[idx]
         _save_hof_order(self.db, [e["id"] for e in self._entries])
         self.load()
+        self._sync_overlay_if_open(anime_id)
 
     def _move_down(self, anime_id: int) -> None:
-        idx = next(
-            (i for i, e in enumerate(self._entries) if e["id"] == anime_id), -1
-        )
+        idx = next((i for i, e in enumerate(self._entries) if e["id"] == anime_id), -1)
         if idx < 0 or idx >= len(self._entries) - 1:
             return
-        self._entries[idx], self._entries[idx + 1] = (
-            self._entries[idx + 1],
-            self._entries[idx],
-        )
+        self._entries[idx], self._entries[idx + 1] = self._entries[idx + 1], self._entries[idx]
         _save_hof_order(self.db, [e["id"] for e in self._entries])
         self.load()
-
-    def _on_grid_card_clicked(self, anime_id: int) -> None:
-        entry = next((e for e in self._entries if e["id"] == anime_id), None)
-        if not entry:
-            return
-        dlg = _EntryDetailDialog(entry, self.db, self)
-        dlg.tier_changed.connect(self._change_tier)
-        dlg.note_edited.connect(self._edit_note)
-        dlg.remove_requested.connect(lambda aid: (self._remove(aid), dlg.accept()))
-        dlg.trailer_requested.connect(self._open_trailer)
-        dlg.exec()
+        self._sync_overlay_if_open(anime_id)
 
     def _open_trailer(self, trailer_id: str, trailer_site: str) -> None:
         try:
@@ -655,36 +1555,23 @@ class HallOfFamePage(QWidget):
             dlg = TrailerPlayer(trailer_id, trailer_site, self)
             dlg.exec()
         except Exception as exc:
-            QMessageBox.information(
-                self, "Trailer",
-                f"Could not open trailer: {exc}"
-            )
+            QMessageBox.information(self, "Trailer", f"Could not open trailer: {exc}")
 
-    # ── Export (Feature G) ────────────────────────────────────────────────────
+    # ── Export (PNG snapshot) ────────────────────────────────────────────────
 
     def _export_image(self) -> None:
         if not self._entries:
-            QMessageBox.information(
-                self, "Export", "Add some anime to your Hall of Fame first!"
-            )
+            QMessageBox.information(self, "Export", "Add some anime to your Hall of Fame first!")
             return
 
         path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Hall of Fame",
-            str(Path.home() / "miroku_hall_of_fame.png"),
-            "PNG Image (*.png)",
+            self, "Export Hall of Fame",
+            str(Path.home() / "miroku_hall_of_fame.png"), "PNG Image (*.png)",
         )
         if not path:
             return
 
-        # Build a temporary grid widget, grab it, save
-        COLS   = 5
-        CARD_W = 130
-        CARD_H = 185
-        PAD    = 16
-        HEADER = 56
-
+        COLS, CARD_W, CARD_H, PAD, HEADER = 5, 130, 185, 16, 56
         n      = len(self._entries)
         rows   = (n + COLS - 1) // COLS
         width  = COLS * CARD_W + (COLS + 1) * PAD
@@ -692,22 +1579,17 @@ class HallOfFamePage(QWidget):
 
         px = QPixmap(width, height)
         px.fill(QColor("#0d0f14"))
-
         p = QPainter(px)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Header text
         p.setPen(QColor("#f0f1f5"))
-        f = QFont()
-        f.setPointSize(14)
-        f.setWeight(QFont.Weight.Bold)
+        f = QFont(); f.setPointSize(14); f.setWeight(QFont.Weight.Bold)
         p.setFont(f)
         p.drawText(PAD, 0, width - PAD * 2, HEADER,
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "🏆  My Hall of Fame — Miroku")
 
-        f2 = QFont()
-        f2.setPointSize(8)
+        f2 = QFont(); f2.setPointSize(8)
         p.setFont(f2)
         p.setPen(QColor("#4a5070"))
         p.drawText(PAD, 0, width - PAD * 2, HEADER,
@@ -715,19 +1597,16 @@ class HallOfFamePage(QWidget):
                    datetime.now().strftime("%d %b %Y"))
 
         for idx, entry in enumerate(self._entries):
-            col_i = idx % COLS
-            row_i = idx // COLS
+            col_i, row_i = idx % COLS, idx // COLS
             x = PAD + col_i * (CARD_W + PAD)
             y = HEADER + PAD + row_i * (CARD_H + PAD)
 
-            # Card background
             p.setBrush(QColor("#111420"))
             p.setPen(QColor("#1a1d28"))
-            path = QPainterPath()
-            path.addRoundedRect(x, y, CARD_W, CARD_H, 8, 8)
-            p.drawPath(path)
+            card_path = QPainterPath()
+            card_path.addRoundedRect(x, y, CARD_W, CARD_H, 8, 8)
+            p.drawPath(card_path)
 
-            # Cover art
             local = entry.get("cover_local", "")
             url   = entry.get("cover_url", "")
             cover_px = None
@@ -753,908 +1632,44 @@ class HallOfFamePage(QWidget):
                 p.drawPixmap(x, y, cover_px)
                 p.setClipping(False)
 
-            # Rank badge
-            rank_col = RANK_COLORS.get(idx + 1, "#4a5070")
-            p.setBrush(QColor(rank_col))
+            p.setBrush(QColor(NEUTRAL_RANK_COLOR))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(x + 6, y + 6, 22, 22)
             p.setPen(QColor("#0d0f14"))
-            f3 = QFont()
-            f3.setPointSize(7)
-            f3.setWeight(QFont.Weight.Bold)
+            f3 = QFont(); f3.setPointSize(7); f3.setWeight(QFont.Weight.Bold)
             p.setFont(f3)
-            p.drawText(x + 6, y + 6, 22, 22,
-                       Qt.AlignmentFlag.AlignCenter, str(idx + 1))
+            p.drawText(x + 6, y + 6, 22, 22, Qt.AlignmentFlag.AlignCenter, str(idx + 1))
 
-            # Tier badge
             tier = (entry.get("tier") or "").strip().upper()
             if tier in TIER_COLORS:
-                tc = QColor(TIER_COLORS[tier])
-                tc.setAlpha(200)
-                p.setBrush(tc)
-                p.setPen(Qt.PenStyle.NoPen)
+                tc = QColor(TIER_COLORS[tier]); tc.setAlpha(200)
+                p.setBrush(tc); p.setPen(Qt.PenStyle.NoPen)
                 p.drawRoundedRect(x + CARD_W - 28, y + 6, 22, 16, 4, 4)
                 p.setPen(QColor("#0d0f14"))
-                f4 = QFont()
-                f4.setPointSize(7)
-                f4.setWeight(QFont.Weight.Bold)
+                f4 = QFont(); f4.setPointSize(7); f4.setWeight(QFont.Weight.Bold)
                 p.setFont(f4)
-                p.drawText(x + CARD_W - 28, y + 6, 22, 16,
-                           Qt.AlignmentFlag.AlignCenter, tier)
+                p.drawText(x + CARD_W - 28, y + 6, 22, 16, Qt.AlignmentFlag.AlignCenter, tier)
 
-            # Title
             p.setPen(QColor("#e8eaf5"))
-            f5 = QFont()
-            f5.setPointSize(7)
-            f5.setWeight(QFont.Weight.Bold)
+            f5 = QFont(); f5.setPointSize(7); f5.setWeight(QFont.Weight.Bold)
             p.setFont(f5)
-            title = (
-                entry.get("english_title") or entry.get("romaji_title", "")
-            )[:28]
-            p.drawText(
-                x + 4, y + CARD_H - 38, CARD_W - 8, 18,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                title,
-            )
+            title = (entry.get("english_title") or entry.get("romaji_title", ""))[:28]
+            p.drawText(x + 4, y + CARD_H - 38, CARD_W - 8, 18,
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
 
-            # Score
             sc = entry.get("average_score")
             if sc:
-                p.setPen(QColor("#7c6af7"))
-                f6 = QFont()
-                f6.setPointSize(6)
+                p.setPen(QColor("#a594f9"))
+                f6 = QFont(); f6.setPointSize(6)
                 p.setFont(f6)
-                p.drawText(
-                    x + 4, y + CARD_H - 20, CARD_W - 8, 16,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    f"★ {sc / 10:.1f}",
-                )
+                p.drawText(x + 4, y + CARD_H - 20, CARD_W - 8, 16,
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           f"★ {sc / 10:.1f}")
 
         p.end()
         px.save(path)
-
         from ui.toast import Toast
-        Toast.show(
-            self.window(),
-            f"Hall of Fame exported to {Path(path).name}",
-            kind="success",
-        )
-
-
-# ── Hero card (#1 entry) ───────────────────────────────────────────────────────
-
-class _HeroCard(QFrame):
-    """Full-width hero card for the #1 ranked entry."""
-
-    remove_requested = pyqtSignal(int)
-    note_edited      = pyqtSignal(int, str)
-    tier_changed     = pyqtSignal(int, str)
-    trailer_requested = pyqtSignal(str, str)
-
-    _H = 220
-
-    def __init__(self, entry: Dict, db: DatabaseManager,
-                 parent=None) -> None:
-        super().__init__(parent)
-        self._aid   = entry["id"]
-        self._entry = entry
-        self.db     = db
-        self.setFixedHeight(self._H)
-        self.setObjectName("hofHeroCard")
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-
-        # Banner as background label
-        self._banner_lbl = QLabel(self)
-        self._banner_lbl.setGeometry(0, 0, 9999, self._H)
-        self._banner_lbl.setScaledContents(False)
-        self._banner_lbl.setStyleSheet(
-            "background:#0f1118;border-radius:12px;"
-        )
-
-        # Dark overlay so text is readable
-        overlay = QWidget(self)
-        overlay.setGeometry(0, 0, 9999, self._H)
-        overlay.setStyleSheet(
-            "background:qlineargradient("
-            "x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 rgba(10,12,18,0.98),"
-            "stop:0.45 rgba(10,12,18,0.85),"
-            "stop:1 rgba(10,12,18,0.2));"
-            "border-radius:12px;"
-        )
-
-        # Content layout on top of overlay
-        content = QWidget(self)
-        content.setGeometry(0, 0, 9999, self._H)
-        content.setStyleSheet("background:transparent;")
-        lay = QHBoxLayout(content)
-        lay.setContentsMargins(20, 20, 20, 20)
-        lay.setSpacing(20)
-
-        # Cover
-        self._cover_lbl = QLabel()
-        self._cover_lbl.setFixedSize(118, 170)
-        self._cover_lbl.setStyleSheet(
-            "background:#1a1d28;border-radius:8px;"
-            "border:2px solid #fbbf2455;"
-        )
-        self._cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self._cover_lbl)
-
-        # Info
-        info = QVBoxLayout()
-        info.setSpacing(8)
-        info.setContentsMargins(0, 0, 0, 0)
-
-        # Crown + rank
-        crown_row = QHBoxLayout()
-        crown_row.setSpacing(8)
-        crown = QLabel("👑  #1")
-        crown.setStyleSheet(
-            "font-size:13px;font-weight:900;color:#fbbf24;"
-            "background:transparent;letter-spacing:1px;"
-        )
-        crown_row.addWidget(crown)
-
-        tier_val = (entry.get("tier") or "").strip().upper()
-        if tier_val in TIER_COLORS:
-            tb = QLabel(f" {tier_val} ")
-            tb.setStyleSheet(
-                f"background:{TIER_COLORS[tier_val]};"
-                "color:#0d0f14;font-size:11px;font-weight:900;"
-                "border-radius:4px;padding:1px 4px;"
-            )
-            crown_row.addWidget(tb)
-        crown_row.addStretch()
-        info.addLayout(crown_row)
-
-        # Title
-        title = entry.get("english_title") or entry.get("romaji_title", "")
-        tl = QLabel(title)
-        tl.setWordWrap(True)
-        tl.setStyleSheet(
-            "font-size:22px;font-weight:900;color:#f5f6ff;"
-            "background:transparent;letter-spacing:-0.3px;"
-        )
-        info.addWidget(tl)
-
-        # Meta: year · episodes · studio
-        meta_parts = []
-        yr = entry.get("season_year")
-        if yr:
-            meta_parts.append(str(yr))
-        eps = entry.get("total_episodes")
-        if eps:
-            meta_parts.append(f"{eps} eps")
-        studios = entry.get("studios") or []
-        if studios:
-            meta_parts.append(studios[0])
-        ml = QLabel("  ·  ".join(meta_parts))
-        ml.setStyleSheet("font-size:12px;color:#6b7280;background:transparent;")
-        info.addWidget(ml)
-
-        # Scores row: your rating + AniList score side by side
-        scores_row = QHBoxLayout()
-        scores_row.setSpacing(16)
-        avg = db.get_average_rating(entry["id"])
-        if avg is not None:
-            yr_lbl = QLabel(f"★ {avg:.1f}/6")
-            yr_lbl.setStyleSheet(
-                "font-size:16px;font-weight:700;color:#fbbf24;"
-                "background:transparent;"
-            )
-            yr_lbl.setToolTip("Your rating")
-            scores_row.addWidget(yr_lbl)
-        sc = entry.get("average_score")
-        if sc:
-            al_lbl = QLabel(f"AL {sc / 10:.1f}")
-            al_lbl.setStyleSheet(
-                "font-size:14px;font-weight:600;color:#7c6af7;"
-                "background:transparent;"
-            )
-            al_lbl.setToolTip("AniList community score")
-            scores_row.addWidget(al_lbl)
-        scores_row.addStretch()
-        info.addLayout(scores_row)
-
-        # Genre chips
-        chips_row = QHBoxLayout()
-        chips_row.setSpacing(6)
-        for g in (entry.get("genres") or [])[:4]:
-            chip = QLabel(g)
-            chip.setStyleSheet(
-                "background:#151929;color:#7c6af7;"
-                "border:1px solid #272060;border-radius:8px;"
-                "font-size:10px;padding:2px 8px;"
-            )
-            chips_row.addWidget(chip)
-        chips_row.addStretch()
-        info.addLayout(chips_row)
-
-        # Note
-        note_txt = entry.get("note") or ""
-        self._note_lbl = QLabel(
-            f'"{note_txt}"' if note_txt else "Click to add a personal note…"
-        )
-        self._note_lbl.setStyleSheet(
-            f"font-size:13px;color:{'#b8adff' if note_txt else '#3b4260'};"
-            "font-style:italic;background:transparent;"
-        )
-        self._note_lbl.setWordWrap(True)
-        self._note_lbl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._note_lbl.mousePressEvent = lambda e: self._edit_note_dlg()
-        info.addWidget(self._note_lbl)
-
-        info.addStretch()
-
-        # Action buttons
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-
-        if entry.get("trailer_id"):
-            t_btn = QPushButton("▶  Trailer")
-            t_btn.setObjectName("secondaryBtn")
-            t_btn.setFixedHeight(30)
-            t_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            t_btn.clicked.connect(
-                lambda: self.trailer_requested.emit(
-                    entry.get("trailer_id", ""),
-                    entry.get("trailer_site", "youtube"),
-                )
-            )
-            btn_row.addWidget(t_btn)
-
-        # Tier picker
-        tier_combo = QComboBox()
-        tier_combo.setFixedHeight(30)
-        tier_combo.setFixedWidth(120)
-        tier_combo.addItem("Set Tier…", "")
-        for k, lbl, _ in TIERS:
-            tier_combo.addItem(f"{k} — {lbl}", k)
-        cur_tier = (entry.get("tier") or "").strip().upper()
-        if cur_tier:
-            for i in range(tier_combo.count()):
-                if tier_combo.itemData(i) == cur_tier:
-                    tier_combo.setCurrentIndex(i)
-                    break
-        tier_combo.currentIndexChanged.connect(
-            lambda idx, c=tier_combo: (
-                self.tier_changed.emit(self._aid, c.itemData(idx))
-                if c.itemData(idx) else None
-            )
-        )
-        btn_row.addWidget(tier_combo)
-
-        rm_btn = QPushButton("Remove")
-        rm_btn.setObjectName("dangerBtn")
-        rm_btn.setFixedHeight(30)
-        rm_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        rm_btn.clicked.connect(
-            lambda: self.remove_requested.emit(self._aid)
-        )
-        btn_row.addWidget(rm_btn)
-        btn_row.addStretch()
-        info.addLayout(btn_row)
-
-        lay.addLayout(info, 1)
-
-    def set_cover(self, path: str) -> None:
-        if not path:
-            return
-        px = QPixmap(path)
-        if px.isNull():
-            return
-        w, h = 118, 170
-        px = px.scaled(
-            w, h,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        cx = (px.width() - w) // 2
-        cy = (px.height() - h) // 2
-        px = px.copy(cx, cy, w, h)
-        # Rounded clip
-        rounded = QPixmap(w, h)
-        rounded.fill(QColor(0, 0, 0, 0))
-        pt = QPainter(rounded)
-        pt.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pp = QPainterPath()
-        pp.addRoundedRect(0, 0, w, h, 8, 8)
-        pt.setClipPath(pp)
-        pt.drawPixmap(0, 0, px)
-        pt.end()
-        self._cover_lbl.setPixmap(rounded)
-
-    def set_banner(self, path: str) -> None:
-        if not path:
-            return
-        px = QPixmap(path)
-        if px.isNull():
-            return
-        w = self.width() or 900
-        px = px.scaled(
-            w, self._H,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._banner_lbl.setPixmap(px.copy(0, 0, w, self._H))
-        self._banner_lbl.setGeometry(0, 0, w, self._H)
-
-    def resizeEvent(self, ev) -> None:
-        super().resizeEvent(ev)
-        # Re-stretch all child overlays to new width
-        for child in (self._banner_lbl,):
-            child.setGeometry(0, 0, self.width(), self._H)
-
-    def _edit_note_dlg(self) -> None:
-        dlg = _NoteDialog(self._entry.get("note") or "", self)
-        if dlg.exec():
-            note = dlg.get_note()
-            self._note_lbl.setText(
-                f'"{note}"' if note else "Click to add a personal note…"
-            )
-            self._note_lbl.setStyleSheet(
-                f"font-size:13px;color:{'#b8adff' if note else '#3b4260'};"
-                "font-style:italic;background:transparent;"
-            )
-            self.note_edited.emit(self._aid, note)
-
-
-# ── Rich list row ──────────────────────────────────────────────────────────────
-
-class _HofRow(QFrame):
-    """Rich row card for list view (ranks 2+)."""
-
-    remove_requested  = pyqtSignal(int)
-    note_edited       = pyqtSignal(int, str)
-    move_up           = pyqtSignal(int)
-    move_down         = pyqtSignal(int)
-    tier_changed      = pyqtSignal(int, str)
-    trailer_requested = pyqtSignal(str, str)
-
-    def __init__(self, rank: int, entry: Dict, db: DatabaseManager,
-                 parent=None) -> None:
-        super().__init__(parent)
-        self._aid   = entry["id"]
-        self._entry = entry
-        self.db     = db
-        self.rank   = rank
-
-        self.setObjectName("hofRowCard")
-        self.setMinimumHeight(120)
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 16, 0)
-        lay.setSpacing(0)
-
-        # Rank badge
-        rank_col = RANK_COLORS.get(rank, "#4a5070")
-        rank_w = QWidget()
-        rank_w.setFixedWidth(52)
-        rank_w.setStyleSheet("background:transparent;")
-        rl = QVBoxLayout(rank_w)
-        rl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rnk = QLabel(f"#{rank}")
-        rnk.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rnk.setStyleSheet(
-            f"font-size:{'17' if rank <= 3 else '14'}px;"
-            f"font-weight:800;color:{rank_col};background:transparent;"
-        )
-        rl.addWidget(rnk)
-        lay.addWidget(rank_w)
-
-        # Cover
-        self._cover_lbl = QLabel()
-        self._cover_lbl.setFixedSize(72, 104)
-        self._cover_lbl.setStyleSheet(
-            "background:#1a1d28;border-radius:6px;margin:8px 0;"
-        )
-        self._cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self._cover_lbl)
-        lay.addSpacing(14)
-
-        # Info column
-        info = QVBoxLayout()
-        info.setSpacing(5)
-        info.setContentsMargins(0, 12, 0, 10)
-
-        # Title + tier badge
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
-        title = entry.get("english_title") or entry.get("romaji_title", "")
-        tl = QLabel(title[:70])
-        tl.setStyleSheet(
-            "font-size:15px;font-weight:700;color:#f0f1f5;background:transparent;"
-        )
-        title_row.addWidget(tl)
-
-        tier_val = (entry.get("tier") or "").strip().upper()
-        if tier_val in TIER_COLORS:
-            tb = QLabel(f" {tier_val} ")
-            tb.setStyleSheet(
-                f"background:{TIER_COLORS[tier_val]};color:#0d0f14;"
-                "font-size:10px;font-weight:900;border-radius:4px;"
-                "padding:1px 4px;"
-            )
-            title_row.addWidget(tb)
-        title_row.addStretch()
-        info.addLayout(title_row)
-
-        # Scores: your rating + AniList
-        scores_row = QHBoxLayout()
-        scores_row.setSpacing(14)
-        avg = db.get_average_rating(entry["id"])
-        if avg is not None:
-            yr_lbl = QLabel(f"★ {avg:.1f}/6  yours")
-            yr_lbl.setStyleSheet(
-                "font-size:12px;font-weight:700;color:#fbbf24;"
-                "background:transparent;"
-            )
-            scores_row.addWidget(yr_lbl)
-        sc = entry.get("average_score")
-        if sc:
-            al_lbl = QLabel(f"AL {sc / 10:.1f}")
-            al_lbl.setStyleSheet(
-                "font-size:12px;color:#7c6af7;background:transparent;"
-            )
-            scores_row.addWidget(al_lbl)
-        yr = entry.get("season_year")
-        eps = entry.get("total_episodes")
-        if yr or eps:
-            meta = "  ·  ".join(
-                filter(None, [str(yr) if yr else "", f"{eps} eps" if eps else ""])
-            )
-            ml = QLabel(meta)
-            ml.setStyleSheet(
-                "font-size:12px;color:#4a5070;background:transparent;"
-            )
-            scores_row.addWidget(ml)
-        scores_row.addStretch()
-        info.addLayout(scores_row)
-
-        # Genre chips
-        chips = QHBoxLayout()
-        chips.setSpacing(5)
-        for g in (entry.get("genres") or [])[:4]:
-            chip = QLabel(g)
-            chip.setStyleSheet(
-                "background:#151929;color:#7c6af7;"
-                "border:1px solid #272060;border-radius:7px;"
-                "font-size:10px;padding:2px 7px;"
-            )
-            chips.addWidget(chip)
-        chips.addStretch()
-        info.addLayout(chips)
-
-        # Note
-        note_txt = entry.get("note") or ""
-        self._note_lbl = QLabel(
-            f'"{note_txt}"' if note_txt else "Click to add a note…"
-        )
-        self._note_lbl.setStyleSheet(
-            f"font-size:12px;color:{'#9da5c0' if note_txt else '#3b4260'};"
-            "font-style:italic;background:transparent;"
-        )
-        self._note_lbl.setWordWrap(True)
-        self._note_lbl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._note_lbl.mousePressEvent = lambda e: self._edit_note_dlg()
-        info.addWidget(self._note_lbl)
-
-        # Date inducted
-        added = entry.get("added_at")
-        if added:
-            try:
-                date_str = datetime.fromtimestamp(added).strftime("Added %d %b %Y")
-                dl = QLabel(date_str)
-                dl.setStyleSheet(
-                    "font-size:10px;color:#2a3048;background:transparent;"
-                )
-                info.addWidget(dl)
-            except Exception:
-                pass
-
-        lay.addLayout(info, 1)
-
-        # Right-side controls
-        ctrl = QVBoxLayout()
-        ctrl.setSpacing(4)
-        ctrl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        ctrl.setContentsMargins(0, 8, 0, 8)
-
-        if entry.get("trailer_id"):
-            tr_btn = QPushButton("▶")
-            tr_btn.setObjectName("iconBtn")
-            tr_btn.setFixedSize(28, 28)
-            tr_btn.setToolTip("Watch trailer")
-            tr_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            tr_btn.clicked.connect(
-                lambda: self.trailer_requested.emit(
-                    entry.get("trailer_id", ""),
-                    entry.get("trailer_site", "youtube"),
-                )
-            )
-            ctrl.addWidget(tr_btn)
-
-        # Tier combo
-        tc = QComboBox()
-        tc.setFixedWidth(54)
-        tc.setFixedHeight(26)
-        tc.setToolTip("Set tier")
-        tc.addItem("–", "")
-        for k, _, _ in TIERS:
-            tc.addItem(k, k)
-        cur_tier = (entry.get("tier") or "").strip().upper()
-        if cur_tier:
-            for i in range(tc.count()):
-                if tc.itemData(i) == cur_tier:
-                    tc.setCurrentIndex(i)
-                    break
-        tc.currentIndexChanged.connect(
-            lambda idx, c=tc: (
-                self.tier_changed.emit(self._aid, c.itemData(idx))
-                if c.itemData(idx) else None
-            )
-        )
-        ctrl.addWidget(tc)
-
-        up_btn = self._icon_btn("▲", "Move up")
-        up_btn.clicked.connect(lambda: self.move_up.emit(self._aid))
-        ctrl.addWidget(up_btn)
-
-        dn_btn = self._icon_btn("▼", "Move down")
-        dn_btn.clicked.connect(lambda: self.move_down.emit(self._aid))
-        ctrl.addWidget(dn_btn)
-
-        rm_btn = self._icon_btn("✕", "Remove")
-        rm_btn.setStyleSheet(
-            rm_btn.styleSheet() + "color:#f87171;"
-        )
-        rm_btn.clicked.connect(
-            lambda: self.remove_requested.emit(self._aid)
-        )
-        ctrl.addWidget(rm_btn)
-
-        lay.addLayout(ctrl)
-
-    def _icon_btn(self, text: str, tip: str) -> QPushButton:
-        b = QPushButton(text)
-        b.setObjectName("iconBtn")
-        b.setFixedSize(28, 28)
-        b.setToolTip(tip)
-        b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        return b
-
-    def set_cover(self, path: str) -> None:
-        if not path:
-            return
-        px = QPixmap(path)
-        if px.isNull():
-            return
-        w, h = 72, 104
-        px = px.scaled(
-            w, h,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        cx = (px.width() - w) // 2
-        cy = (px.height() - h) // 2
-        self._cover_lbl.setPixmap(px.copy(cx, cy, w, h))
-
-    def set_banner(self, path: str) -> None:
-        pass   # rows don't use banner
-
-    def _edit_note_dlg(self) -> None:
-        dlg = _NoteDialog(self._entry.get("note") or "", self)
-        if dlg.exec():
-            note = dlg.get_note()
-            self._note_lbl.setText(
-                f'"{note}"' if note else "Click to add a note…"
-            )
-            self._note_lbl.setStyleSheet(
-                f"font-size:12px;color:{'#9da5c0' if note else '#3b4260'};"
-                "font-style:italic;background:transparent;"
-            )
-            self.note_edited.emit(self._aid, note)
-
-
-# ── Grid card ──────────────────────────────────────────────────────────────────
-
-class _GridCard(QFrame):
-    """Compact poster card for grid view."""
-
-    clicked = pyqtSignal(int)
-
-    CARD_W = 140
-    CARD_H = 200
-
-    def __init__(self, rank: int, entry: Dict, db: DatabaseManager,
-                 parent=None) -> None:
-        super().__init__(parent)
-        self._aid   = entry["id"]
-        self._entry = entry
-        self.setObjectName("hofGridCard")
-        self.setFixedSize(self.CARD_W, self.CARD_H)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-
-        # Cover
-        self._cover_lbl = QLabel(self)
-        self._cover_lbl.setFixedSize(self.CARD_W, self.CARD_H)
-        self._cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cover_lbl.setStyleSheet("background:#111420;border-radius:10px;")
-
-        # Bottom gradient overlay
-        grad = QWidget(self)
-        grad.setFixedSize(self.CARD_W, 72)
-        grad.move(0, self.CARD_H - 72)
-        grad.setStyleSheet(
-            "background:qlineargradient("
-            "x1:0,y1:0,x2:0,y2:1,"
-            "stop:0 rgba(0,0,0,0),"
-            "stop:1 rgba(0,0,0,0.95));"
-        )
-        grad.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # Rank badge
-        rank_col = RANK_COLORS.get(rank, "#4a5070")
-        rank_lbl = QLabel(f"#{rank}", self)
-        rank_lbl.setFixedSize(30, 22)
-        rank_lbl.move(7, 7)
-        rank_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rank_lbl.setStyleSheet(
-            f"background:rgba(10,12,18,0.88);color:{rank_col};"
-            "font-size:11px;font-weight:800;border-radius:5px;"
-        )
-        rank_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # Tier badge
-        tier = (entry.get("tier") or "").strip().upper()
-        if tier in TIER_COLORS:
-            tb = QLabel(f" {tier} ", self)
-            tb.setFixedHeight(20)
-            tb.adjustSize()
-            tb.move(self.CARD_W - tb.width() - 7, 7)
-            tb.setStyleSheet(
-                f"background:{TIER_COLORS[tier]};color:#0d0f14;"
-                "font-size:10px;font-weight:900;border-radius:4px;padding:0 4px;"
-            )
-            tb.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # Title label
-        title = (
-            entry.get("english_title") or entry.get("romaji_title", "")
-        )
-        tl = QLabel(title[:22], self)
-        tl.setWordWrap(True)
-        tl.setFixedWidth(self.CARD_W - 12)
-        tl.move(6, self.CARD_H - 52)
-        tl.setStyleSheet(
-            "font-size:11px;font-weight:700;color:#f0f1f5;"
-            "background:transparent;"
-        )
-        tl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # Score
-        sc = entry.get("average_score")
-        if sc:
-            sl = QLabel(f"★ {sc / 10:.1f}", self)
-            sl.move(6, self.CARD_H - 22)
-            sl.setStyleSheet(
-                "font-size:10px;font-weight:600;color:#a594f9;"
-                "background:transparent;"
-            )
-            sl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # Apply rounded clip
-        from PyQt6.QtCore import QRectF
-        from PyQt6.QtGui import QRegion
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(0, 0, self.CARD_W, self.CARD_H), 10, 10
-        )
-        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
-
-    def set_cover(self, path: str) -> None:
-        if not path:
-            return
-        px = QPixmap(path)
-        if px.isNull():
-            return
-        px = px.scaled(
-            self.CARD_W, self.CARD_H,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        cx = (px.width() - self.CARD_W) // 2
-        cy = (px.height() - self.CARD_H) // 2
-        self._cover_lbl.setPixmap(px.copy(cx, cy, self.CARD_W, self.CARD_H))
-
-    def mousePressEvent(self, ev) -> None:
-        if ev.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._aid)
-        super().mousePressEvent(ev)
-
-
-# ── Entry detail dialog (opened from grid view click) ─────────────────────────
-
-class _EntryDetailDialog(QDialog):
-    """Full detail dialog for a HoF entry, opened from grid card click."""
-
-    tier_changed      = pyqtSignal(int, str)
-    note_edited       = pyqtSignal(int, str)
-    remove_requested  = pyqtSignal(int)
-    trailer_requested = pyqtSignal(str, str)
-
-    def __init__(self, entry: Dict, db: DatabaseManager,
-                 parent=None) -> None:
-        super().__init__(parent)
-        self._aid   = entry["id"]
-        self._entry = entry
-        self.db     = db
-        self.setWindowTitle(
-            entry.get("english_title") or entry.get("romaji_title", "")
-        )
-        self.setMinimumSize(540, 420)
-        self.setStyleSheet("background:#0f1118;")
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 24, 24, 20)
-        lay.setSpacing(14)
-
-        top = QHBoxLayout()
-        top.setSpacing(20)
-
-        self._cover_lbl = QLabel()
-        self._cover_lbl.setFixedSize(110, 158)
-        self._cover_lbl.setStyleSheet(
-            "background:#1a1d28;border-radius:8px;"
-        )
-        top.addWidget(self._cover_lbl, 0, Qt.AlignmentFlag.AlignTop)
-
-        info = QVBoxLayout()
-        info.setSpacing(8)
-
-        title = (
-            self._entry.get("english_title")
-            or self._entry.get("romaji_title", "")
-        )
-        tl = QLabel(title)
-        tl.setWordWrap(True)
-        tl.setStyleSheet(
-            "font-size:18px;font-weight:800;color:#f0f1f5;"
-        )
-        info.addWidget(tl)
-
-        scores_row = QHBoxLayout()
-        avg = self.db.get_average_rating(self._entry["id"])
-        if avg is not None:
-            yl = QLabel(f"★ {avg:.1f}/6  your rating")
-            yl.setStyleSheet("font-size:13px;color:#fbbf24;font-weight:700;")
-            scores_row.addWidget(yl)
-        sc = self._entry.get("average_score")
-        if sc:
-            al = QLabel(f"AniList: {sc / 10:.1f}")
-            al.setStyleSheet("font-size:13px;color:#7c6af7;")
-            scores_row.addWidget(al)
-        scores_row.addStretch()
-        info.addLayout(scores_row)
-
-        # Genre chips
-        chips = QHBoxLayout()
-        chips.setSpacing(5)
-        for g in (self._entry.get("genres") or [])[:5]:
-            c = QLabel(g)
-            c.setStyleSheet(
-                "background:#151929;color:#7c6af7;"
-                "border:1px solid #272060;border-radius:8px;"
-                "font-size:11px;padding:3px 9px;"
-            )
-            chips.addWidget(c)
-        chips.addStretch()
-        info.addLayout(chips)
-
-        # Tier selector
-        tier_row = QHBoxLayout()
-        tier_row.setSpacing(8)
-        tier_row.addWidget(QLabel("Tier:"))
-        tc = QComboBox()
-        tc.addItem("No tier", "")
-        for k, lbl, _ in TIERS:
-            tc.addItem(f"{k} — {lbl}", k)
-        cur = (self._entry.get("tier") or "").strip().upper()
-        for i in range(tc.count()):
-            if tc.itemData(i) == cur:
-                tc.setCurrentIndex(i)
-                break
-        tc.currentIndexChanged.connect(
-            lambda idx, c=tc: (
-                self.tier_changed.emit(self._aid, c.itemData(idx))
-            )
-        )
-        tier_row.addWidget(tc)
-        tier_row.addStretch()
-        info.addLayout(tier_row)
-
-        info.addStretch()
-        top.addLayout(info, 1)
-        lay.addLayout(top)
-
-        # Note
-        note_lbl = QLabel("Personal note:")
-        note_lbl.setStyleSheet("font-size:11px;color:#4a5070;")
-        lay.addWidget(note_lbl)
-        self._note_edit = QTextEdit()
-        self._note_edit.setPlaceholderText("What made this special for you?")
-        self._note_edit.setPlainText(self._entry.get("note") or "")
-        self._note_edit.setFixedHeight(70)
-        lay.addWidget(self._note_edit)
-
-        # Buttons
-        btns = QHBoxLayout()
-        if self._entry.get("trailer_id"):
-            tr = QPushButton("▶  Watch Trailer")
-            tr.setObjectName("secondaryBtn")
-            tr.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            tr.clicked.connect(
-                lambda: self.trailer_requested.emit(
-                    self._entry.get("trailer_id", ""),
-                    self._entry.get("trailer_site", "youtube"),
-                )
-            )
-            btns.addWidget(tr)
-
-        btns.addStretch()
-
-        rm = QPushButton("Remove from HoF")
-        rm.setObjectName("dangerBtn")
-        rm.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        rm.clicked.connect(lambda: self.remove_requested.emit(self._aid))
-        btns.addWidget(rm)
-
-        save = QPushButton("Save Note")
-        save.setObjectName("primaryBtn")
-        save.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        save.clicked.connect(self._save_note)
-        btns.addWidget(save)
-
-        lay.addLayout(btns)
-
-        # Load cover
-        local = self._entry.get("cover_local", "")
-        url   = self._entry.get("cover_url", "")
-        if local and Path(local).exists():
-            self._set_cover(local)
-        elif url:
-            from core.image_cache import get_cached_path
-            cached = get_cached_path(url)
-            if cached:
-                self._set_cover(str(cached))
-
-    def _set_cover(self, path: str) -> None:
-        px = QPixmap(path)
-        if px.isNull():
-            return
-        w, h = 110, 158
-        px = px.scaled(
-            w, h,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        cx = (px.width() - w) // 2
-        cy = (px.height() - h) // 2
-        self._cover_lbl.setPixmap(px.copy(cx, cy, w, h))
-
-    def _save_note(self) -> None:
-        note = self._note_edit.toPlainText().strip()
-        self.note_edited.emit(self._aid, note)
-        self.accept()
+        Toast.show(self.window(), f"Hall of Fame exported to {Path(path).name}", kind="success")
 
 
 # ── Add dialog (unchanged logic, preserved fully) ─────────────────────────────
@@ -1768,9 +1783,7 @@ class _AddToHofDialog(QDialog):
         self._selected_media = None
         self.ok_btn.setEnabled(False)
         self.preview_lbl.setText("")
-        for btn, t in [
-            (self.lib_tab_btn, "library"), (self.al_tab_btn, "anilist")
-        ]:
+        for btn, t in [(self.lib_tab_btn, "library"), (self.al_tab_btn, "anilist")]:
             btn.setProperty("active", "true" if tab == t else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
@@ -1799,8 +1812,7 @@ class _AddToHofDialog(QDialog):
                 if q in (a.get("romaji_title", "")).lower()
                 or q in (a.get("english_title", "")).lower()
             ]
-            if q
-            else self._all_anime
+            if q else self._all_anime
         )
         self._render_library(filtered)
 
@@ -1829,9 +1841,7 @@ class _AddToHofDialog(QDialog):
                 },
             }
             self.ok_btn.setEnabled(True)
-            self.preview_lbl.setText(
-                f"✓  Selected: {anime.get('romaji_title', '')}"
-            )
+            self.preview_lbl.setText(f"✓  Selected: {anime.get('romaji_title', '')}")
 
     def _do_search(self) -> None:
         q = self.search.text().strip()
@@ -1861,9 +1871,7 @@ class _AddToHofDialog(QDialog):
             if url:
                 iw = ImageWorker(url, i, "cover")
                 iw.signals.result.connect(
-                    lambda r, rw=row: (
-                        rw.set_cover(r[2]) if r and r[2] else None
-                    )
+                    lambda r, rw=row: (rw.set_cover(r[2]) if r and r[2] else None)
                 )
                 run_worker(iw)
 
@@ -1896,11 +1904,7 @@ class _AddToHofDialog(QDialog):
             lib_id = m["_lib_id"]
             if _in_hof(self.db, lib_id):
                 from ui.toast import Toast
-                Toast.show(
-                    self.window(),
-                    "Already in your Hall of Fame.",
-                    kind="info",
-                )
+                Toast.show(self.window(), "Already in your Hall of Fame.", kind="info")
                 return
             _add_to_hof(self.db, lib_id)
             anime = self.db.get_anime_by_id(lib_id)
@@ -1909,15 +1913,11 @@ class _AddToHofDialog(QDialog):
             return
 
         anilist_id = m.get("id")
-        existing   = (
-            self.db.get_anime_by_anilist_id(anilist_id) if anilist_id else None
-        )
+        existing   = self.db.get_anime_by_anilist_id(anilist_id) if anilist_id else None
         if existing:
             if _in_hof(self.db, existing["id"]):
                 from ui.toast import Toast
-                Toast.show(
-                    self.window(), "Already in your Hall of Fame.", kind="info"
-                )
+                Toast.show(self.window(), "Already in your Hall of Fame.", kind="info")
                 return
             _add_to_hof(self.db, existing["id"])
             self.added_title = existing.get("romaji_title", "Anime")
@@ -1936,9 +1936,7 @@ class _AddToHofDialog(QDialog):
             ok, title = add_anilist_media_to_hof(self.db, full_media)
             if not ok:
                 from ui.toast import Toast
-                Toast.show(
-                    self.window(), "Already in your Hall of Fame.", kind="info"
-                )
+                Toast.show(self.window(), "Already in your Hall of Fame.", kind="info")
                 self.ok_btn.setEnabled(True)
                 self.ok_btn.setText("Add to Hall of Fame")
                 return
@@ -1979,8 +1977,7 @@ class _LibRow(QFrame):
         title = anime.get("english_title") or anime.get("romaji_title", "")
         tl = QLabel(title[:60])
         tl.setStyleSheet(
-            f"font-size:13px;font-weight:600;"
-            f"color:{'#4a5070' if in_hof else '#dde0ed'};"
+            f"font-size:13px;font-weight:600;color:{'#4a5070' if in_hof else '#dde0ed'};"
         )
         lay.addWidget(tl)
         lay.addStretch()
@@ -2053,9 +2050,7 @@ class _AniListRow(QFrame):
         sc = media.get("averageScore")
         if sc:
             scl = QLabel(f"★ {sc / 10:.1f}")
-            scl.setStyleSheet(
-                "font-size:12px;color:#7c6af7;font-weight:600;"
-            )
+            scl.setStyleSheet("font-size:12px;color:#a594f9;font-weight:600;")
             lay.addWidget(scl)
 
     def set_cover(self, path: str) -> None:
@@ -2075,46 +2070,3 @@ class _AniListRow(QFrame):
         if e.button() == Qt.MouseButton.LeftButton:
             self.selected.emit(self.idx)
         super().mousePressEvent(e)
-
-
-# ── Note dialog ────────────────────────────────────────────────────────────────
-
-class _NoteDialog(QDialog):
-    def __init__(self, current: str, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Personal Note")
-        self.setMinimumSize(420, 230)
-        self.setStyleSheet("background:#0f1118;")
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(10)
-
-        t = QLabel("Your note about this anime")
-        t.setObjectName("dialogTitle")
-        lay.addWidget(t)
-
-        self.edit = QTextEdit()
-        self.edit.setPlaceholderText(
-            "e.g. 'The ending changed my life.' or 'Best OST ever made.'"
-        )
-        self.edit.setPlainText(current)
-        self.edit.setFixedHeight(90)
-        lay.addWidget(self.edit)
-
-        btns = QHBoxLayout()
-        btns.addStretch()
-        cancel = QPushButton("Cancel")
-        cancel.setObjectName("secondaryBtn")
-        cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        cancel.clicked.connect(self.reject)
-        btns.addWidget(cancel)
-        save = QPushButton("Save Note")
-        save.setObjectName("primaryBtn")
-        save.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        save.clicked.connect(self.accept)
-        btns.addWidget(save)
-        lay.addLayout(btns)
-
-    def get_note(self) -> str:
-        return self.edit.toPlainText().strip()

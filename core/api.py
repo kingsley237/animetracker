@@ -103,6 +103,15 @@ def _post(query: str, variables: Dict, timeout: int = 10, retries: int = 3) -> O
                 continue
             resp.raise_for_status()
             data = resp.json()
+            # GraphQL allows partial success: a response can carry both
+            # "data" (with nulls for the failed fields/aliases) and "errors"
+            # at once. Treating any "errors" key as total failure discarded
+            # perfectly good data for the OTHER ids in a batched query
+            # (refresh_airing_data batches 5 at a time) - if one alias
+            # errored, none of the 5 got refreshed, ever, silently. Only
+            # bail out if there's no usable data at all.
+            if data.get("data") is not None:
+                return data["data"]
             if "errors" in data:
                 return None
             return data.get("data")

@@ -1130,38 +1130,199 @@ QFrame#statsPageCard {
 }
 
 
-/* ── Hero card (#1 entry) ────────────────────────────────────────────────── */
-QFrame#hofHeroCard {
-    background-color: #0f1118;
-    border: 1px solid #fbbf2430;
-    border-radius: 12px;
+/* ── Hall of Fame — Gallery / Cinematic ──────────────────────────────────── */
+
+/* Full-bleed blurred backdrop + scrim (behind everything on the page) */
+QLabel#hofBackdropImage {
+    background-color: #0a0c10;
 }
 
-QFrame#hofHeroCard:hover {
-    border-color: #fbbf2466;
+QWidget#hofBackdropScrim {
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(10,12,18,0.88),
+        stop:0.5 rgba(10,12,18,0.94),
+        stop:1 rgba(10,12,18,1.0)
+    );
 }
 
-/* ── Rich list row ───────────────────────────────────────────────────────── */
-QFrame#hofRowCard {
-    background-color: #111420;
-    border: 1px solid #1a1d28;
-    border-radius: 10px;
+/* Champion banner — the big cinematic hero at the top of Shelves view */
+QFrame#hofChampionBanner {
+    background-color: rgba(17,20,32,0.72);
+    border: 1.5px solid #fbbf243d;
+    border-radius: 16px;
 }
 
-QFrame#hofRowCard:hover {
-    background-color: #141828;
-    border-color: #2e3354;
+QFrame#hofChampionBanner:hover {
+    border-color: #fbbf2470;
 }
 
-/* ── Grid card ───────────────────────────────────────────────────────────── */
-QFrame#hofGridCard {
+/* Tier shelf — a horizontal-scrolling row of posters */
+QScrollArea#hofShelfScroll {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#hofShelfScroll QScrollBar:horizontal {
+    background: rgba(10,12,18,0.4);
+    height: 7px;
+    border-radius: 3px;
+    margin: 0;
+}
+
+QScrollArea#hofShelfScroll QScrollBar::handle:horizontal {
+    background: #2a2d42;
+    border-radius: 3px;
+    min-width: 30px;
+}
+
+QScrollArea#hofShelfScroll QScrollBar::handle:horizontal:hover {
+    background: #4b3fa8;
+}
+
+QPushButton#shelfNavBtn {
+    background-color: rgba(10,12,18,0.7);
+    border: 1px solid #2a2d42;
+    border-radius: 16px;
+    color: #c7cbd9;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QPushButton#shelfNavBtn:hover {
+    background-color: #1a1e2e;
+    border-color: #4b3fa8;
+    color: #f0f1f5;
+}
+
+/* Poster card — shared by Shelves and Wall view */
+QFrame#hofPosterCard {
     background-color: #111420;
     border: none;
     border-radius: 10px;
 }
 
-QFrame#hofGridCard:hover {
+QFrame#hofPosterCard:hover {
     border: 2px solid #4b3fa8;
+}
+
+/* Cinematic full-screen detail overlay */
+QWidget#hofOverlayScrim {
+    background-color: rgba(6,7,12,0.86);
+}
+
+QFrame#hofOverlayPanel {
+    background-color: #12141d;
+    border: 1px solid #262b45;
+    border-radius: 18px;
+}
+
+QPushButton#overlayCloseBtn {
+    background-color: rgba(10,12,18,0.7);
+    border: 1px solid #2a2d42;
+    border-radius: 18px;
+    color: #c7cbd9;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QPushButton#overlayCloseBtn:hover {
+    background-color: #2a1010;
+    border-color: #f87171;
+    color: #f87171;
+}
+
+QPushButton#overlayNavBtn {
+    background-color: rgba(10,12,18,0.7);
+    border: 1px solid #2a2d42;
+    border-radius: 22px;
+    color: #c7cbd9;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+QPushButton#overlayNavBtn:hover {
+    background-color: #1a1e2e;
+    border-color: #4b3fa8;
+    color: #f0f1f5;
+}
+
+/* ── Unified stat strip (Statistics page overview + heatmap section) ─────── */
+QFrame#statStrip {
+    background-color: #111420;
+    border: 1px solid #1a1d28;
+    border-radius: 10px;
+}
+
+QFrame#statStripDivider {
+    background-color: #1a1d28;
+    border: none;
+    max-width: 1px;
+    min-width: 1px;
+}
+
+QLabel#statStripValue {
+    font-size: 25px;
+    font-weight: 700;
+    color: #f0f1f5;
+    letter-spacing: -0.4px;
+    background: transparent;
+}
+
+QLabel#statStripLabel {
+    font-size: 11px;
+    color: #4a5070;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    background: transparent;
+}
+
+QLabel#statStripTrend {
+    font-size: 11px;
+    color: #7c6af7;
+    font-weight: 600;
+    background: transparent;
+}
+
+/* ── Tier filter chips (Hall of Fame) — active state reuses filterPill ──── */
+QPushButton#tierFilterPill[active="true"] {
+    font-weight: 700;
+}
+
+/* ── Statistics — Wrapped-style recap slides ─────────────────────────────── */
+
+/* Base "slide" — accent tint background/border is set per-instance in Python
+   (each slide carries its own color), this just supplies shared geometry. */
+QFrame#statsSlide {
+    border-radius: 18px;
+}
+
+QFrame#statsRecapSlide {
+    background-color: rgba(124,106,247,0.10);
+    border: 1px solid rgba(124,106,247,0.30);
+    border-radius: 18px;
+}
+
+QLabel#recapHeadline {
+    font-size: 21px;
+    font-weight: 700;
+    color: #f0f1f5;
+    line-height: 1.55;
+    background: transparent;
+}
+
+QLabel#slideEyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    color: #8a91a6;
+    background: transparent;
+}
+
+QLabel#slideBigNumber {
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: transparent;
 }
 
 

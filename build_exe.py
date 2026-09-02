@@ -138,7 +138,7 @@ def zip_for_distribution(version: str):
     if not exe_dir.exists():
         return
     zip_path = DIST / f"Miroku-v{version}-Windows.zip"
-    print(f"\nZipping {exe_dir.name}/ → {zip_path.name}…")
+    print(f"\nZipping {exe_dir.name}/ -> {zip_path.name}...")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in exe_dir.rglob("*"):
             zf.write(file, file.relative_to(DIST))
@@ -170,7 +170,7 @@ def report(version: str):
         print(f"  1. Test: double-click dist\\Miroku\\Miroku.exe")
         print(f"  2. Distribute: zip the dist\\Miroku\\ folder")
         print(f"     OR run: python build_exe.py --zip  (auto-zips after build)")
-        print(f"  3. On GitHub → Releases → attach the .zip file")
+        print(f"  3. On GitHub -> Releases -> attach the .zip file")
     else:
         print("\nWARN  Build finished but exe not found — check output above.")
 

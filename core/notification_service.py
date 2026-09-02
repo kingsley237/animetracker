@@ -138,15 +138,31 @@ class NotificationService:
                     "payload": {},
                 })
             elif api_status in ("FINISHED", "CANCELLED"):
-                self.db.upsert_notification({
-                    "fingerprint": f"planned-ended:{ident}:{api_status}",
-                    "kind": "planned_ended",
-                    "anime_id": anime["id"],
-                    "anilist_id": anime.get("anilist_id"),
-                    "title": "Planned anime has ended",
-                    "message": f"{title} is marked {api_status.title()}. Review whether it still belongs in Planned.",
-                    "payload": {"status": api_status},
-                })
+                watched = self.db.get_watched_count(anime["id"])
+                if watched > 0:
+                    # They'd already started it before parking it in Planned -
+                    # mirror _scan_finished_watching and move it to Completed
+                    # instead of leaving it stuck showing stale airing info.
+                    self.db.update_anime(anime["id"], {"watch_status": "completed"})
+                    self.db.upsert_notification({
+                        "fingerprint": f"auto-completed:{ident}:{api_status}",
+                        "kind": "auto_completed",
+                        "anime_id": anime["id"],
+                        "anilist_id": anime.get("anilist_id"),
+                        "title": "Anime finished airing",
+                        "message": f"{title} has finished airing and was moved to Completed.",
+                        "payload": {"status": api_status},
+                    })
+                else:
+                    self.db.upsert_notification({
+                        "fingerprint": f"planned-ended:{ident}:{api_status}",
+                        "kind": "planned_ended",
+                        "anime_id": anime["id"],
+                        "anilist_id": anime.get("anilist_id"),
+                        "title": "Planned anime has ended",
+                        "message": f"{title} is marked {api_status.title()}. Review whether it still belongs in Planned.",
+                        "payload": {"status": api_status},
+                    })
 
     def _scan_upcoming_metadata(self):
         for anime in self.db.get_all_anime(watch_status="planned"):
