@@ -468,6 +468,10 @@ class AnimeCard(QFrame):
                 s_nm = (anime.get("season") or "").title()
                 s_yr = anime.get("season_year") or ""
                 self.ep_label.setText(f"{s_nm} {s_yr}".strip() or "TBA")
+            elif is_ended:
+                self.ep_label.setText(f"Finished · {total} eps" if total else "Finished airing")
+            elif api_status == "RELEASING" and next_ep and next_ep > 1:
+                self.ep_label.setText(f"{next_ep - 1} aired so far")
             elif total:
                 self.ep_label.setText(f"{total} episodes")
             else:
@@ -487,6 +491,10 @@ class AnimeCard(QFrame):
             self._set_badge("badgeCompleted", "FINISHED")
         elif ws == "planned" and api_status == "NOT_YET_RELEASED":
             self._set_badge("badgeUpcoming", "UPCOMING")
+        elif ws == "planned" and is_ended:
+            self._set_badge("badgeCompleted", "ENDED")
+        elif ws == "planned" and api_status == "RELEASING":
+            self._set_badge("badgeWatching", "AIRING")
         elif ws == "planned":
             self._set_badge("badgePlanned", "PLANNED")
         elif still_airing_behind:

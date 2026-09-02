@@ -251,6 +251,16 @@ class DetailPanel(QWidget):
         self.mark_all_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.mark_all_btn.clicked.connect(self._mark_all)
         ep_hdr.addWidget(self.mark_all_btn)
+
+        self.export_btn = QPushButton("Export ratings")
+        self.export_btn.setObjectName("secondaryBtn")
+        self.export_btn.setStyleSheet(
+            self.export_btn.styleSheet() + "font-size:11px;padding:4px 10px;"
+        )
+        self.export_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.export_btn.setVisible(False)
+        self.export_btn.clicked.connect(self._export_ratings)
+        ep_hdr.addWidget(self.export_btn)
         episodes_lay.addLayout(ep_hdr)
 
         # Episode list container
@@ -516,6 +526,7 @@ class DetailPanel(QWidget):
             w = self.ep_vbox.itemAt(i).widget()
             if w: w.setParent(None)
         self._ep_rows.clear()
+        self.export_btn.setVisible(False)
 
         aid      = anime["id"]
         total    = anime.get("total_episodes") or 0
@@ -543,6 +554,10 @@ class DetailPanel(QWidget):
 
         watched_data = {e["episode_num"]: e for e in self.db.get_episodes(aid)}
         ratings_data = {r["episode_num"]: r for r in self.db.get_ratings(aid)}
+        self.export_btn.setVisible(any(
+            ep_n > 0 and (r.get("score") or 0) > 0
+            for ep_n, r in ratings_data.items()
+        ))
 
         # Lock ALL episodes if anime hasn't aired yet
         api_status = (anime.get("status") or "").upper()
@@ -587,9 +602,10 @@ class DetailPanel(QWidget):
         return l
 
     def _on_ep_changed(self, aid: int):
-        # Update per-ep ratings average display
-        avg = self.db.get_average_rating(aid)
-        self.overall_rating.refresh_average(avg)
+        # Re-sync the overall rating widget with its actual saved value.
+        # (Per-episode ratings are separate and must not bleed into this.)
+        rating = self.db.get_overall_rating(aid)
+        self.overall_rating.refresh_average(rating)
         self.episode_changed.emit(aid)
 
     def _on_overall_rated(self, aid: int):
@@ -721,6 +737,12 @@ class DetailPanel(QWidget):
         self.stats_changed.emit()
         from ui.toast import Toast
         Toast.show(self.window(), f"'{name}' deleted.", kind="success")
+
+    def _export_ratings(self):
+        if not self._anime: return
+        from ui.episode_export import EpisodeExportDialog
+        dlg = EpisodeExportDialog(self.db, self._anime, parent=self)
+        dlg.exec()
 
     def _mark_all(self):
         if not self._anime: return
@@ -968,13 +990,19 @@ class _RatingWidget(QWidget):
 
     def load(self, anime_id: int, episode_num: int = 0):
         self._aid = anime_id
-        avg = self.db.get_average_rating(anime_id)
-        self.refresh_average(avg)
+        rating = self.db.get_overall_rating(anime_id)
+        self.refresh_average(rating)
 
-    def refresh_average(self, avg: Optional[float]):
-        if avg is not None:
-            self._cur = avg
-            self.avg_lbl.setText(f"avg {avg:.1f} / 6")
+    def refresh_average(self, rating: Optional[float]):
+        # NOTE: despite the name, this must be seeded from the user's actual
+        # saved overall rating (episode_num=0), never from a per-episode
+        # average - otherwise the stars pre-fill to a value the user never
+        # picked, and the first star they click gets read as "toggle off"
+        # instead of "set my rating".
+        if rating is not None:
+            self._cur = rating
+            label = RATING_LABELS.get(int(rating), "")
+            self.avg_lbl.setText(f"{rating:.1f} / 6  —  {label}" if label else f"{rating:.1f} / 6")
         else:
             self._cur = 0.0
             self.avg_lbl.setText("Not rated yet")
@@ -1017,7 +1045,11 @@ class _RatingWidget(QWidget):
         self._maybe_sync_to_anilist(val)
 
     def _maybe_sync_to_anilist(self, our_score: int):
-        """If logged into AniList, offer to sync the rating."""
+        """If logged into AniList, offer to sync the rating - but only for
+        anime the user has actually finished (fully watched + marked
+        Completed) or that they've placed in the Hall of Fame. A rating on
+        something still in progress isn't a verdict worth pushing to a
+        public list yet."""
         from core.anilist_auth import SCORE_MAP, get_anilist_auth
         auth = get_anilist_auth()
         if not auth.is_logged_in():
@@ -1026,6 +1058,16 @@ class _RatingWidget(QWidget):
         anime = self.db.get_anime_by_id(self._aid)
         if not anime or not anime.get("anilist_id"):
             return
+
+        total = anime.get("total_episodes") or 0
+        watched = self.db.get_watched_count(self._aid)
+        is_fully_completed = (
+            anime.get("watch_status") == "completed" and (not total or watched >= total)
+        )
+        from ui.hall_of_fame import _in_hof
+        if not (is_fully_completed or _in_hof(self.db, self._aid)):
+            return
+
         anilist_score = SCORE_MAP.get(our_score, our_score * 16)
         from PyQt6.QtWidgets import QMessageBox
         res = QMessageBox.question(
@@ -1036,14 +1078,26 @@ class _RatingWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if res == QMessageBox.StandardButton.Yes:
-            auth.score_synced.connect(
-                lambda _: self.avg_lbl.setText(
-                    self.avg_lbl.text() + "  ✓ Synced to AniList"
-                )
-            )
-            auth.score_failed.connect(
-                lambda e: QMessageBox.warning(self, "Sync Failed", e)
-            )
+            # Bound, self-disconnecting handlers - a plain toast/dialog only,
+            # never mutated into avg_lbl's text (that caused the label to
+            # grow unbounded and shift the panel's layout on every sync).
+            def _on_synced(_id, widget=self):
+                from ui.toast import Toast
+                Toast.show(widget.window(), "Rating synced to AniList.", kind="success")
+                try:
+                    auth.score_synced.disconnect(_on_synced)
+                except TypeError:
+                    pass
+
+            def _on_failed(err, widget=self):
+                QMessageBox.warning(widget, "Sync Failed", err)
+                try:
+                    auth.score_failed.disconnect(_on_failed)
+                except TypeError:
+                    pass
+
+            auth.score_synced.connect(_on_synced)
+            auth.score_failed.connect(_on_failed)
             auth.submit_score(anime["anilist_id"], our_score)
 
     def _render(self, score: float):

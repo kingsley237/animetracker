@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.database import DatabaseManager
+from ui.stat_strip import StatStrip
 
 # ── Color ramp — 5 levels, single-hue purple ─────────────────────────────────
 _LEVEL_COLORS = [
@@ -273,9 +274,9 @@ class HeatmapSection(QWidget):
         hdr = QHBoxLayout()
         hdr.setSpacing(10)
 
-        title = QLabel("WATCH ACTIVITY")
+        title = QLabel("Watch activity")
         title.setStyleSheet(
-            "font-size:10px;color:#3b4260;font-weight:700;letter-spacing:1.8px;"
+            "font-size:14px;color:#dde0ed;font-weight:700;background:transparent;"
         )
         hdr.addWidget(title)
         hdr.addStretch()
@@ -310,42 +311,11 @@ class HeatmapSection(QWidget):
         legend_row.addWidget(more_lbl)
         lay.addLayout(legend_row)
 
-        # ── Stats row: streak + total ─────────────────────────────────────
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(12)
-
-        self._streak_card = self._make_stat_card("–", "Day streak", "#fbbf24")
-        self._total_card  = self._make_stat_card("–", "Episodes this year", "#7c6af7")
-        self._busiest_card = self._make_stat_card("–", "Busiest day", "#34d399")
-
-        for card in (self._streak_card, self._total_card, self._busiest_card):
-            stats_row.addWidget(card)
-        stats_row.addStretch()
-        lay.addLayout(stats_row)
-
-    def _make_stat_card(self, value: str, label: str,
-                        color: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("statCard")
-        card.setFixedHeight(85)
-        card.setMinimumWidth(140)
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(14, 8, 14, 8)
-        cl.setSpacing(2)
-        val_lbl = QLabel(value)
-        val_lbl.setStyleSheet(
-            f"font-size:22px;font-weight:700;color:{color};"
-            "background:transparent;"
-        )
-        lbl_lbl = QLabel(label)
-        lbl_lbl.setStyleSheet(
-            "font-size:10px;color:#4a5070;font-weight:500;background:transparent;"
-        )
-        cl.addWidget(val_lbl)
-        cl.addWidget(lbl_lbl)
-        # Store val label for updates
-        card._val_lbl = val_lbl   # type: ignore[attr-defined]
-        return card
+        # ── Stat strip: streak + best streak + total + busiest day ────────
+        self._strip_container = QVBoxLayout()
+        self._strip_container.setContentsMargins(0, 0, 0, 0)
+        self._strip = None
+        lay.addLayout(self._strip_container)
 
     def refresh(self):
         """Reload data. Call whenever the stats page is shown."""
@@ -361,29 +331,35 @@ class HeatmapSection(QWidget):
         current_year = int(self._year_combo.currentText() or datetime.now().year)
         self._heatmap.set_year(current_year)
 
-        # Streak
-        streak = self.db.get_current_streak()
-        self._streak_card._val_lbl.setText(  # type: ignore[attr-defined]
-            str(streak) if streak else "0"
-        )
+        self._recompute_strip()
 
-        # Total this year
-        total = sum(self._heatmap._counts.values())
-        self._total_card._val_lbl.setText(str(total))  # type: ignore[attr-defined]
+    def _recompute_strip(self):
+        streak      = self.db.get_current_streak()
+        best_streak = self.db.get_longest_streak()
+        total       = sum(self._heatmap._counts.values())
 
-        # Busiest single day
         if self._heatmap._counts:
             best_ds    = max(self._heatmap._counts, key=self._heatmap._counts.get)
             best_count = self._heatmap._counts[best_ds]
             d          = datetime.strptime(best_ds, "%Y-%m-%d")
-            self._busiest_card._val_lbl.setText(  # type: ignore[attr-defined]
-                f"{best_count}ep · {d.strftime('%d %b')}"
-            )
+            busiest    = f"{best_count}ep · {d.strftime('%d %b')}"
         else:
-            self._busiest_card._val_lbl.setText("–")  # type: ignore[attr-defined]
+            busiest = "–"
+
+        if self._strip is not None:
+            self._strip.setParent(None)
+            self._strip.deleteLater()
+
+        self._strip = StatStrip([
+            (str(streak) if streak else "0", "Day streak",
+             f"best: {best_streak}" if best_streak > streak else None),
+            (str(best_streak), "Best-ever streak", None),
+            (str(total), "Episodes this year", None),
+            (busiest, "Busiest day", None),
+        ])
+        self._strip_container.addWidget(self._strip)
 
     def _on_year_changed(self, text: str):
         if text:
             self._heatmap.set_year(int(text))
-            total = sum(self._heatmap._counts.values())
-            self._total_card._val_lbl.setText(str(total))  # type: ignore[attr-defined]
+            self._recompute_strip()

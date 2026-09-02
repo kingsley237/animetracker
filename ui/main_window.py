@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.selected_anime_id: Optional[int] = None
         self._cards: Dict[int, AnimeCard] = {}
         self._dropped_id_map: Dict[int, int] = {}  # fake_id -> real dropped_id
+        self._pending_ep_refresh: Dict[int, float] = {}  # anime_id -> last refresh attempt (monotonic)
         self._current_filter = "all"
         self._search_query   = ""
         self._sort_by        = "release_date"
@@ -1115,10 +1116,39 @@ class MainWindow(QMainWindow):
         self._notification_timer.timeout.connect(self._scan_notifications)
         self._notification_timer.start(300_000)
         QTimer.singleShot(1800, self._scan_notifications)
+        QTimer.singleShot(1000, self._refresh_upcoming)
 
     def _tick(self):
-        for card in self._cards.values():
+        import time as _time
+        from datetime import datetime as _dt, timezone as _tz
+        now = int(_dt.now(_tz.utc).timestamp())
+        due_ids: List[int] = []
+        for anime_id, card in self._cards.items():
             card.tick_countdown()
+            next_at = card._next_ep_at
+            if next_at and next_at <= now:
+                last = self._pending_ep_refresh.get(anime_id, 0.0)
+                if _time.monotonic() - last > 60:
+                    self._pending_ep_refresh[anime_id] = _time.monotonic()
+                    due_ids.append(anime_id)
+        if due_ids:
+            self._refresh_episode_arrivals(due_ids)
+
+    def _refresh_episode_arrivals(self, anime_ids: List[int]):
+        """A countdown just hit zero - pull fresh data for that anime right
+        away instead of waiting for the next scheduled poll (up to 10 min
+        for Watching, 30 min for Planned), so the episode/status the user
+        sees updates the moment it's actually available."""
+        anilist_ids = []
+        for anime_id in anime_ids:
+            anime = self.db.get_anime_by_id(anime_id)
+            if anime and anime.get("anilist_id"):
+                anilist_ids.append(anime["anilist_id"])
+        if not anilist_ids:
+            return
+        worker = AiringRefreshWorker(anilist_ids)
+        worker.signals.result.connect(self._on_airing_refreshed)
+        run_worker(worker)
 
     def _refresh_airing(self):
         all_anime = self.db.get_all_anime(watch_status="watching")
@@ -1181,13 +1211,18 @@ class MainWindow(QMainWindow):
             anime = self.db.get_anime_by_anilist_id(anilist_id)
             if not anime:
                 continue
-            updates: Dict[str, Any] = {}
+            updates: Dict[str, Any] = {
+                "status": media.get("status", anime["status"]),
+            }
             nae = media.get("nextAiringEpisode")
             if nae:
                 updates["next_episode_at"]  = nae.get("airingAt")
                 updates["next_episode_num"] = nae.get("episode")
-                # If upcoming anime now has an airing date, it might have started
-                updates["status"] = media.get("status", anime["status"])
+            else:
+                # No next episode from AniList (e.g. show finished/cancelled) -
+                # clear any stale cached episode instead of leaving it stuck.
+                updates["next_episode_at"]  = None
+                updates["next_episode_num"] = None
             sd = media.get("startDate")
             if sd:
                 from core.api import format_air_date
