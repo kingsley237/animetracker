@@ -415,6 +415,15 @@ class DiscoverPage(QWidget):
             self.bar.setVisible(False)
             self.load_more_btn.setText("Load More")
             self.load_more_btn.setEnabled(True)
+            if not results and not append and page == 1:
+                # A blank first page usually means the fetch failed rather
+                # than AniList genuinely having zero matches — nudge the
+                # status monitor to check right away instead of waiting out
+                # its poll interval, so the "AniList is down" banner (if
+                # that's what's going on) shows up promptly.
+                monitor = getattr(self.window(), "_anilist_status_monitor", None)
+                if monitor is not None:
+                    monitor.force_check()
             self._on_data(results, append=append)
 
         w = Worker(work)

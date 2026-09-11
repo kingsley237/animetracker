@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self._setup_timers()
         self._load_library()
         self._check_connection()
+        self._check_anilist_status()
         self._check_for_updates()
         self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
@@ -466,6 +467,10 @@ class MainWindow(QMainWindow):
         self.conn_label = QLabel("⬤  Checking…")
         self.conn_label.setObjectName("connStatus")
         bar.addPermanentWidget(self.conn_label)
+        self.anilist_status_label = QLabel()
+        self.anilist_status_label.setObjectName("connStatus")
+        self.anilist_status_label.setVisible(False)
+        bar.addPermanentWidget(self.anilist_status_label)
         return bar
 
     def _close_detail_panel(self):
@@ -1349,6 +1354,43 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_offline_banner"):
             self._offline_banner.hide_offline()
         QTimer.singleShot(500, self._refresh_airing)
+        if hasattr(self, "_anilist_status_monitor"):
+            self._anilist_status_monitor.force_check()
+
+    # ── AniList API status ────────────────────────────────────────────────────
+
+    def _check_anilist_status(self):
+        from core.anilist_status import AniListStatusMonitor
+        self._anilist_status_monitor = AniListStatusMonitor(self)
+        self._anilist_status_monitor.checked.connect(self._on_anilist_checked)
+        self._anilist_status_monitor.api_down.connect(self._on_anilist_down)
+        self._anilist_status_monitor.api_up.connect(self._on_anilist_up)
+        self._anilist_status_monitor.start()
+
+    def _on_anilist_checked(self, is_up: bool, message: str):
+        self.anilist_status_label.setVisible(True)
+        if is_up:
+            self.anilist_status_label.setText("⬤  AniList OK")
+            self.anilist_status_label.setStyleSheet("color:#34d399;")
+        else:
+            self.anilist_status_label.setText("⬤  AniList down")
+            self.anilist_status_label.setStyleSheet("color:#fbbf24;")
+        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
+            self._api_status_banner.update_message(message)
+
+    def _on_anilist_down(self, message: str):
+        if not hasattr(self, "_api_status_banner"):
+            from ui.api_status_banner import ApiStatusBanner
+            self._api_status_banner = ApiStatusBanner(self.centralWidget())
+            self._api_status_banner.set_on_retry(
+                lambda: self._anilist_status_monitor.force_check()
+            )
+        self._api_status_banner.show_down(message)
+
+    def _on_anilist_up(self):
+        if hasattr(self, "_api_status_banner"):
+            self._api_status_banner.hide_down()
+        QTimer.singleShot(500, self._refresh_airing)
 
     # ── Resize ─────────────────────────────────────────────────────────────────
 
@@ -1364,6 +1406,8 @@ class MainWindow(QMainWindow):
             self.notification_banner._reposition()
         if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
             self._offline_banner.reposition()
+        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
+            self._api_status_banner.reposition()
 
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 
