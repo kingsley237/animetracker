@@ -25,6 +25,7 @@ Requirements (install once):
 
 Version is read automatically from core/updater.py — never change it here.
 """
+import os
 import subprocess
 import sys
 import shutil
@@ -47,6 +48,23 @@ def get_version() -> str:
         if line.startswith("APP_VERSION"):
             return line.split("=")[1].strip().strip('"').strip("'")
     return "0.0.0"
+
+
+def run_tests() -> bool:
+    """Safety net: never build a release from code that fails its tests."""
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        print("\nWARN  pytest not installed - run: pip install -r requirements-dev.txt")
+        print("      Refusing to build untested. Use --skip-tests to override.")
+        return False
+    print("\nRunning tests...")
+    rc = subprocess.call([sys.executable, "-m", "pytest", "-q"], cwd=str(ROOT))
+    if rc != 0:
+        print("\nFAIL  Tests failed - build aborted. Fix them (or --skip-tests).")
+        return False
+    print("OK  All tests passed")
+    return True
 
 
 def ensure_pyinstaller():
@@ -147,6 +165,75 @@ def zip_for_distribution(version: str):
     return zip_path
 
 
+INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Programs" / "Miroku"
+
+
+def _miroku_running() -> bool:
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq Miroku.exe", "/NH"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        return "Miroku.exe" in out
+    except Exception:
+        return False
+
+
+def _update_desktop_shortcut(exe: Path) -> None:
+    """Create/repair the Desktop shortcut so it points at the installed exe."""
+    ps = (
+        "$d=[Environment]::GetFolderPath('Desktop');"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Miroku.lnk'));"
+        f"$s.TargetPath='{exe}';"
+        f"$s.WorkingDirectory='{exe.parent}';"
+        f"$s.IconLocation='{exe},0';"
+        "$s.Save()"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                   check=True, timeout=30)
+
+
+def install_locally(version: str) -> None:
+    """Install the fresh build to %LOCALAPPDATA%\\Programs\\Miroku.
+
+    The Desktop shortcut points there, NOT at dist/, because clean()
+    wipes dist/ at the start of every build. The new build is staged
+    next to the install and swapped in, so a failed copy never leaves
+    a half-installed app behind.
+    """
+    if sys.platform != "win32":
+        return
+    src = DIST / "Miroku"
+    if not (src / "Miroku.exe").exists():
+        print("\nWARN  Skipping install - no exe in dist/Miroku.")
+        return
+    if _miroku_running():
+        print("\nWARN  Miroku is running - close it and re-run the build to install.")
+        print(f"      (The new build is still in {src})")
+        return
+
+    staging = INSTALL_DIR.with_name("Miroku.new")
+    backup = INSTALL_DIR.with_name("Miroku.old")
+    print(f"\nInstalling v{version} -> {INSTALL_DIR} ...")
+    for d in (staging, backup):
+        if d.exists():
+            shutil.rmtree(d)
+    shutil.copytree(src, staging)
+    if INSTALL_DIR.exists():
+        INSTALL_DIR.rename(backup)
+    try:
+        staging.rename(INSTALL_DIR)
+    except Exception:
+        if backup.exists() and not INSTALL_DIR.exists():
+            backup.rename(INSTALL_DIR)   # put the previous version back
+        raise
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+
+    _update_desktop_shortcut(INSTALL_DIR / "Miroku.exe")
+    print(f"  OK  Installed. Desktop shortcut -> {INSTALL_DIR / 'Miroku.exe'}")
+
+
 def report(version: str):
     exe_name = "Miroku.exe" if sys.platform == "win32" else "Miroku"
     exe      = DIST / "Miroku" / exe_name
@@ -176,13 +263,19 @@ def report(version: str):
 
 
 if __name__ == "__main__":
-    do_zip  = "--zip" in sys.argv
+    do_zip     = "--zip" in sys.argv
+    do_install = "--no-install" not in sys.argv
+    do_tests   = "--skip-tests" not in sys.argv
     version = get_version()
     print(f"\nMiroku v{version} — Build Script")
     print("=" * 52)
+    if do_tests and not run_tests():
+        sys.exit(1)
     ensure_pyinstaller()
     clean()
     build(version)
     if do_zip:
         zip_for_distribution(version)
     report(version)
+    if do_install:
+        install_locally(version)

@@ -450,6 +450,60 @@ def get_sequels(anilist_ids: List[int], batch: int = 8) -> Dict[int, List[Dict]]
     return results
 
 
+_METADATA_FIELDS = """
+    id
+    idMal
+    title { romaji english native }
+    coverImage { extraLarge large medium color }
+    bannerImage
+    description(asHtml: false)
+    status
+    format
+    source
+    episodes
+    duration
+    season
+    seasonYear
+    startDate { year month day }
+    endDate { year month day }
+    nextAiringEpisode { airingAt episode }
+    trailer { id site thumbnail }
+    averageScore
+    popularity
+    genres
+    siteUrl
+    studios(isMain: true) { nodes { name } }
+    characters(sort: [ROLE, RELEVANCE], perPage: 8) {
+        edges { role node { name { full } image { medium } } }
+    }
+"""
+
+
+def get_metadata_batch(anilist_ids: List[int], batch: int = 5) -> Dict[int, Optional[Dict]]:
+    """Full metadata (art, synopsis, trailer, dates, characters...) for many
+    ids at once. Missing keys mean the request failed - callers must not
+    treat that as "the data was removed"."""
+    results: Dict[int, Optional[Dict]] = {}
+    ids = [int(a) for a in anilist_ids if a]
+    for i in range(0, len(ids), batch):
+        chunk = ids[i:i + batch]
+        parts, variables = [], {}
+        for j, aid in enumerate(chunk):
+            parts.append(f"a{j}: Media(id: $id{j}, type: ANIME) {{ {_METADATA_FIELDS} }}")
+            variables[f"id{j}"] = aid
+        var_decls = ", ".join(f"$id{j}: Int" for j in range(len(chunk)))
+        data = _post(f"query ({var_decls}) {{ {' '.join(parts)} }}", variables, timeout=20)
+        if data:
+            for j, aid in enumerate(chunk):
+                media = data.get(f"a{j}")
+                if media:
+                    results[aid] = media
+                    _cache_put(f"id:{aid}", {**(_cache_get(f"id:{aid}") or {}), **media})
+        if i + batch < len(ids):
+            time.sleep(1.0)
+    return results
+
+
 def check_connection() -> tuple[bool, str, float]:
     """Check AniList connectivity and measure latency."""
     import socket

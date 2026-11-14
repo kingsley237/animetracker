@@ -320,6 +320,26 @@ class SettingsDialog(QDialog):
         dl.addWidget(self._helper_text(
             "Sequels of completed anime are always announced. Checked every 6 hours."
         ))
+
+        arch_row = QHBoxLayout()
+        arch_row.addWidget(QLabel("Auto-archive completed anime"))
+        arch_row.addStretch()
+        self.archive_combo = QComboBox()
+        _arch_opts = [("Never", 0), ("After 3 months", 90),
+                      ("After 6 months", 182), ("After 1 year", 365)]
+        for text, days in _arch_opts:
+            self.archive_combo.addItem(text, days)
+        _cur_days = int(self.settings.value("auto_archive_days", 0) or 0)
+        self.archive_combo.setCurrentIndex(
+            next((i for i, (_t, d) in enumerate(_arch_opts) if d == _cur_days), 0))
+        self.archive_combo.currentIndexChanged.connect(
+            lambda i: self.settings.setValue("auto_archive_days", self.archive_combo.itemData(i))
+        )
+        arch_row.addWidget(self.archive_combo)
+        dl.addLayout(arch_row)
+        dl.addWidget(self._helper_text(
+            "Archived shows leave the Completed list but stay in stats, search and Hall of Fame."
+        ))
         lay.addWidget(display)
 
         cache, cl = self._card("Image cache")

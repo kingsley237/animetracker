@@ -96,7 +96,11 @@ def main():
 
     # Stage 4 — Build window
     splash.set_status("Building the interface…", progress=82)
-    window = MainWindow(db, demo_new_season="--demo-new-season" in sys.argv)
+    window = MainWindow(
+        db,
+        demo_new_season="--demo-new-season" in sys.argv,
+        demo_planned="--demo-planned" in sys.argv,
+    )
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     if startup_screen:

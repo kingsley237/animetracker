@@ -35,7 +35,14 @@ class _ToastManager:
             cls._instance = cls()
         return cls._instance
 
+    def _prune(self) -> None:
+        """Drop toasts whose window was closed before they faded out
+        (they were destroyed with it and can't be touched any more)."""
+        from PyQt6 import sip
+        self._toasts[:] = [t for t in self._toasts if not sip.isdeleted(t)]
+
     def add(self, toast: Toast) -> None:
+        self._prune()
         if len(self._toasts) >= _MAX_TOASTS:
             self._toasts[0]._dismiss_immediate()
         self._toasts.append(toast)
@@ -47,6 +54,7 @@ class _ToastManager:
         self._reposition_all()
 
     def _reposition_all(self) -> None:
+        self._prune()
         for i, t in enumerate(self._toasts):
             p = t.parent()
             if p is None:

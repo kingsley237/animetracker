@@ -16,6 +16,7 @@ class NotificationBanner(QFrame):
     move_to_watching = pyqtSignal(int)
     remind_later = pyqtSignal(int)
     dismissed = pyqtSignal(int)
+    play_trailer = pyqtSignal(str, str, str)   # trailer id, site, title
 
     _ACCENTS = {
         "episode_aired": ("#fbbf24", "#201804"),
@@ -23,6 +24,7 @@ class NotificationBanner(QFrame):
         "planned_ended": ("#9da5c0", "#151821"),
         "upcoming_date": ("#a594f9", "#15102c"),
         "upcoming_trailer": ("#38bdf8", "#071826"),
+        "upcoming_episodes": ("#a594f9", "#15102c"),
         "new_season": ("#f87171", "#240909"),
         "auto_completed": ("#34d399", "#071f17"),
         "auto_planned": ("#9da5c0", "#151821"),
@@ -170,6 +172,9 @@ class NotificationBanner(QFrame):
         elif kind == "planned_started":
             actions.append(("Move to Watching", lambda: self._move_to_watching(aid), True))
             actions.append(("Open", lambda: self._open(aid), False))
+        elif kind == "upcoming_trailer" and payload.get("trailer_id"):
+            actions.append(("▶  Watch Trailer", lambda: self._play(payload), True))
+            actions.append(("Open", lambda: self._open(aid), False))
         else:
             actions.append(("View", lambda: self._open(aid), True))
 
@@ -183,7 +188,8 @@ class NotificationBanner(QFrame):
             "planned_started": "NOW AIRING",
             "planned_ended": "STATUS CHANGE",
             "upcoming_date": "RELEASE DATE",
-            "upcoming_trailer": "TRAILER",
+            "upcoming_trailer": "NEW TRAILER",
+            "upcoming_episodes": "EPISODES",
             "new_season": "NEW SEASON",
             "auto_completed": "COMPLETED",
             "auto_planned": "MOVED TO PLANNED",
@@ -192,6 +198,14 @@ class NotificationBanner(QFrame):
 
     def _open(self, anime_id: int):
         self.open_anime.emit(anime_id)
+        self._dismiss_current()
+
+    def _play(self, payload: Dict):
+        self.play_trailer.emit(
+            str(payload.get("trailer_id") or ""),
+            str(payload.get("trailer_site") or "youtube"),
+            str(payload.get("anime_title") or ""),
+        )
         self._dismiss_current()
 
     def _mark_watched(self, anime_id: int, episode: int):

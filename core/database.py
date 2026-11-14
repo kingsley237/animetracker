@@ -81,11 +81,37 @@ class DatabaseManager:
         # Safe column additions — run every startup, ignored if column already exists
         for col_sql in [
             "ALTER TABLE anime ADD COLUMN hof_only INTEGER DEFAULT 0",
+            # Rich metadata kept fresh by core.metadata_sync
+            "ALTER TABLE anime ADD COLUMN format TEXT",
+            "ALTER TABLE anime ADD COLUMN source TEXT",
+            "ALTER TABLE anime ADD COLUMN duration INTEGER",
+            "ALTER TABLE anime ADD COLUMN characters TEXT DEFAULT '[]'",
+            "ALTER TABLE anime ADD COLUMN trailer_thumb TEXT",
+            "ALTER TABLE anime ADD COLUMN site_url TEXT",
+            "ALTER TABLE anime ADD COLUMN cover_color TEXT",
+            "ALTER TABLE anime ADD COLUMN start_ts INTEGER",
+            "ALTER TABLE anime ADD COLUMN start_exact INTEGER DEFAULT 0",
+            "ALTER TABLE anime ADD COLUMN meta_synced_at INTEGER",
+            "ALTER TABLE anime ADD COLUMN mal_id INTEGER",
+            "ALTER TABLE anime ADD COLUMN videos TEXT DEFAULT '[]'",
+            "ALTER TABLE anime ADD COLUMN videos_synced_at INTEGER",
+            "ALTER TABLE anime ADD COLUMN sequel_info TEXT",
+            # Completed-list housekeeping
+            "ALTER TABLE anime ADD COLUMN completed_at INTEGER",
+            "ALTER TABLE anime ADD COLUMN archived INTEGER DEFAULT 0",
+            "ALTER TABLE anime ADD COLUMN archived_at INTEGER",
         ]:
             try:
                 conn.execute(col_sql)
             except Exception:
                 pass   # column already exists
+        self._ensure_rewatch_table(conn)
+        # Backfill when existing Completed anime were finished: best signal
+        # is the last episode the user marked, then when it was added.
+        conn.execute(
+            "UPDATE anime SET completed_at = COALESCE(last_watched_at, date_added) "
+            "WHERE watch_status='completed' AND completed_at IS NULL"
+        )
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notifications (
@@ -269,10 +295,11 @@ class DatabaseManager:
         now = int(datetime.now().timestamp())
         data.setdefault("date_added", now)
         data.setdefault("last_updated", now)
-        if "genres" in data and isinstance(data["genres"], list):
-            data["genres"] = json.dumps(data["genres"])
-        if "studios" in data and isinstance(data["studios"], list):
-            data["studios"] = json.dumps(data["studios"])
+        if data.get("watch_status") == "completed":
+            data.setdefault("completed_at", now)
+        for key in ("genres", "studios", "characters"):
+            if key in data and isinstance(data[key], list):
+                data[key] = json.dumps(data[key])
 
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
@@ -287,12 +314,17 @@ class DatabaseManager:
         self,
         watch_status: Optional[str] = None,
         sort_by: str = "release_date",
+        archived: Optional[bool] = None,
     ) -> List[Dict]:
+        """`archived`: None = everything, False = hide archived, True = only
+        archived. Background scans keep the default so archived shows still
+        get sequel/metadata checks."""
         ORDER = {
             "release_date": "COALESCE(next_episode_at, 99999999999) ASC, season_year ASC, romaji_title ASC",
             "title":        "romaji_title ASC",
             "score":        "average_score DESC, romaji_title ASC",
             "date_added":   "date_added DESC",
+            "completed_at": "COALESCE(completed_at, 0) DESC, romaji_title ASC",
             "rating":       "romaji_title ASC",
         }.get(sort_by, "COALESCE(next_episode_at, 99999999999) ASC, romaji_title ASC")
         conn = self._get_conn()
@@ -302,6 +334,8 @@ class DatabaseManager:
         else:
             where = "WHERE hof_only=0"
             params = ()
+        if archived is not None:
+            where += " AND COALESCE(archived,0)=" + ("1" if archived else "0")
         rows = conn.execute(
             f"SELECT * FROM anime {where} ORDER BY {ORDER}", params
         ).fetchall()
@@ -314,6 +348,124 @@ class DatabaseManager:
                 return r[0] if r and r[0] else -1
             result.sort(key=_avg, reverse=True)
         return result
+
+    # ─── Rewatches ────────────────────────────────────────────────────────────
+    # A rewatch has its own episode counter so the original watch history
+    # (episodes, per-episode ratings, dates) is never touched.
+
+    def _ensure_rewatch_table(self, conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rewatches (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id    INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                number      INTEGER NOT NULL,
+                started_at  INTEGER,
+                finished_at INTEGER,
+                progress    INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rewatches_anime ON rewatches(anime_id)")
+
+    def get_rewatches(self, anime_id: int) -> List[Dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM rewatches WHERE anime_id=? ORDER BY number", (anime_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_active_rewatch(self, anime_id: int) -> Optional[Dict]:
+        row = self._get_conn().execute(
+            "SELECT * FROM rewatches WHERE anime_id=? AND finished_at IS NULL "
+            "ORDER BY number DESC LIMIT 1", (anime_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_active_rewatch_ids(self) -> List[int]:
+        rows = self._get_conn().execute(
+            "SELECT DISTINCT anime_id FROM rewatches WHERE finished_at IS NULL"
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def rewatch_count(self, anime_id: int) -> int:
+        row = self._get_conn().execute(
+            "SELECT COUNT(*) FROM rewatches WHERE anime_id=? AND finished_at IS NOT NULL",
+            (anime_id,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def start_rewatch(self, anime_id: int) -> Optional[int]:
+        """Start a rewatch (no-op if one is already running). Returns its id."""
+        active = self.get_active_rewatch(anime_id)
+        if active:
+            return active["id"]
+        conn = self._get_conn()
+        number = self.rewatch_count(anime_id) + 1
+        cur = conn.execute(
+            "INSERT INTO rewatches (anime_id, number, started_at, progress) VALUES (?,?,?,0)",
+            (anime_id, number, int(datetime.now().timestamp())))
+        conn.commit()
+        return cur.lastrowid
+
+    def set_rewatch_progress(self, rewatch_id: int, progress: int):
+        conn = self._get_conn()
+        conn.execute("UPDATE rewatches SET progress=? WHERE id=?",
+                     (max(0, int(progress)), rewatch_id))
+        conn.commit()
+
+    def finish_rewatch(self, rewatch_id: int, progress: Optional[int] = None):
+        conn = self._get_conn()
+        if progress is not None:
+            conn.execute("UPDATE rewatches SET progress=? WHERE id=?", (progress, rewatch_id))
+        conn.execute("UPDATE rewatches SET finished_at=? WHERE id=?",
+                     (int(datetime.now().timestamp()), rewatch_id))
+        conn.commit()
+
+    def abandon_rewatch(self, rewatch_id: int):
+        """Stopping a rewatch discards it (numbering stays contiguous)."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM rewatches WHERE id=? AND finished_at IS NULL", (rewatch_id,))
+        conn.commit()
+
+    # ─── Completed housekeeping (archive) ─────────────────────────────────────
+
+    def set_archived(self, anime_ids: List[int], archived: bool) -> int:
+        """Archive/unarchive Completed anime. Archived shows leave the
+        everyday Completed view but stay in stats, search and scans."""
+        ids = [int(i) for i in anime_ids if i and int(i) > 0]
+        if not ids:
+            return 0
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        q = ",".join("?" * len(ids))
+        cur = conn.execute(
+            f"UPDATE anime SET archived=?, archived_at=? "
+            f"WHERE id IN ({q}) AND watch_status='completed'",
+            [1 if archived else 0, now if archived else None, *ids],
+        )
+        conn.commit()
+        return cur.rowcount
+
+    def count_archived(self) -> int:
+        row = self._get_conn().execute(
+            "SELECT COUNT(*) FROM anime WHERE watch_status='completed' "
+            "AND COALESCE(archived,0)=1 AND hof_only=0"
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def auto_archive_completed(self, older_than_days: int) -> int:
+        """Archive Completed anime finished more than N days ago."""
+        if not older_than_days or older_than_days <= 0:
+            return 0
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        cutoff = now - older_than_days * 86400
+        cur = conn.execute(
+            "UPDATE anime SET archived=1, archived_at=? "
+            "WHERE watch_status='completed' AND COALESCE(archived,0)=0 "
+            "AND hof_only=0 AND COALESCE(completed_at, date_added, 0) < ?",
+            (now, cutoff),
+        )
+        conn.commit()
+        return cur.rowcount
 
     def delete_dropped_anime(self, dropped_id: int):
         conn = self._get_conn()
@@ -334,11 +486,24 @@ class DatabaseManager:
 
     def update_anime(self, anime_id: int, data: Dict[str, Any]):
         conn = self._get_conn()
-        data["last_updated"] = int(datetime.now().timestamp())
-        if "genres" in data and isinstance(data["genres"], list):
-            data["genres"] = json.dumps(data["genres"])
-        if "studios" in data and isinstance(data["studios"], list):
-            data["studios"] = json.dumps(data["studios"])
+        now = int(datetime.now().timestamp())
+        data["last_updated"] = now
+        for key in ("genres", "studios", "characters", "videos"):
+            if key in data and isinstance(data[key], list):
+                data[key] = json.dumps(data[key])
+        # Track when something was completed (for grouping / auto-archive);
+        # leaving Completed un-archives it.
+        if "watch_status" in data:
+            row = conn.execute(
+                "SELECT watch_status FROM anime WHERE id=?", (anime_id,)
+            ).fetchone()
+            prev = row["watch_status"] if row else None
+            if data["watch_status"] == "completed" and prev != "completed":
+                data.setdefault("completed_at", now)
+                data.setdefault("archived", 0)
+            elif data["watch_status"] != "completed":
+                data.setdefault("archived", 0)
+                data.setdefault("archived_at", None)
         sets = ", ".join(f"{k}=?" for k in data)
         conn.execute(
             f"UPDATE anime SET {sets} WHERE id=?", list(data.values()) + [anime_id]
@@ -382,7 +547,7 @@ class DatabaseManager:
         return [self._hydrate_anime(dict(r)) for r in rows]
 
     def _hydrate_anime(self, data: Dict) -> Dict:
-        for key in ("genres", "studios"):
+        for key in ("genres", "studios", "characters", "videos"):
             if isinstance(data.get(key), str):
                 try:
                     data[key] = json.loads(data[key])
@@ -731,6 +896,12 @@ class DatabaseManager:
                     d["genres"] = []
             result.append(d)
         return result
+
+    def update_drop_reason(self, dropped_id: int, reason: str):
+        conn = self._get_conn()
+        conn.execute("UPDATE dropped_anime SET drop_reason=? WHERE id=?",
+                     ((reason or "").strip(), dropped_id))
+        conn.commit()
 
     def restore_dropped(self, dropped_id: int) -> Optional[int]:
         conn = self._get_conn()

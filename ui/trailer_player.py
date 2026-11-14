@@ -113,17 +113,24 @@ class TrailerDialog(QDialog):
     VIDEO_H = 540
 
     def __init__(self, trailer_id: str, trailer_site: str,
-                 anime_title: str, parent=None):
+                 anime_title: str, parent=None, playlist=None, index: int = 0):
         super().__init__(parent)
-        self._tid = trailer_id
-        self._tsite = trailer_site.lower()
+        # Playlist mode: [{id, site, title, kind, thumb}], switch in place.
+        self._playlist = [v for v in (playlist or []) if v.get("id")]
+        if not self._playlist:
+            self._playlist = [{"id": trailer_id, "site": trailer_site, "title": "Trailer"}]
+        self._index = max(0, min(index, len(self._playlist) - 1))
+        cur = self._playlist[self._index]
+        self._tid = cur["id"]
+        self._tsite = (cur.get("site") or "youtube").lower()
         self._title = anime_title or "Trailer"
+        self._rows = []
         self._view = None
         self._stopping = False
         self._loaded = False
         self._fs_btn = None
 
-        self.setWindowTitle(f"Trailer — {self._title}")
+        self.setWindowTitle(f"Trailers — {self._title}")
         self.setModal(True)
         self.setStyleSheet("background:#0a0c10;")
         self.resize(self.VIDEO_W, self.VIDEO_H + 48)
@@ -131,6 +138,8 @@ class TrailerDialog(QDialog):
 
         self._build()
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._exit_fullscreen)
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, lambda: self._step(1))
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, lambda: self._step(-1))
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -152,7 +161,13 @@ class TrailerDialog(QDialog):
         else:
             self._build_fallback()
 
-        lay.addWidget(self._stack, stretch=1)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._stack, stretch=1)
+        if len(self._playlist) > 1:
+            body.addWidget(self._build_sidebar())
+        lay.addLayout(body, stretch=1)
         lay.addWidget(self._bottom_bar())
 
     def _build_player(self):
@@ -222,6 +237,69 @@ class TrailerDialog(QDialog):
         self._stack.addWidget(ph)
         self._stack.setCurrentWidget(ph)
 
+    # ── Playlist ──────────────────────────────────────────────────────────
+
+    def _build_sidebar(self) -> QWidget:
+        from PyQt6.QtWidgets import QScrollArea, QFrame
+        side = QWidget()
+        side.setFixedWidth(300)
+        side.setStyleSheet("background:#0f1118;border-left:1px solid #1a1d28;")
+        v = QVBoxLayout(side)
+        v.setContentsMargins(0, 12, 0, 0)
+        v.setSpacing(6)
+        head = QLabel(f"UP NEXT  ·  {len(self._playlist)} videos")
+        head.setStyleSheet("color:#5c6482;font-size:10px;font-weight:700;"
+                           "letter-spacing:1.5px;padding:0 14px;border:none;")
+        v.addWidget(head)
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QFrame.Shape.NoFrame)
+        sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sa.setStyleSheet("QScrollArea{border:none;background:transparent;}")
+        inner = QWidget()
+        inner.setStyleSheet("border:none;")
+        il = QVBoxLayout(inner)
+        il.setContentsMargins(8, 4, 8, 12)
+        il.setSpacing(4)
+        for i, item in enumerate(self._playlist):
+            row = _PlaylistRow(i, item)
+            row.clicked.connect(self._select)
+            il.addWidget(row)
+            self._rows.append(row)
+        il.addStretch()
+        sa.setWidget(inner)
+        v.addWidget(sa, 1)
+        self._side_scroll = sa
+        self._mark_current()
+        return side
+
+    def _mark_current(self):
+        for r in self._rows:
+            r.set_current(r.index == self._index)
+        if self._rows and hasattr(self, "_side_scroll"):
+            self._side_scroll.ensureWidgetVisible(self._rows[self._index], 0, 40)
+        if getattr(self, "_counter", None) is not None:
+            cur = self._playlist[self._index]
+            self._counter.setText(f"{cur.get('title') or 'Trailer'}   ·   {self._index + 1} / {len(self._playlist)}")
+
+    def _select(self, index: int):
+        if index == self._index and self._loaded:
+            return
+        self._index = index
+        cur = self._playlist[index]
+        self._tid = cur["id"]
+        self._tsite = (cur.get("site") or "youtube").lower()
+        self._loaded = False
+        if self._view is not None:
+            self._stack.setCurrentWidget(self._loading)
+            self._loading.setText("Loading…")
+        self._mark_current()
+        self._load_trailer()
+
+    def _step(self, delta: int):
+        if len(self._playlist) > 1:
+            self._select((self._index + delta) % len(self._playlist))
+
     def _load_trailer(self):
         if self._view is None or self._loaded:
             return
@@ -238,7 +316,8 @@ class TrailerDialog(QDialog):
         screen = parent_window.screen() if parent_window else QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
-            w = min(self.VIDEO_W, avail.width() - 80)
+            extra = 300 if len(self._playlist) > 1 else 0
+            w = min(self.VIDEO_W + extra, avail.width() - 80)
             h = min(self.VIDEO_H + 48, avail.height() - 80)
             self.resize(w, h)
             self.move(
@@ -270,6 +349,25 @@ class TrailerDialog(QDialog):
         lbl = QLabel(self._title)
         lbl.setStyleSheet("font-size:12px;color:#6b7280;background:transparent;")
         row.addWidget(lbl)
+        self._counter = None
+        if len(self._playlist) > 1:
+            nav = "QPushButton{background:#1a1d28;color:#c7cbd9;border:1px solid #2a2d42;" \
+                  "border-radius:6px;font-size:13px;font-weight:700;padding:3px 10px;}" \
+                  "QPushButton:hover{background:#4b3fa8;border-color:#4b3fa8;color:#fff;}"
+            prev = QPushButton("‹")
+            prev.setToolTip("Previous video (←)")
+            nxt = QPushButton("›")
+            nxt.setToolTip("Next video (→)")
+            for b, d in ((prev, -1), (nxt, 1)):
+                b.setStyleSheet(nav)
+                b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                b.clicked.connect(lambda _=False, d=d: self._step(d))
+            row.addSpacing(8)
+            row.addWidget(prev)
+            row.addWidget(nxt)
+            self._counter = QLabel()
+            self._counter.setStyleSheet("font-size:12px;color:#c4b8ff;font-weight:600;background:transparent;")
+            row.addWidget(self._counter)
         row.addStretch()
 
         ext = QPushButton(
@@ -283,6 +381,8 @@ class TrailerDialog(QDialog):
         ext.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         ext.clicked.connect(lambda: webbrowser.open(_watch_url(self._tid, self._tsite)))
         row.addWidget(ext)
+        if self._counter is not None:
+            self._mark_current()
 
         self._fs_btn = QPushButton("Fullscreen")
         self._fs_btn.setStyleSheet(
@@ -351,10 +451,93 @@ class TrailerDialog(QDialog):
         super().done(result)
 
 
+class _PlaylistRow(QWidget):
+    """Thumbnail + title row in the Up Next list."""
+    from PyQt6.QtCore import pyqtSignal as _sig
+    clicked = _sig(int)
+
+    def __init__(self, index: int, item: dict, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(6, 6, 6, 6)
+        h.setSpacing(10)
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(112, 63)
+        self.thumb.setStyleSheet("background:#1a1d28;border-radius:6px;border:none;")
+        h.addWidget(self.thumb)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        kind = {"music": "THEME", "promo": "PROMO"}.get(item.get("kind"), "VIDEO")
+        k = QLabel(kind)
+        k.setStyleSheet("color:#7c6af7;font-size:9px;font-weight:800;letter-spacing:1px;"
+                        "background:transparent;border:none;")
+        t = QLabel(item.get("title") or "Video")
+        t.setWordWrap(True)
+        t.setStyleSheet("color:#e2e4ec;font-size:11px;font-weight:600;background:transparent;border:none;")
+        col.addWidget(k)
+        col.addWidget(t)
+        if item.get("artist"):
+            a = QLabel(item["artist"])
+            a.setStyleSheet("color:#7b84a3;font-size:10px;background:transparent;border:none;")
+            col.addWidget(a)
+        col.addStretch()
+        h.addLayout(col, 1)
+        self.set_current(False)
+        thumb = item.get("thumb")
+        if thumb:
+            from workers.workers import ImageWorker, run_worker
+            w = ImageWorker(thumb, index)
+            w.signals.result.connect(self._on_img)
+            run_worker(w)
+
+    def _on_img(self, result):
+        try:
+            _i, _s, path = result
+        except Exception:
+            return
+        if not path:
+            return
+        from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
+        px = QPixmap(str(path))
+        if px.isNull():
+            return
+        W, H = self.thumb.width(), self.thumb.height()
+        sc = px.scaled(W, H, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                       Qt.TransformationMode.SmoothTransformation)
+        out = QPixmap(W, H)
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, W, H, 6, 6)
+        p.setClipPath(path)
+        p.drawPixmap(0, 0, sc, (sc.width() - W) // 2, (sc.height() - H) // 2, W, H)
+        p.end()
+        try:
+            self.thumb.setPixmap(out)
+        except RuntimeError:
+            pass
+
+    def set_current(self, on: bool):
+        self.setStyleSheet(
+            "_PlaylistRow{background:#1e1a44;border:1px solid #4b3fa8;border-radius:8px;}"
+            if on else
+            "_PlaylistRow{background:transparent;border:1px solid transparent;border-radius:8px;}"
+            "_PlaylistRow:hover{background:#151827;}")
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.index)
+
+
 TrailerPlayer = TrailerDialog
 
 
 def show_trailer(trailer_id: str, trailer_site: str,
-                 anime_title: str, parent=None) -> None:
-    dlg = TrailerDialog(trailer_id, trailer_site, anime_title, parent)
+                 anime_title: str, parent=None, playlist=None, index: int = 0) -> None:
+    dlg = TrailerDialog(trailer_id, trailer_site, anime_title, parent,
+                        playlist=playlist, index=index)
     dlg.exec()
