@@ -92,6 +92,10 @@ class DatabaseManager:
             "ALTER TABLE anime ADD COLUMN start_ts INTEGER",
             "ALTER TABLE anime ADD COLUMN start_exact INTEGER DEFAULT 0",
             "ALTER TABLE anime ADD COLUMN meta_synced_at INTEGER",
+            "ALTER TABLE anime ADD COLUMN mal_id INTEGER",
+            "ALTER TABLE anime ADD COLUMN videos TEXT DEFAULT '[]'",
+            "ALTER TABLE anime ADD COLUMN videos_synced_at INTEGER",
+            "ALTER TABLE anime ADD COLUMN sequel_info TEXT",
             # Completed-list housekeeping
             "ALTER TABLE anime ADD COLUMN completed_at INTEGER",
             "ALTER TABLE anime ADD COLUMN archived INTEGER DEFAULT 0",
@@ -407,7 +411,7 @@ class DatabaseManager:
         conn = self._get_conn()
         now = int(datetime.now().timestamp())
         data["last_updated"] = now
-        for key in ("genres", "studios", "characters"):
+        for key in ("genres", "studios", "characters", "videos"):
             if key in data and isinstance(data[key], list):
                 data[key] = json.dumps(data[key])
         # Track when something was completed (for grouping / auto-archive);
@@ -466,7 +470,7 @@ class DatabaseManager:
         return [self._hydrate_anime(dict(r)) for r in rows]
 
     def _hydrate_anime(self, data: Dict) -> Dict:
-        for key in ("genres", "studios", "characters"):
+        for key in ("genres", "studios", "characters", "videos"):
             if isinstance(data.get(key), str):
                 try:
                     data[key] = json.loads(data[key])
@@ -815,6 +819,12 @@ class DatabaseManager:
                     d["genres"] = []
             result.append(d)
         return result
+
+    def update_drop_reason(self, dropped_id: int, reason: str):
+        conn = self._get_conn()
+        conn.execute("UPDATE dropped_anime SET drop_reason=? WHERE id=?",
+                     ((reason or "").strip(), dropped_id))
+        conn.commit()
 
     def restore_dropped(self, dropped_id: int) -> Optional[int]:
         conn = self._get_conn()

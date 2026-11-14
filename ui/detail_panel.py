@@ -56,6 +56,10 @@ class DetailPanel(QWidget):
     close_requested  = pyqtSignal()
     links_changed    = pyqtSignal()
     archive_changed  = pyqtSignal(int)
+    open_hall_of_fame = pyqtSignal()
+    open_sequel      = pyqtSignal(int)
+    dropped_restored = pyqtSignal(int, str)
+    dropped_removed  = pyqtSignal()
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -90,11 +94,10 @@ class DetailPanel(QWidget):
         top_bar.addWidget(x)
         outer.addLayout(top_bar)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # Content is pinned to the visible width: nothing scrolls sideways.
+        from ui.layout_helpers import FitWidthScroll, FlowLayout
+        scroll = FitWidthScroll()
+        self._scroll = scroll
 
         body = QWidget()
         self._lay = QVBoxLayout(body)
@@ -183,12 +186,24 @@ class DetailPanel(QWidget):
         self.planned_top.setVisible(False)
         self._lay.addWidget(self.planned_top)
 
+        # Completed: finished / verdict / journey / season curve
+        from ui.completed_details import CompletedTop, CompletedBottom
+        self.completed_top = CompletedTop(self.db)
+        self.completed_top.rated.connect(lambda aid: self.stats_changed.emit())
+        self.completed_top.setVisible(False)
+        self._lay.addWidget(self.completed_top)
+
+        # Dropped: where you stopped / why / since you left / decide
+        from ui.dropped_details import DroppedSection
+        self.dropped_section = DroppedSection(self.db)
+        self.dropped_section.restored.connect(self.dropped_restored.emit)
+        self.dropped_section.removed.connect(self.dropped_removed.emit)
+        self.dropped_section.setVisible(False)
+        self._lay.addWidget(self.dropped_section)
+
         # Genres
         self.genres_w = QWidget()
-        self.genres_l = QHBoxLayout(self.genres_w)
-        self.genres_l.setContentsMargins(0, 0, 0, 0)
-        self.genres_l.setSpacing(6)
-        self.genres_l.addStretch()
+        self.genres_l = FlowLayout(self.genres_w, h_spacing=6, v_spacing=6)
         self._lay.addWidget(self.genres_w)
 
         # Synopsis
@@ -208,8 +223,16 @@ class DetailPanel(QWidget):
         self.planned_bottom.setVisible(False)
         self._lay.addWidget(self.planned_bottom)
 
+        # Completed: Hall of Fame / what's next / themes
+        self.completed_bottom = CompletedBottom(self.db)
+        self.completed_bottom.open_hall_of_fame.connect(self.open_hall_of_fame.emit)
+        self.completed_bottom.open_sequel.connect(self.open_sequel.emit)
+        self.completed_bottom.setVisible(False)
+        self._lay.addWidget(self.completed_bottom)
+
         # Quick links (streaming, Telegram, etc.)
         links_card = self._detail_card("Quick links")
+        self._links_card = links_card
         from ui.anime_links import LinksManagerWidget
         self.links_manager = LinksManagerWidget(self.db)
         self.links_manager.links_changed.connect(self.links_changed.emit)
@@ -218,9 +241,9 @@ class DetailPanel(QWidget):
 
         # Status actions
         actions_card = self._detail_card("Actions")
-        arl = QHBoxLayout()
-        arl.setContentsMargins(0, 0, 0, 0)
-        arl.setSpacing(8)
+        arl_host = QWidget()
+        arl = FlowLayout(arl_host, h_spacing=8, v_spacing=8)
+        self._actions_card = actions_card
 
         self.status_btn = QPushButton("Watching")
         self.status_btn.setObjectName("secondaryBtn")
@@ -247,7 +270,7 @@ class DetailPanel(QWidget):
         del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         del_btn.clicked.connect(self._delete)
         arl.addWidget(del_btn)
-        actions_card.layout().addLayout(arl)
+        actions_card.layout().addWidget(arl_host)
         self._lay.addWidget(actions_card)
 
         # Overall rating
@@ -283,6 +306,16 @@ class DetailPanel(QWidget):
         self.export_btn.setVisible(False)
         self.export_btn.clicked.connect(self._export_ratings)
         ep_hdr.addWidget(self.export_btn)
+
+        self.ep_toggle_btn = QPushButton("Show ▾")
+        self.ep_toggle_btn.setObjectName("secondaryBtn")
+        self.ep_toggle_btn.setStyleSheet(
+            self.ep_toggle_btn.styleSheet() + "font-size:11px;padding:4px 10px;"
+        )
+        self.ep_toggle_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.ep_toggle_btn.setVisible(False)
+        self.ep_toggle_btn.clicked.connect(self._toggle_episodes)
+        ep_hdr.addWidget(self.ep_toggle_btn)
         episodes_lay.addLayout(ep_hdr)
 
         # Episode list container
@@ -359,9 +392,10 @@ class DetailPanel(QWidget):
         meta_parts = []
         if season or year:
             meta_parts.append(f"{season} {year}".strip())
-        if total:
+        if total and anime.get("watch_status") != "dropped":
             meta_parts.append(f"{total} episodes total")
-        meta_parts.append(status_display)
+        if status_display:
+            meta_parts.append(status_display)
         self.meta_lbl.setText("  ·  ".join(meta_parts))
 
         # ── Progress block — clear, unambiguous ──────────────────────
@@ -415,13 +449,12 @@ class DetailPanel(QWidget):
             self.progress_info_lbl.setVisible(False)
 
         # Genres
-        for i in reversed(range(self.genres_l.count())):
-            w = self.genres_l.itemAt(i).widget()
-            if w: w.setParent(None)
-        for g in (anime.get("genres") or [])[:5]:
+        self.genres_l.clear()
+        for g in (anime.get("genres") or [])[:6]:
             chip = QLabel(g)
             chip.setObjectName("genreChip")
-            self.genres_l.insertWidget(self.genres_l.count() - 1, chip)
+            self.genres_l.addWidget(chip)
+        self.genres_w.setVisible(bool(anime.get("genres")))
 
         # Synopsis — if empty, fetch from AniList in background
         desc = _strip_html(anime.get("description") or "")
@@ -469,20 +502,56 @@ class DetailPanel(QWidget):
     def _apply_mode(self, anime: Dict):
         """Planned anime get release/trailer/facts/cast instead of the
         episode tracker and rating, which mean nothing before you start."""
-        planned = anime.get("watch_status") == "planned"
-        self.archive_btn.setVisible(
-            anime.get("watch_status") == "completed" and anime.get("id", 0) > 0)
+        ws = anime.get("watch_status")
+        planned = ws == "planned"
+        completed = ws == "completed" and anime.get("id", 0) > 0
+        dropped = ws == "dropped"
+        self.dropped_section.setVisible(dropped)
+        self._actions_card.setVisible(not dropped)
+        self._links_card.setVisible(not dropped)
+        if dropped:
+            self._rating_card.setVisible(False)
+            self._episodes_card.setVisible(False)
+            self.progress_info_lbl.setVisible(False)
+            for w in (self.planned_top, self.planned_bottom,
+                      self.completed_top, self.completed_bottom):
+                w.setVisible(False)
+            self.planned_top.stop()
+            self.dropped_section.load(anime)
+            return
+        self.archive_btn.setVisible(completed)
         self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")
         self.planned_top.setVisible(planned)
         self.planned_bottom.setVisible(planned)
-        self._rating_card.setVisible(not planned)
+        self.completed_top.setVisible(completed)
+        self.completed_bottom.setVisible(completed)
+        # Completed has its own verdict card with the rating in it
+        self._rating_card.setVisible(not planned and not completed)
         self._episodes_card.setVisible(not planned)
+        # Completed: the episode list is reference material - folded away
+        self.ep_toggle_btn.setVisible(completed)
+        self.ep_container.setVisible(not completed)
+        self.mark_all_btn.setVisible(not completed)
+        self.ep_toggle_btn.setText("Show ▾")
         if planned:
             self.progress_info_lbl.setVisible(False)
             self.planned_top.load(anime)
             self.planned_bottom.load(anime)
         else:
             self.planned_top.stop()
+        if completed:
+            total = anime.get("total_episodes") or 0
+            watched = self.db.get_watched_count(anime["id"])
+            # keep the amber "unwatched episodes" warning, drop the rest
+            if not (total and watched < total):
+                self.progress_info_lbl.setVisible(False)
+            self.completed_top.load(anime)
+            self.completed_bottom.load(anime)
+
+    def _toggle_episodes(self):
+        show = not self.ep_container.isVisible()
+        self.ep_container.setVisible(show)
+        self.ep_toggle_btn.setText("Hide ▴" if show else "Show ▾")
 
     def refresh_from_db(self):
         """Re-render the open anime after a background metadata sync."""

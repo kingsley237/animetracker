@@ -87,6 +87,7 @@ def media_to_row(media: Dict) -> Dict:
         "studios": [n.get("name") for n in ((media.get("studios") or {}).get("nodes") or []) if n.get("name")],
         "characters": chars,
         "site_url": media.get("siteUrl") or "",
+        "mal_id": media.get("idMal"),
     }
     if not row["romaji_title"]:
         row.pop("romaji_title")
@@ -136,9 +137,47 @@ class MetadataSync:
             if old.get("watch_status") == "planned":
                 self._notify_planned(old, new, updates, first_sync)
 
+        # Promo videos (PVs, teasers, themes) for planned anime, at most daily
+        for a in self.db.get_all_anime(watch_status="planned"):
+            if only_ids is not None and a["id"] not in only_ids:
+                continue
+            if now - (a.get("videos_synced_at") or 0) > 86400:
+                self.refresh_videos(a, notify=True)
+
         notes = self.db.get_due_notifications(
             limit=6, kinds=["upcoming_trailer", "upcoming_date", "upcoming_episodes"])
         return {"changed": changed, "art_changed": art_changed, "notifications": notes}
+
+    def refresh_videos(self, anime: Dict, notify: bool = False) -> Optional[List[Dict]]:
+        """Fetch the MAL promo/theme list for one anime and store it.
+        Returns the new list, or None if MAL couldn't be reached."""
+        from core.videos import fetch_mal_videos
+        mal_id = anime.get("mal_id")
+        if not mal_id:
+            return None
+        vids = fetch_mal_videos(mal_id)
+        if vids is None:
+            return None
+        before = {v.get("id") for v in (anime.get("videos") or [])}
+        first = not anime.get("videos_synced_at")
+        self.db.update_anime(anime["id"], {
+            "videos": vids, "videos_synced_at": int(datetime.now().timestamp())})
+        if notify and not first and anime.get("watch_status") == "planned":
+            title = anime.get("english_title") or anime.get("romaji_title") or "Anime"
+            ident = anime.get("anilist_id") or anime["id"]
+            for v in vids:
+                if v["id"] in before or v.get("kind") != "promo" or v["id"] == anime.get("trailer_id"):
+                    continue
+                self.db.upsert_notification({
+                    "anime_id": anime["id"], "anilist_id": anime.get("anilist_id"),
+                    "fingerprint": f"upcoming-trailer:{ident}:{v['id']}",
+                    "kind": "upcoming_trailer",
+                    "title": f"New video: {v.get('title') or 'Promo'}",
+                    "message": f"{title} has a new promo video. Watch it right here.",
+                    "payload": {"trailer_id": v["id"], "trailer_site": "youtube",
+                                "anime_title": title},
+                })
+        return vids
 
     def _notify_planned(self, old: Dict, new: Dict, updates: Dict, first_sync: bool):
         title = new.get("english_title") or new.get("romaji_title") or old.get("romaji_title") or "Anime"

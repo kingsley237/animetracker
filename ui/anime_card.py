@@ -70,6 +70,8 @@ class _BorderOverlay(QWidget):
             border_color, width = QColor("#34d399"), 1.5
         elif accent == "incomplete":
             border_color, width = QColor("#fbbf24"), 2.0
+        elif accent == "dropped":
+            border_color, width = QColor("#6b2f3a"), 1.5
         else:
             border_color, width = QColor("#2a3048"), 1.0
 
@@ -87,6 +89,32 @@ class _BorderOverlay(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(path)
         p.end()
+
+# ── Dropped-card helpers ──────────────────────────────────────────────────────
+
+def _faded(pix: QPixmap) -> QPixmap:
+    """Desaturated, dimmed copy of a cover (dropped cards)."""
+    from PyQt6.QtGui import QImage
+    img = pix.toImage().convertToFormat(QImage.Format.Format_Grayscale8)
+    out = QPixmap.fromImage(img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied))
+    p = QPainter(out)
+    p.fillRect(out.rect(), QColor(10, 12, 18, 95))
+    p.end()
+    return out
+
+
+def _ago(ts) -> str:
+    if not ts:
+        return ""
+    days = int((datetime.now().timestamp() - int(ts)) // 86400)
+    if days < 1:
+        return "today"
+    if days < 30:
+        return f"{days}d ago"
+    if days < 365:
+        return f"{days // 30} mo ago"
+    return f"{days // 365}y ago"
+
 
 # ── Countdown helper ──────────────────────────────────────────────────────────
 
@@ -169,6 +197,8 @@ class AnimeCard(QFrame):
         super().__init__(parent)
         self.anime_id         = anime["id"]
         self._anime           = anime
+        self._cover_faded     = None
+        self._static_note     = ""
         self.db               = db
         self._next_ep_at: Optional[int] = None
         self._overlay_mode: Optional[str] = None
@@ -393,7 +423,13 @@ class AnimeCard(QFrame):
         cropped = _scale_crop(path, self.CARD_WIDTH, self.CARD_HEIGHT)
         if not cropped:
             return
-        self.cover_label.setPixmap(cropped)
+        self._cover_color = cropped
+        self._cover_faded = None
+        if (self._anime or {}).get("watch_status") == "dropped":
+            self._cover_faded = _faded(cropped)
+            self.cover_label.setPixmap(self._cover_faded)
+        else:
+            self.cover_label.setPixmap(cropped)
 
     # ── Overlay mode ──────────────────────────────────────────────────────────
 
@@ -604,6 +640,31 @@ class AnimeCard(QFrame):
         else:
             self.ep_cover_badge.setVisible(False)
 
+        # ── Dropped: stop point, how long ago, why ────────────────────────
+        self._static_note = ""
+        if ws == "dropped":
+            last = anime.get("_last_episode") or 0
+            ago = _ago(anime.get("_dropped_at"))
+            self.ep_label.setText(
+                (f"Stopped at ep {last}" if last else "Dropped before ep 1")
+                + (f" · {ago}" if ago else ""))
+            self.ep_label.setStyleSheet("font-size:10px;color:#c9a3aa;background:transparent;")
+            self._set_badge("badgeDropped", "DROPPED")
+            self.progress_bar.setVisible(False)
+            reason = (anime.get("_drop_reason") or "").strip()
+            if reason:
+                short = reason if len(reason) <= 30 else reason[:28] + "…"
+                self._static_note = f"“{short}”"
+                self.countdown_label.setText(self._static_note)
+                self.countdown_label.setStyleSheet(
+                    "font-size:10px;font-style:italic;color:#8a90a8;background:transparent;")
+            self.setProperty("cardAccent", "dropped")
+            self.update()
+            if hasattr(self, "_border_overlay"):
+                self._border_overlay.update()
+        else:
+            self.progress_bar.setVisible(True)
+
         # Top overlay: you requested it to be present on Watching cards only.
         # (Planned cards do not have any top-right text; keep them clean.)
         self._top_grad.setVisible(ws == "watching")
@@ -665,6 +726,15 @@ class AnimeCard(QFrame):
                 "font-size:9px;font-weight:700;"
                 "padding:2px 8px;letter-spacing:0.6px;"
             )
+        elif obj_name == "badgeDropped":
+            self.status_badge.setStyleSheet(
+                "background-color:rgba(30,10,14,0.94);"
+                "color:#f0a3ad;"
+                "border:1px solid #b5485a;"
+                "border-radius:4px;"
+                "font-size:9px;font-weight:800;"
+                "padding:2px 8px;letter-spacing:0.8px;"
+            )
         elif obj_name == "badgeIncomplete":
             # Distinct from FINISHED (green) and AIRING alert (red) — this
             # means the user marked it complete but hasn't watched everything.
@@ -706,7 +776,8 @@ class AnimeCard(QFrame):
         if self._overlay_mode:
             return
         if not self._next_ep_at:
-            self.countdown_label.setText("")
+            if not getattr(self, "_static_note", ""):
+                self.countdown_label.setText("")
             return
         secs    = self._next_ep_at - int(datetime.now(timezone.utc).timestamp())
         next_ep = self._anime.get("next_episode_num") if self._anime else None
@@ -729,6 +800,8 @@ class AnimeCard(QFrame):
             self._border_overlay.update()
 
     def enterEvent(self, event):
+        if getattr(self, "_cover_faded", None) is not None:
+            self.cover_label.setPixmap(self._cover_color)   # colour comes back on hover
         self.setProperty("hovered", "true")
         self.update()
         if hasattr(self, "_border_overlay"):
@@ -736,6 +809,8 @@ class AnimeCard(QFrame):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        if getattr(self, "_cover_faded", None) is not None:
+            self.cover_label.setPixmap(self._cover_faded)
         self.setProperty("hovered", "false")
         self.update()
         if hasattr(self, "_border_overlay"):

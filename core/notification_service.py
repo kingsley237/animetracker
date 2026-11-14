@@ -182,6 +182,7 @@ class NotificationService:
 
         for pre_id, sequels in get_sequels(list(prequels.keys())).items():
             prequel = prequels[pre_id]
+            self._record_sequel_info(prequel, sequels)
             for sequel in sequels:
                 sid = sequel.get("id")
                 phase = sequel_phase(sequel.get("status"))
@@ -218,6 +219,28 @@ class NotificationService:
                 # An earlier phase's alert for the same sequel is now stale.
                 self._retire_new_season(sid, keep_phase=phase)
         return self.db.get_due_notifications(limit=10, kinds=[NEW_SEASON_KIND])
+
+    def _record_sequel_info(self, prequel: Dict, sequels: List[Dict]):
+        """Remember the next season on the prequel itself (for the detail
+        panel's "What's next"), independent of whether it's alert-worthy."""
+        import json
+        if not prequel.get("anime_id"):
+            return
+        info = None
+        if sequels:
+            s = sequels[0]
+            t = s.get("title") or {}
+            lib = self.db.get_anime_by_anilist_id(s.get("id")) if s.get("id") else None
+            info = {
+                "id": s.get("id"),
+                "title": t.get("english") or t.get("romaji") or "Next season",
+                "phase": sequel_phase(s.get("status")),
+                "start_label": fuzzy_date_label(s.get("startDate")),
+                "format": s.get("format") or "",
+                "in_library": (lib or {}).get("watch_status"),
+            }
+        self.db.update_anime(prequel["anime_id"],
+                             {"sequel_info": json.dumps(info) if info else ""})
 
     def _retire_new_season(self, sequel_id: int, keep_phase: Optional[str] = None):
         for n in self.db.get_active_notifications(NEW_SEASON_KIND):

@@ -57,88 +57,6 @@ def _card(title: str) -> QFrame:
     return card
 
 
-class _TrailerThumb(QWidget):
-    """16:9 trailer thumbnail with a play button; click to play in-app."""
-    clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setMinimumHeight(150)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._pix: Optional[QPixmap] = None
-        self._hover = False
-        self.setToolTip("Play trailer")
-
-    def sizeHint(self):
-        from PyQt6.QtCore import QSize
-        return QSize(330, 186)
-
-    def resizeEvent(self, e):
-        self.setFixedHeight(max(150, int(self.width() * 9 / 16)))
-        super().resizeEvent(e)
-
-    def set_pixmap(self, pix: Optional[QPixmap]):
-        self._pix = pix
-        self.update()
-
-    def enterEvent(self, e):
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hover = False
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(r, 10, 10)
-        p.setClipPath(path)
-        if self._pix and not self._pix.isNull():
-            sc = self._pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                  Qt.TransformationMode.SmoothTransformation)
-            p.drawPixmap(0, 0, sc, (sc.width() - self.width()) // 2,
-                         (sc.height() - self.height()) // 2, self.width(), self.height())
-        else:
-            g = QLinearGradient(0, 0, self.width(), self.height())
-            g.setColorAt(0, QColor("#1b1840"))
-            g.setColorAt(1, QColor("#0f1118"))
-            p.fillRect(self.rect(), g)
-        shade = QLinearGradient(0, 0, 0, self.height())
-        shade.setColorAt(0, QColor(0, 0, 0, 30))
-        shade.setColorAt(1, QColor(0, 0, 0, 150 if not self._hover else 110))
-        p.fillRect(self.rect(), shade)
-        p.setClipping(False)
-        p.setPen(QPen(QColor(255, 255, 255, 34), 1))
-        p.drawPath(path)
-
-        # Play button
-        cx, cy, rad = self.width() / 2, self.height() / 2, 26 if not self._hover else 29
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(75, 63, 168, 235) if not self._hover else QColor(98, 84, 205, 245))
-        p.drawEllipse(QPointF(cx, cy), rad, rad)
-        p.setBrush(QColor("#ffffff"))
-        tri = QPolygonF([QPointF(cx - 7, cy - 11), QPointF(cx - 7, cy + 11), QPointF(cx + 12, cy)])
-        p.drawPolygon(tri)
-
-        p.setPen(QColor("#e2e4ec"))
-        f = QFont(self.font())
-        f.setPointSizeF(9)
-        f.setBold(True)
-        p.setFont(f)
-        p.drawText(QRectF(12, self.height() - 28, self.width() - 24, 20),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "▶  Watch trailer")
-        p.end()
-
-
 class _Avatar(QLabel):
     def __init__(self, size: int = 52, parent=None):
         super().__init__(parent)
@@ -200,17 +118,12 @@ class PlannedTop(QWidget):
             rl.addWidget(w)
         lay.addWidget(self.release_card)
 
-        # Trailer
-        self.trailer_card = _card("Trailer")
-        tl = self.trailer_card.layout()
-        self.trailer_thumb = _TrailerThumb()
-        self.trailer_thumb.clicked.connect(self._play)
-        self.no_trailer = QLabel(
+        # Trailers, PVs & themes
+        from ui.video_gallery import VideoGallery
+        self.trailer_card = _card("Trailers & videos")
+        self.gallery = VideoGallery(
             "No trailer yet. You'll get a notification the moment one drops.")
-        self.no_trailer.setObjectName("plannedEmpty")
-        self.no_trailer.setWordWrap(True)
-        tl.addWidget(self.trailer_thumb)
-        tl.addWidget(self.no_trailer)
+        self.trailer_card.layout().addWidget(self.gallery)
         lay.addWidget(self.trailer_card)
 
         self._timer = QTimer(self)
@@ -250,18 +163,9 @@ class PlannedTop(QWidget):
         self._tick()
         self._timer.start(1000)
 
-        has_trailer = bool(anime.get("trailer_id")) and (anime.get("trailer_site") or "youtube") in ("youtube", "dailymotion")
-        self.trailer_thumb.setVisible(has_trailer)
-        self.no_trailer.setVisible(not has_trailer)
-        self.trailer_thumb.set_pixmap(None)
-        if has_trailer:
-            thumb = anime.get("trailer_thumb") or (
-                f"https://i.ytimg.com/vi/{anime['trailer_id']}/hqdefault.jpg"
-                if (anime.get("trailer_site") or "youtube") == "youtube" else "")
-            if thumb:
-                w = ImageWorker(thumb, ("trailer", anime["id"]))
-                w.signals.result.connect(self._on_img)
-                run_worker(w)
+        from core.videos import build_playlist
+        self.gallery.load(build_playlist(anime),
+                          anime.get("english_title") or anime.get("romaji_title") or "")
 
     def stop(self):
         self._timer.stop()
@@ -276,21 +180,6 @@ class PlannedTop(QWidget):
             self.release_count.setVisible(True)
         else:
             self.release_count.setVisible(False)
-
-    def _on_img(self, result):
-        try:
-            (slot, aid), _s, path = result
-        except Exception:
-            return
-        if path and self._anime and self._anime["id"] == aid:
-            self.trailer_thumb.set_pixmap(QPixmap(str(path)))
-
-    def _play(self):
-        a = self._anime or {}
-        if a.get("trailer_id"):
-            from ui.trailer_player import show_trailer
-            show_trailer(a["trailer_id"], a.get("trailer_site") or "youtube",
-                         a.get("english_title") or a.get("romaji_title") or "", self.window())
 
 
 class PlannedBottom(QWidget):

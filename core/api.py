@@ -452,6 +452,7 @@ def get_sequels(anilist_ids: List[int], batch: int = 8) -> Dict[int, List[Dict]]
 
 _METADATA_FIELDS = """
     id
+    idMal
     title { romaji english native }
     coverImage { extraLarge large medium color }
     bannerImage

@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
+        self._content_row = content_row
 
         # Stacked pages — heavy pages loaded lazily on first navigation
         self.stack = QStackedWidget()
@@ -201,6 +202,10 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         self.detail_panel.links_changed.connect(self._on_detail_links_changed)
         self.detail_panel.archive_changed.connect(self._on_archive_changed)
+        self.detail_panel.open_hall_of_fame.connect(lambda: (self._close_detail_panel(), self._navigate("hof")))
+        self.detail_panel.open_sequel.connect(self._on_card_new_season)
+        self.detail_panel.dropped_restored.connect(self._on_dropped_restored)
+        self.detail_panel.dropped_removed.connect(self._on_dropped_removed)
 
         # central_content holds ONLY the content host — banner floats above it
         self.central_content = QWidget()
@@ -396,6 +401,12 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        # Re-flow cards whenever the visible width changes (panel open/close,
+        # window resize) - after the new width is actually applied.
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._relayout_grid)
+        self.scroll_area.installEventFilter(self)
 
         self.grid_container = QWidget()
         self.grid_layout    = QGridLayout(self.grid_container)
@@ -493,9 +504,85 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self.anilist_status_label)
         return bar
 
+    def _reserve_panel_space(self, reserve: bool):
+        """Make room for the detail panel instead of covering cards: the
+        library narrows by the panel's width and the cards re-flow into
+        fewer columns beside it."""
+        right = (self.detail_panel.width() or 390) if reserve else 0
+        if self._content_row.contentsMargins().right() == right:
+            return
+        self._content_row.setContentsMargins(0, 0, right, 0)
+        self._content_host.layout().activate()
+        # The new width is applied by activate(), so re-flow right now
+        # (queued timers can be starved while the panel loads), plus one
+        # safety pass for late geometry changes like a scrollbar appearing.
+        self._relayout_grid()
+        QTimer.singleShot(150, self._relayout_grid)
+
+    def _relayout_grid(self):
+        """Re-flow the existing grid widgets for the current width without
+        rebuilding them (no flicker, no image reloads)."""
+        if not hasattr(self, "grid_layout"):
+            return
+        cols = max(self._calc_columns(), 1)
+        gl = self.grid_layout
+        entries = []
+        for i in range(gl.count()):
+            r, c, _rs, cs = gl.getItemPosition(i)
+            entries.append((r, c, cs, gl.itemAt(i).widget()))
+        entries = [e for e in entries if e[3] is not None]
+        if not entries:
+            return
+        entries.sort(key=lambda e: (e[0], e[1]))
+        tiles = (AnimeCard, _SkeletonCard)
+        for e in entries:
+            gl.removeWidget(e[3])
+        row, col = 0, 0
+        for _r, _c, cs, w in entries:
+            if isinstance(w, tiles):
+                if col >= cols:
+                    row, col = row + 1, 0
+                gl.addWidget(w, row, col)
+                col += 1
+            else:
+                if col > 0:
+                    row, col = row + 1, 0
+                gl.addWidget(w, row, 0, 1, cols)
+                row += 1
+        self._grid_cols = cols
+        # Apply now: QGridLayout keeps old column widths (and the container
+        # its old width) until it is re-activated.
+        for c in range(gl.columnCount()):
+            gl.setColumnMinimumWidth(c, 0)
+            gl.setColumnStretch(c, 0)
+        gl.invalidate()
+        gl.activate()
+        self.grid_container.updateGeometry()
+        self.grid_container.adjustSize()
+        if self.scroll_area.widgetResizable():
+            self.grid_container.resize(self.scroll_area.viewport().width(),
+                                       self.grid_container.sizeHint().height())
+        sel = self._cards.get(self.selected_anime_id) if self.selected_anime_id else None
+        if sel is not None and self.detail_panel.isVisible():
+            self._scroll_card_into_view(sel)
+
+    def _scroll_card_into_view(self, card):
+        try:
+            self.scroll_area.ensureWidgetVisible(card, 40, 60)
+        except RuntimeError:
+            pass
+
+    def eventFilter(self, obj, ev):
+        from PyQt6.QtCore import QEvent
+        if obj is getattr(self, "scroll_area", None) and ev.type() == QEvent.Type.Resize:
+            if ev.oldSize().width() != ev.size().width():
+                self._reflow_timer.start(30)
+        return super().eventFilter(obj, ev)
+
     def _close_detail_panel(self):
         self.detail_panel.hide()
         self._detail_scrim.hide()
+        self._reserve_panel_space(False)
         self.selected_anime_id = None
         self._deselect_all_cards()
         if hasattr(self, "notification_banner"):
@@ -514,10 +601,14 @@ class MainWindow(QMainWindow):
 
     def _open_detail_panel(self):
         self._position_detail_overlay()
-        self._detail_scrim.show()
-        self._detail_scrim.lower()
+        # No dimming scrim: the panel now sits beside the cards, not on them.
+        self._detail_scrim.hide()
         self.detail_panel.show()
         self.detail_panel.raise_()
+        self._reserve_panel_space(True)
+        sel = self._cards.get(self.selected_anime_id) if self.selected_anime_id else None
+        if sel is not None:
+            QTimer.singleShot(60, lambda w=sel: self._scroll_card_into_view(w))
         if hasattr(self, "notification_banner"):
             self.notification_banner.pause_for_detail()
             self.notification_banner.lower()
@@ -869,6 +960,22 @@ class MainWindow(QMainWindow):
     def _on_archive_changed(self, anime_id: int):
         self._load_library_for_current_page()
 
+    def _on_dropped_restored(self, new_id: int, ws: str):
+        from ui.toast import Toast
+        self._close_detail_panel()
+        where = {"watching": "Watching", "completed": "Completed (unwatched episodes flagged)",
+                 "planned": "Plan to Watch"}.get(ws, "your library")
+        Toast.show(self, f"Welcome back. It's in {where}.", kind="success")
+        self._load_library_for_current_page()
+        self._update_stats_strip()
+
+    def _on_dropped_removed(self):
+        from ui.toast import Toast
+        self._close_detail_panel()
+        Toast.show(self, "Removed from Dropped.", kind="info")
+        self._load_library_for_current_page()
+        self._update_stats_strip()
+
     def _run_auto_archive(self):
         from core.app_settings import app_settings
         days = int(app_settings().value("auto_archive_days", 0) or 0)
@@ -901,6 +1008,9 @@ class MainWindow(QMainWindow):
                 "next_episode_num": None,
                 "episode_offset": 0,
                 "_dropped_id":   r["id"],   # keep real id for delete
+                "_last_episode": r.get("last_episode") or 0,
+                "_dropped_at":   r.get("dropped_at"),
+                "_drop_reason":  r.get("drop_reason") or "",
                 "anilist_id":    r.get("anilist_id"),
                 "description":   "",
                 "studios":       [],
@@ -1009,8 +1119,17 @@ class MainWindow(QMainWindow):
                     "average_score": None,
                     "season": "",
                     "season_year": None,
+                    "_last_episode": dropped.get("last_episode") or 0,
+                    "_dropped_at":   dropped.get("dropped_at"),
+                    "_drop_reason":  dropped.get("drop_reason") or "",
                 })
                 self._open_detail_panel()
+                self._load_detail_images({
+                    "id": anime_id,
+                    "cover_url": dropped.get("cover_url", ""),
+                    "cover_local": dropped.get("cover_local", ""),
+                    "banner_url": "",
+                })
             return
 
         anime = self.db.get_anime_by_id(anime_id)
@@ -1020,12 +1139,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.load_anime(anime)
         self._open_detail_panel()
 
-        # Planned anime: pull fresh info right away if it's been a while,
-        # so a just-dropped trailer or date shows up when you look.
-        import time as _t
-        if (anime.get("watch_status") == "planned" and anime.get("anilist_id")
-                and _t.time() - (anime.get("meta_synced_at") or 0) > 600):
-            self._sync_metadata(only_ids=[anime_id])
+        self._refresh_open_anime(anime)
 
         # Load cover
         self._load_detail_images(anime)
@@ -1537,6 +1651,38 @@ class MainWindow(QMainWindow):
             if self.detail_panel.isVisible():
                 self.notification_banner.pause_for_detail()
 
+    def _refresh_open_anime(self, anime: Dict):
+        """Opening an anime refreshes it in the background when stale:
+        metadata (10 min for Planned, a day otherwise) and its promo/theme
+        video list (daily). The panel re-renders when it lands."""
+        import time as _t
+        if not anime.get("anilist_id") or anime.get("id", 0) <= 0:
+            return
+        ws = anime.get("watch_status") or "watching"
+        meta_age = _t.time() - (anime.get("meta_synced_at") or 0)
+        vids_age = _t.time() - (anime.get("videos_synced_at") or 0)
+        need_meta = meta_age > (600 if ws == "planned" else 86400)
+        need_vids = vids_age > 86400
+        if not (need_meta or need_vids):
+            return
+        aid = anime["id"]
+
+        def work():
+            from core.metadata_sync import MetadataSync
+            sync = MetadataSync(self.db)
+            res = {"changed": [], "art_changed": [], "notifications": []}
+            if need_meta:
+                res = sync.sync(statuses=(ws,), only_ids=[aid])
+            fresh = self.db.get_anime_by_id(aid)
+            if fresh and need_vids and fresh.get("mal_id"):
+                if sync.refresh_videos(fresh, notify=False) is not None:
+                    res["changed"] = list(set(res.get("changed") or []) | {aid})
+            return res
+
+        worker = Worker(work)
+        worker.signals.result.connect(self._on_metadata_synced)
+        run_worker(worker)
+
     def _play_trailer(self, trailer_id: str, site: str, title: str):
         if not trailer_id:
             return
@@ -1773,7 +1919,8 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_cards"):
-            QTimer.singleShot(60, self._load_library)
+            # Re-flow in place; a full reload here used to flash skeletons
+            QTimer.singleShot(60, self._relayout_grid)
         if hasattr(self, "detail_panel") and self.detail_panel.isVisible():
             self._position_detail_overlay()
         if hasattr(self, "update_banner") and self.update_banner.isVisible():

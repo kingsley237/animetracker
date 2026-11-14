@@ -1552,3 +1552,115 @@ QPushButton#archivedToggle[active="true"] {
 QPushButton#archivedToggle:disabled {
     color: #3a3f55;
 }
+
+/* ── Completed detail sections ─────────────────────────────────────────────── */
+QLabel#completedStamp {
+    color: #34d399;
+    background-color: rgba(6, 34, 25, 0.95);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+}
+
+QLabel#archivedChip {
+    color: #9da5c0;
+    background-color: #151821;
+    border: 1px solid #2a2f45;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+}
+
+QFrame#statTile {
+    background-color: #0d1019;
+    border: 1px solid #1a1e2e;
+    border-radius: 8px;
+}
+
+QLabel#statTileValue {
+    color: #f0f1f5;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#statTileLabel {
+    color: #5c6482;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+QLabel#verdictYou {
+    color: #fbbf24;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QLabel#verdictCommunity {
+    color: #c4b8ff;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QLabel#verdictLine {
+    color: #c7cbd9;
+    font-size: 12px;
+}
+
+QLabel#galleryCaption {
+    color: #9da5c0;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#badgeDropped {
+    background-color: rgba(42, 14, 20, 0.94);
+    color: #f0a3ad;
+    border: 1px solid rgba(240, 120, 135, 0.45);
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 800;
+    padding: 2px 8px;
+    letter-spacing: 0.8px;
+}
+
+/* ── Dropped detail section ───────────────────────────────────────────────── */
+QLabel#droppedStamp {
+    color: #f0a3ad;
+    background-color: rgba(42, 14, 20, 0.95);
+    border: 1px solid rgba(181, 72, 90, 0.6);
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+}
+
+QProgressBar#droppedBar {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#droppedBar::chunk {
+    background-color: #b5485a;
+    border-radius: 3px;
+}
+
+QPlainTextEdit#dropReason {
+    background-color: #0d1019;
+    color: #e2e4ec;
+    border: 1px solid #1e2236;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+QPlainTextEdit#dropReason:focus {
+    border-color: #4b3fa8;
+}
