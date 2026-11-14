@@ -192,6 +192,11 @@ class NotificationService:
                 if self.db.get_anime_by_anilist_id(sid):
                     self._retire_new_season(sid)   # they already added it
                     continue
+                if phase == "announced" and not (sequel.get("startDate") or {}).get("day"):
+                    # Only surface announcements once there's a confirmed
+                    # premiere day; withdraw any alert shown before that rule.
+                    self._retire_new_season(sid)
+                    continue
                 if phase == "complete":
                     ended = _date_ts(sequel.get("endDate"))
                     recent_end = bool(ended) and now - ended < _COMPLETE_SEQUEL_RECENT_DAYS * 86400
@@ -379,18 +384,9 @@ class NotificationService:
                     "kind": "upcoming_date",
                     "anime_id": anime["id"],
                     "anilist_id": anime.get("anilist_id"),
-                    "title": "Release date available",
-                    "message": f"{title} now has a scheduled premiere date: {air_date}.",
+                    "title": "Release date confirmed",
+                    "message": f"{title} premieres {air_date}.",
                     "payload": {"airing_at": next_at},
                 })
 
-            if trailer_id:
-                self.db.upsert_notification({
-                    "fingerprint": f"upcoming-trailer:{ident}:{trailer_id}",
-                    "kind": "upcoming_trailer",
-                    "anime_id": anime["id"],
-                    "anilist_id": anime.get("anilist_id"),
-                    "title": "New trailer available",
-                    "message": f"{title} has trailer information available.",
-                    "payload": {"trailer_id": trailer_id},
-                })
+            # Trailers are detected by core.metadata_sync (it knows when one is new).

@@ -55,6 +55,7 @@ class DetailPanel(QWidget):
     anime_deleted    = pyqtSignal(int)
     close_requested  = pyqtSignal()
     links_changed    = pyqtSignal()
+    archive_changed  = pyqtSignal(int)
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -175,6 +176,13 @@ class DetailPanel(QWidget):
         self.progress_info_lbl.setVisible(False)
         self._lay.addWidget(self.progress_info_lbl)
 
+        # Plan-to-Watch: release countdown + trailer (hidden otherwise)
+        from ui.planned_details import PlannedTop, PlannedBottom
+        self.planned_top = PlannedTop()
+        self.planned_top.move_to_watching.connect(self._planned_move_to_watching)
+        self.planned_top.setVisible(False)
+        self._lay.addWidget(self.planned_top)
+
         # Genres
         self.genres_w = QWidget()
         self.genres_l = QHBoxLayout(self.genres_w)
@@ -194,6 +202,11 @@ class DetailPanel(QWidget):
         )
         synopsis_lay.addWidget(self.synopsis_lbl)
         self._lay.addWidget(synopsis_card)
+
+        # Plan-to-Watch: facts + characters (hidden otherwise)
+        self.planned_bottom = PlannedBottom()
+        self.planned_bottom.setVisible(False)
+        self._lay.addWidget(self.planned_bottom)
 
         # Quick links (streaming, Telegram, etc.)
         links_card = self._detail_card("Quick links")
@@ -215,6 +228,14 @@ class DetailPanel(QWidget):
         self.status_btn.clicked.connect(self._cycle_status)
         arl.addWidget(self.status_btn)
 
+        self.archive_btn = QPushButton("Archive")
+        self.archive_btn.setObjectName("secondaryBtn")
+        self.archive_btn.setToolTip(
+            "Hide from the Completed list. Stays in stats, search and Hall of Fame.")
+        self.archive_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.archive_btn.clicked.connect(self._toggle_archive)
+        arl.addWidget(self.archive_btn)
+
         drop_btn = QPushButton("Drop")
         drop_btn.setObjectName("dangerBtn")
         drop_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -235,6 +256,7 @@ class DetailPanel(QWidget):
         self.overall_rating.rated.connect(self._on_overall_rated)
         rating_card.layout().addWidget(self.overall_rating)
         self._lay.addWidget(rating_card)
+        self._rating_card = rating_card
 
         # Episodes
         episodes_card = self._detail_card("")
@@ -270,6 +292,7 @@ class DetailPanel(QWidget):
         self.ep_vbox.setSpacing(5)
         episodes_lay.addWidget(self.ep_container)
         self._lay.addWidget(episodes_card)
+        self._episodes_card = episodes_card
         self._lay.addStretch()
 
         scroll.setWidget(body)
@@ -423,6 +446,65 @@ class DetailPanel(QWidget):
         else:
             self.links_manager.load(-1)
 
+        self._apply_mode(anime)
+
+    # ── Plan-to-Watch mode ─────────────────────────────────────────────────────
+
+    def _toggle_archive(self):
+        a = self._anime
+        if not a or a.get("id", 0) <= 0 or a.get("watch_status") != "completed":
+            return
+        new = not bool(a.get("archived"))
+        self.db.set_archived([a["id"]], new)
+        a["archived"] = 1 if new else 0
+        self.archive_btn.setText("Unarchive" if new else "Archive")
+        self.archive_changed.emit(a["id"])
+        from ui.toast import Toast
+        Toast.show(self.window(),
+                   f"'{a.get('romaji_title', 'Anime')}' "
+                   + ("archived. Find it under Completed > Archived." if new
+                      else "is back in your Completed list."),
+                   kind="success")
+
+    def _apply_mode(self, anime: Dict):
+        """Planned anime get release/trailer/facts/cast instead of the
+        episode tracker and rating, which mean nothing before you start."""
+        planned = anime.get("watch_status") == "planned"
+        self.archive_btn.setVisible(
+            anime.get("watch_status") == "completed" and anime.get("id", 0) > 0)
+        self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")
+        self.planned_top.setVisible(planned)
+        self.planned_bottom.setVisible(planned)
+        self._rating_card.setVisible(not planned)
+        self._episodes_card.setVisible(not planned)
+        if planned:
+            self.progress_info_lbl.setVisible(False)
+            self.planned_top.load(anime)
+            self.planned_bottom.load(anime)
+        else:
+            self.planned_top.stop()
+
+    def refresh_from_db(self):
+        """Re-render the open anime after a background metadata sync."""
+        if not self._anime or self._anime.get("id", 0) <= 0:
+            return
+        fresh = self.db.get_anime_by_id(self._anime["id"])
+        if fresh:
+            self.load_anime(fresh)
+
+    def _planned_move_to_watching(self, aid: int):
+        if not self._anime or self._anime["id"] != aid:
+            return
+        self.db.update_anime(aid, {"watch_status": "watching"})
+        self._anime["watch_status"] = "watching"
+        self.watch_status_changed.emit(aid, "watching")
+        self.stats_changed.emit()
+        self.load_anime(self.db.get_anime_by_id(aid) or self._anime)
+        from ui.toast import Toast
+        Toast.show(self.window(),
+                   f"'{self._anime.get('romaji_title', 'Anime')}' moved to Watching.",
+                   kind="success")
+
     def _fetch_missing_meta(self, anime: Dict):
         """Fetch synopsis/studios/score from AniList for imported anime with no data."""
         from workers.workers import Worker, run_worker
@@ -502,6 +584,7 @@ class DetailPanel(QWidget):
             Qt.TransformationMode.SmoothTransformation)
         x = (sc.width() - w) // 2
         self.banner_lbl.setPixmap(sc.copy(x, 0, w, h))
+        self.banner_lbl.setVisible(True)
 
     def clear_images(self):
         """Reset cover and banner to placeholders. Call before loading a new anime."""
@@ -516,8 +599,10 @@ class DetailPanel(QWidget):
         self.clear_banner()
 
     def clear_banner(self):
-        """Reset banner to solid colour placeholder."""
-        self.banner_lbl.setPixmap(QPixmap())   # empty - stylesheet bg shows
+        """No banner art: collapse the strip instead of showing an empty
+        block (set_banner shows it again when art arrives)."""
+        self.banner_lbl.setPixmap(QPixmap())
+        self.banner_lbl.setVisible(False)
 
     # ── Episode list ───────────────────────────────────────────────────────────
 
@@ -682,6 +767,8 @@ class DetailPanel(QWidget):
         self.status_btn.setText(WATCH_STATUS_LABELS.get(new, new.title()))
         self.watch_status_changed.emit(aid, new)
         self.stats_changed.emit()
+        if (new == "planned") != (cur == "planned"):
+            self.load_anime(self.db.get_anime_by_id(aid) or self._anime)
         from ui.toast import Toast
         Toast.show(
             self.window(),

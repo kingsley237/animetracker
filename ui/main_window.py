@@ -63,10 +63,16 @@ def _build_app_icon() -> QIcon:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db: DatabaseManager, demo_new_season: bool = False):
+    def __init__(self, db: DatabaseManager, demo_new_season: bool = False,
+                 demo_planned: bool = False):
         super().__init__()
         self.db = db
         self._demo_new_season = demo_new_season
+        self._demo_planned = demo_planned
+        self._meta_sync_running = False
+        self._show_archived = False
+        self._completed_groups: Dict[str, List[int]] = {}
+        self._fold_overrides: Dict[str, bool] = self._load_fold_overrides()
         self._demo_items: List[Dict] = []
         self.current_page = "library"
         self.selected_anime_id: Optional[int] = None
@@ -103,6 +109,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(800, self._maybe_show_onboarding)
         if self._demo_new_season:
             QTimer.singleShot(3000, self._inject_demo_new_season)
+        if self._demo_planned:
+            QTimer.singleShot(3500, self._inject_demo_planned)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -182,7 +190,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.setFixedWidth(390)
         self.detail_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.detail_panel.setStyleSheet(
-            "background-color:#0a0c10;border-left:1px solid #1a1d28;"
+            "DetailPanel{background-color:#0a0c10;border-left:1px solid #1a1d28;}"
         )
         self.detail_panel.hide()
         self.detail_panel.close_requested.connect(self._close_detail_panel)
@@ -192,6 +200,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_dropped.connect(self._on_anime_dropped)
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         self.detail_panel.links_changed.connect(self._on_detail_links_changed)
+        self.detail_panel.archive_changed.connect(self._on_archive_changed)
 
         # central_content holds ONLY the content host — banner floats above it
         self.central_content = QWidget()
@@ -212,6 +221,7 @@ class MainWindow(QMainWindow):
         self.notification_banner.move_to_watching.connect(self._move_notification_to_watching)
         self.notification_banner.remind_later.connect(self._remind_notification_later)
         self.notification_banner.dismissed.connect(self._dismiss_notification)
+        self.notification_banner.play_trailer.connect(self._play_trailer)
         from ui.new_season_spotlight import NewSeasonSpotlight
         self.new_season_spotlight = NewSeasonSpotlight(central)
         self.new_season_spotlight.dismissed.connect(self._dismiss_new_season)
@@ -600,6 +610,8 @@ class MainWindow(QMainWindow):
             btn.style().polish(btn)
 
     def _set_filter(self, fid: str):
+        if fid != "completed":
+            self._show_archived = False
         self._current_filter = fid
         for pid, btn in self._filter_btns.items():
             btn.setProperty("active", "true" if pid == fid else "false")
@@ -659,9 +671,16 @@ class MainWindow(QMainWindow):
                     if aired > 0 and watched < aired:
                         result.append(a)
                 return result
+            elif watch_status == "completed":
+                return self.db.get_all_anime(
+                    watch_status="completed", sort_by="completed_at",
+                    archived=show_archived)
+            elif watch_status is None:
+                return self.db.get_all_anime(sort_by=sort_by, archived=False)
             else:
                 return self.db.get_all_anime(watch_status=watch_status, sort_by=sort_by)
 
+        show_archived = self._show_archived
         worker = Worker(fetch_data)
         worker.signals.result.connect(
             lambda anime_list: self._render_library(
@@ -688,6 +707,9 @@ class MainWindow(QMainWindow):
         self._clear_grid()
 
         has = bool(anime_list)
+        if (not has and current_filter == "completed" and current_page == "library"
+                and not self._search_query and (self._show_archived or self.db.count_archived())):
+            has = True   # keep the timeline (and its Archived toggle) visible
         self.empty_state.setVisible(not has)
         self.grid_container.setVisible(has)
 
@@ -697,8 +719,15 @@ class MainWindow(QMainWindow):
                 and current_page == "library"
                 and not self._search_query
             )
+            show_timeline = (
+                current_filter == "completed"
+                and current_page == "library"
+                and not self._search_query
+            )
             if show_grouped:
                 self._populate_grouped_grid(anime_list)
+            elif show_timeline:
+                self._populate_completed_timeline(anime_list)
             else:
                 COLS = self._calc_columns()
                 for idx, anime in enumerate(anime_list):
@@ -729,10 +758,22 @@ class MainWindow(QMainWindow):
             members = [a for a in anime_list if a.get("watch_status") == status]
             if not members:
                 continue
-            # Section header as a full-width spanning label
-            hdr = QLabel(f"{group_label}  ·  {len(members)} titles")
-            hdr.setObjectName("libSectionHeader")
-            hdr.setStyleSheet(f"color:{color};")
+            total_members = len(members)
+            if status == "completed":
+                # Only the most recently finished row here - the full list
+                # lives in the Completed timeline.
+                from ui.completed_view import finished_ts
+                members = sorted(members, key=finished_ts, reverse=True)[:max(COLS, 1)]
+            if status == "completed" and total_members > len(members):
+                from ui.completed_view import SectionHeader
+                hdr = SectionHeader("all-completed", "Recently completed", total_members,
+                                    color, collapsible=False,
+                                    action_text=f"View all {total_members}  \u2192")
+                hdr.action.connect(lambda _k: self._set_filter("completed"))
+            else:
+                hdr = QLabel(f"{group_label}  ·  {total_members} titles")
+                hdr.setObjectName("libSectionHeader")
+                hdr.setStyleSheet(f"color:{color};")
             self.grid_layout.addWidget(hdr, row_num, 0, 1, max(COLS, 1))
             row_num += 1
             for col_idx, anime in enumerate(members):
@@ -745,6 +786,98 @@ class MainWindow(QMainWindow):
                 self.grid_layout.addWidget(card, row_num, col_idx % COLS)
                 self._load_card_image(anime, card)
             row_num += 1
+
+    # ── Completed timeline ─────────────────────────────────────────────────────
+
+    def _load_fold_overrides(self) -> Dict[str, bool]:
+        import json
+        from core.app_settings import app_settings
+        try:
+            return json.loads(app_settings().value("completed_fold_state", "{}") or "{}")
+        except Exception:
+            return {}
+
+    def _is_folded(self, key: str) -> bool:
+        from ui.completed_view import default_collapsed
+        return self._fold_overrides.get(key, default_collapsed(key))
+
+    def _populate_completed_timeline(self, anime_list: List[Dict]):
+        from ui.completed_view import CompletedToolbar, SectionHeader, group_completed
+        COLS = max(self._calc_columns(), 1)
+        row = 0
+        bar = CompletedToolbar(len(anime_list), self.db.count_archived(), self._show_archived)
+        bar.archived_toggled.connect(self._toggle_archived_view)
+        self.grid_layout.addWidget(bar, row, 0, 1, COLS)
+        row += 1
+        self._completed_groups = {}
+        color = "#9da5c0" if self._show_archived else "#34d399"
+        action = "Restore all" if self._show_archived else "Archive these"
+        for key, label, members in group_completed(anime_list):
+            self._completed_groups[key] = [a["id"] for a in members]
+            folded = self._is_folded(key)
+            hdr = SectionHeader(key, label, len(members), color, collapsed=folded,
+                                action_text=action)
+            hdr.toggled.connect(self._toggle_completed_group)
+            hdr.action.connect(self._archive_completed_group)
+            self.grid_layout.addWidget(hdr, row, 0, 1, COLS)
+            row += 1
+            if folded:
+                continue
+            for i, anime in enumerate(members):
+                if i and i % COLS == 0:
+                    row += 1
+                card = AnimeCard(anime, self.db)
+                card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
+                card.new_season_clicked.connect(self._on_card_new_season)
+                self._cards[anime["id"]] = card
+                self.grid_layout.addWidget(card, row, i % COLS)
+                self._load_card_image(anime, card)
+            row += 1
+        if not anime_list:
+            msg = QLabel("Nothing archived." if self._show_archived else
+                         "Everything here is archived. Use the Archived button to see it.")
+            msg.setObjectName("completedToolbarHint")
+            self.grid_layout.addWidget(msg, row, 0, 1, COLS)
+
+    def _toggle_completed_group(self, key: str):
+        import json
+        from core.app_settings import app_settings
+        self._fold_overrides[key] = not self._is_folded(key)
+        app_settings().setValue("completed_fold_state", json.dumps(self._fold_overrides))
+        self._load_library()
+
+    def _archive_completed_group(self, key: str):
+        from ui.toast import Toast
+        ids = self._completed_groups.get(key) or []
+        if not ids:
+            return
+        archive = not self._show_archived
+        n = self.db.set_archived(ids, archive)
+        label = {"month": "this month", "year": "earlier this year"}.get(key, key)
+        if archive:
+            Toast.show(self, f"Archived {n} {'show' if n == 1 else 'shows'} from {label}. "
+                             "Find them under Archived.", kind="success")
+        else:
+            Toast.show(self, f"Restored {n} {'show' if n == 1 else 'shows'} to Completed.",
+                       kind="success")
+        self._load_library()
+
+    def _toggle_archived_view(self):
+        self._show_archived = not self._show_archived
+        self._load_library()
+
+    def _on_archive_changed(self, anime_id: int):
+        self._load_library_for_current_page()
+
+    def _run_auto_archive(self):
+        from core.app_settings import app_settings
+        days = int(app_settings().value("auto_archive_days", 0) or 0)
+        n = self.db.auto_archive_completed(days)
+        if n:
+            from ui.toast import Toast
+            Toast.show(self, f"Auto-archived {n} completed {'show' if n == 1 else 'shows'} "
+                             "finished a while ago.", kind="info")
+            self._load_library_for_current_page()
 
     def _get_dropped_as_anime(self) -> List[Dict]:
         """Convert dropped_anime rows to anime-shaped dicts. Uses negative IDs to avoid collisions."""
@@ -886,6 +1019,13 @@ class MainWindow(QMainWindow):
 
         self.detail_panel.load_anime(anime)
         self._open_detail_panel()
+
+        # Planned anime: pull fresh info right away if it's been a while,
+        # so a just-dropped trailer or date shows up when you look.
+        import time as _t
+        if (anime.get("watch_status") == "planned" and anime.get("anilist_id")
+                and _t.time() - (anime.get("meta_synced_at") or 0) > 600):
+            self._sync_metadata(only_ids=[anime_id])
 
         # Load cover
         self._load_detail_images(anime)
@@ -1152,6 +1292,13 @@ class MainWindow(QMainWindow):
         if not self._demo_new_season:
             QTimer.singleShot(8000, self._scan_sequels)
 
+        # Metadata sync (art, trailer, dates, cast...) for Planned + Watching
+        self._meta_timer = QTimer(self)
+        self._meta_timer.timeout.connect(self._sync_metadata)
+        self._meta_timer.start(3 * 3600 * 1000)
+        QTimer.singleShot(12000, self._sync_metadata)
+        QTimer.singleShot(2500, self._run_auto_archive)
+
     def _tick(self):
         import time as _time
         from datetime import datetime as _dt, timezone as _tz
@@ -1351,6 +1498,78 @@ class MainWindow(QMainWindow):
 
     def _dismiss_notification(self, notification_id: int):
         self.db.dismiss_notification(notification_id)
+
+    # ── Metadata sync ──────────────────────────────────────────────────────────
+
+    def _sync_metadata(self, only_ids: Optional[List[int]] = None):
+        if self._meta_sync_running and only_ids is None:
+            return
+        from core.metadata_sync import MetadataSync
+        if only_ids is None:
+            self._meta_sync_running = True
+        worker = Worker(MetadataSync(self.db).sync, only_ids=only_ids)
+        worker.signals.result.connect(self._on_metadata_synced)
+        if only_ids is None:
+            worker.signals.finished.connect(lambda: setattr(self, "_meta_sync_running", False))
+        run_worker(worker)
+
+    def _on_metadata_synced(self, result: Dict):
+        changed = set(result.get("changed") or [])
+        art = set(result.get("art_changed") or [])
+        for aid in changed | art:
+            card = self._cards.get(aid)
+            row = self.db.get_anime_by_id(aid)
+            if not row:
+                continue
+            if card is not None:
+                card.update_data(row)
+                if aid in art:
+                    self._load_card_image(row, card)
+            if (self.detail_panel.isVisible() and self.selected_anime_id == aid):
+                self.detail_panel.refresh_from_db()
+                if aid in art:
+                    self._load_detail_images(row)
+        if changed:
+            self._apply_card_overlays()
+        notes = result.get("notifications") or []
+        if notes:
+            self.notification_banner.show_notifications(notes)
+            if self.detail_panel.isVisible():
+                self.notification_banner.pause_for_detail()
+
+    def _play_trailer(self, trailer_id: str, site: str, title: str):
+        if not trailer_id:
+            return
+        from ui.trailer_player import show_trailer
+        show_trailer(trailer_id, site or "youtube", title, self)
+
+    def _inject_demo_planned(self):
+        """`python main.py --demo-planned`: open a Plan-to-Watch anime in the
+        new detail layout and show a sample "new trailer" notification.
+        Nothing is written to the database."""
+        from ui.toast import Toast
+        planned = self.db.get_all_anime(watch_status="planned")
+        if not planned:
+            Toast.show(self, "Demo: add something to Plan to Watch first.", kind="info")
+            return
+        pick = next((a for a in planned if a.get("trailer_id")), planned[0])
+        title = pick.get("english_title") or pick.get("romaji_title") or "Anime"
+        self._set_filter("planned")
+
+        def show():
+            if not pick.get("trailer_id"):
+                self._on_card_clicked(pick["id"])
+                return
+            self.notification_banner.show_notifications([{
+                "id": -101, "kind": "upcoming_trailer", "anime_id": pick["id"],
+                "title": "New trailer is out",
+                "message": f"{title} has a trailer. Watch it right here.",
+                "payload": {"trailer_id": pick["trailer_id"],
+                            "trailer_site": pick.get("trailer_site") or "youtube",
+                            "anime_title": title},
+            }])
+            self.notification_banner.raise_()
+        QTimer.singleShot(1500, show)
 
     # ── New-season spotlight ───────────────────────────────────────────────────
 
