@@ -50,6 +50,23 @@ def get_version() -> str:
     return "0.0.0"
 
 
+def run_tests() -> bool:
+    """Safety net: never build a release from code that fails its tests."""
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        print("\nWARN  pytest not installed - run: pip install -r requirements-dev.txt")
+        print("      Refusing to build untested. Use --skip-tests to override.")
+        return False
+    print("\nRunning tests...")
+    rc = subprocess.call([sys.executable, "-m", "pytest", "-q"], cwd=str(ROOT))
+    if rc != 0:
+        print("\nFAIL  Tests failed - build aborted. Fix them (or --skip-tests).")
+        return False
+    print("OK  All tests passed")
+    return True
+
+
 def ensure_pyinstaller():
     try:
         import PyInstaller
@@ -248,9 +265,12 @@ def report(version: str):
 if __name__ == "__main__":
     do_zip     = "--zip" in sys.argv
     do_install = "--no-install" not in sys.argv
+    do_tests   = "--skip-tests" not in sys.argv
     version = get_version()
     print(f"\nMiroku v{version} — Build Script")
     print("=" * 52)
+    if do_tests and not run_tests():
+        sys.exit(1)
     ensure_pyinstaller()
     clean()
     build(version)

@@ -34,6 +34,19 @@ This takes 1–3 minutes. When done you will see:
 📏  ~85 MB
 ```
 
+### Automated tests (the safety net)
+
+`python build_exe.py` runs the test suite first and **refuses to build if
+anything fails**. Run the tests on their own any time:
+
+```powershell
+pip install -r requirements-dev.txt   # one time
+python -m pytest
+```
+
+They use a temporary database and settings, never touch your real library,
+run offline, and open no visible windows. `--skip-tests` overrides (avoid).
+
 ### Your own copy updates itself
 
 On Windows every successful build also installs the app to
