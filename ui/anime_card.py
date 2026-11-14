@@ -134,6 +134,19 @@ def _scale_crop(path: str, w: int, h: int) -> Optional[QPixmap]:
 
 # ── Card ──────────────────────────────────────────────────────────────────────
 
+class _ClickBadge(QLabel):
+    """Badge label that swallows its own click (so the card underneath
+    doesn't also open the detail panel)."""
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class AnimeCard(QFrame):
     """
     Poster-style anime card.
@@ -150,6 +163,7 @@ class AnimeCard(QFrame):
 
     clicked       = pyqtSignal(int)
     watch_toggled = pyqtSignal(int)
+    new_season_clicked = pyqtSignal(int)
     def __init__(self, anime: Dict[str, Any], db: DatabaseManager,
                  parent=None):
         super().__init__(parent)
@@ -238,6 +252,22 @@ class AnimeCard(QFrame):
         self.behind_badge_lbl.setVisible(False)
         self.behind_badge_lbl.move(8, 8)
 
+        # New-season ribbon — top-left, under any other badge
+        self.new_season_badge = _ClickBadge(self._cover_w)
+        self.new_season_badge.setObjectName("coverNewSeasonBadge")
+        # Inline so the cover's blanket "background:transparent" can't win.
+        self.new_season_badge.setStyleSheet(
+            "QLabel{background-color:rgba(40,28,4,0.94);color:#fbbf24;"
+            "border:1px solid rgba(251,191,36,0.60);border-radius:5px;"
+            "font-size:10px;font-weight:800;padding:3px 2px;}"
+            "QLabel:hover{background-color:rgba(74,52,8,0.97);}"
+        )
+        self.new_season_badge.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.new_season_badge.setVisible(False)
+        # Bound method, not a lambda: a lambda closing over `self` keeps
+        # discarded cards alive (and they then surface as stray windows).
+        self.new_season_badge.clicked.connect(self._emit_new_season_clicked)
+
         # Ep count badge — top-right
         self.ep_cover_badge = QLabel(self._cover_w)
         self.ep_cover_badge.setObjectName("coverEpBadge")
@@ -324,6 +354,7 @@ class AnimeCard(QFrame):
         self.score_badge_lbl.raise_()
         self.behind_badge_lbl.raise_()
         self.ep_cover_badge.raise_()
+        self.new_season_badge.raise_()
         self._info_w.raise_()
 
         root.addWidget(self._cover_w)
@@ -726,6 +757,25 @@ class AnimeCard(QFrame):
     def paintEvent(self, event):
         # Base painting only; border is painted by the overlay widget above cover.
         super().paintEvent(event)
+
+    def _emit_new_season_clicked(self):
+        self.new_season_clicked.emit(self.anime_id)
+
+    def set_new_season_badge(self, text: Optional[str], tooltip: str = ""):
+        """Show/hide the amber "new season" ribbon (None hides it)."""
+        if not text:
+            self.new_season_badge.setVisible(False)
+            return
+        self.new_season_badge.setText(f"  ✦ {text}  ")
+        self.new_season_badge.setToolTip(tooltip)
+        self.new_season_badge.adjustSize()
+        y = 8
+        for other in (self.behind_badge_lbl, self.score_badge_lbl):
+            if other.isVisibleTo(self):
+                y = other.y() + other.height() + 6
+        self.new_season_badge.move(8, y)
+        self.new_season_badge.setVisible(True)
+        self.new_season_badge.raise_()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

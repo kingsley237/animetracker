@@ -1326,3 +1326,111 @@ QLabel#slideBigNumber {
 }
 
 
+
+/* ── New-season spotlight ─────────────────────────────────────────────────── */
+QLabel#spotlightBadge {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-radius: 6px;
+    padding: 4px 9px;
+}
+
+QLabel#spotlightPager {
+    color: #e2e4ec;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: rgba(8, 10, 16, 0.72);
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
+QPushButton#spotlightChip {
+    background-color: rgba(8, 10, 16, 0.72);
+    color: #e2e4ec;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 13px;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0;
+}
+
+QPushButton#spotlightChip:hover {
+    background-color: rgba(75, 63, 168, 0.85);
+    border-color: rgba(165, 148, 249, 0.60);
+}
+
+QLabel#spotlightTitle {
+    color: #f0f1f5;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QLabel#spotlightMeta {
+    color: #9da5c0;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+QLabel#spotlightWhy {
+    font-size: 12px;
+}
+
+QLabel#spotlightWhen {
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 7px;
+    padding: 5px 10px;
+}
+
+QLabel#spotlightSynopsis {
+    color: #8890ab;
+    font-size: 12px;
+}
+
+QPushButton#spotlightMore {
+    background-color: #131620;
+    color: #9da5c0;
+    border: 1px solid #1e2130;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 0;
+}
+
+QPushButton#spotlightMore:hover {
+    background-color: #1a1e2e;
+    border-color: #2e3354;
+    color: #e2e4ec;
+}
+
+QMenu#spotlightMenu {
+    background-color: #0f1118;
+    border: 1px solid #252a40;
+    border-radius: 8px;
+    padding: 6px 0;
+}
+
+QMenu#spotlightMenu::item {
+    padding: 8px 20px;
+    color: #c7cbd9;
+}
+
+QMenu#spotlightMenu::item:selected {
+    background-color: #252a40;
+    color: #f0f1f5;
+}
+
+QLabel#coverNewSeasonBadge {
+    background-color: rgba(40, 28, 4, 0.92);
+    color: #fbbf24;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 3px 2px;
+    border: 1px solid rgba(251, 191, 36, 0.55);
+}
+
+QLabel#coverNewSeasonBadge:hover {
+    background-color: rgba(70, 48, 6, 0.95);
+}
