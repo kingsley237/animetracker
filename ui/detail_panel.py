@@ -1095,8 +1095,11 @@ class _LockedEpRow(QFrame):
     def __init__(self, ep_num: int, display_num: int, parent=None):
         super().__init__(parent)
         self.setFixedHeight(36)
+        self.setObjectName("lockedEpRow")
+        # Scoped to the row: an unscoped "QFrame{border...}" also boxed the
+        # labels inside it (QLabel is a QFrame).
         self.setStyleSheet(
-            "QFrame{background:#0d0f14;border:1px solid #141720;border-radius:7px;}"
+            "QFrame#lockedEpRow{background:#0d0f14;border:1px solid #141720;border-radius:7px;}"
         )
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 0, 10, 0)
