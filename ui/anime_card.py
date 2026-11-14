@@ -640,6 +640,23 @@ class AnimeCard(QFrame):
         else:
             self.ep_cover_badge.setVisible(False)
 
+        # ── Rewatches (Completed) ───────────────────────────────────────────
+        if ws == "completed" and anime["id"] > 0 and not is_incomplete_completion:
+            active = self.db.get_active_rewatch(anime["id"])
+            times = 1 + self.db.rewatch_count(anime["id"])
+            if active:
+                prog = int(active.get("progress") or 0)
+                self._set_badge("badgeWatching", f"↻ REWATCH {prog}/{total}" if total else "↻ REWATCHING")
+                self.ep_label.setText(f"Rewatch #{active['number']} · ep {prog}")
+                if total:
+                    self.progress_bar.setMaximum(total)
+                    self.progress_bar.setValue(min(prog, total))
+                    self.progress_bar.setStyleSheet(
+                        "QProgressBar{background:rgba(255,255,255,0.12);border:none;border-radius:0;}"
+                        "QProgressBar::chunk{background:#7c6af7;border-radius:0;}")
+            elif times > 1:
+                self.ep_label.setText(f"{watched}/{total or '?'} eps · watched {times}×")
+
         # ── Dropped: stop point, how long ago, why ────────────────────────
         self._static_note = ""
         if ws == "dropped":

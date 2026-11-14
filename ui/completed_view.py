@@ -25,14 +25,22 @@ def finished_ts(anime: Dict) -> int:
                or anime.get("date_added") or 0)
 
 
-def group_completed(anime_list: List[Dict], now: Optional[datetime] = None
+def group_completed(anime_list: List[Dict], now: Optional[datetime] = None,
+                    rewatching: Optional[set] = None
                     ) -> List[Tuple[str, str, List[Dict]]]:
     """[(key, label, members)] newest first. Keys are stable so fold state
-    can be remembered: 'month', 'year', or a year like '2025'."""
+    can be remembered: 'rewatching', 'month', 'year', or a year like '2025'."""
     now = now or datetime.now()
+    rewatching = rewatching or set()
     buckets: Dict[str, List[Dict]] = {}
     order: List[Tuple[str, str]] = []
+    now_rw = [a for a in anime_list if a.get("id") in rewatching]
+    if now_rw:
+        buckets["rewatching"] = now_rw
+        order.append(("rewatching", "Rewatching now"))
     for a in sorted(anime_list, key=finished_ts, reverse=True):
+        if a.get("id") in rewatching:
+            continue
         ts = finished_ts(a)
         dt = datetime.fromtimestamp(ts) if ts else None
         if dt and dt.year == now.year and dt.month == now.month:
@@ -52,7 +60,7 @@ def group_completed(anime_list: List[Dict], now: Optional[datetime] = None
 
 def default_collapsed(key: str, now: Optional[datetime] = None) -> bool:
     """This year's groups start open; past years start folded."""
-    return key not in ("month", "year")
+    return key not in ("rewatching", "month", "year")
 
 
 class SectionHeader(QWidget):

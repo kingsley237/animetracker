@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.open_hall_of_fame.connect(lambda: (self._close_detail_panel(), self._navigate("hof")))
         self.detail_panel.open_sequel.connect(self._on_card_new_season)
         self.detail_panel.dropped_restored.connect(self._on_dropped_restored)
+        self.detail_panel.rewatch_changed.connect(self._on_rewatch_changed)
         self.detail_panel.dropped_removed.connect(self._on_dropped_removed)
 
         # central_content holds ONLY the content host — banner floats above it
@@ -903,7 +904,8 @@ class MainWindow(QMainWindow):
         self._completed_groups = {}
         color = "#9da5c0" if self._show_archived else "#34d399"
         action = "Restore all" if self._show_archived else "Archive these"
-        for key, label, members in group_completed(anime_list):
+        rewatching = set(self.db.get_active_rewatch_ids())
+        for key, label, members in group_completed(anime_list, rewatching=rewatching):
             self._completed_groups[key] = [a["id"] for a in members]
             folded = self._is_folded(key)
             hdr = SectionHeader(key, label, len(members), color, collapsed=folded,
@@ -959,6 +961,18 @@ class MainWindow(QMainWindow):
 
     def _on_archive_changed(self, anime_id: int):
         self._load_library_for_current_page()
+
+    def _on_rewatch_changed(self, anime_id: int):
+        card = self._cards.get(anime_id)
+        row = self.db.get_anime_by_id(anime_id)
+        if card is not None and row:
+            card.update_data(row)
+        # Starting/finishing a rewatch moves the card in/out of "Rewatching now"
+        if self._current_filter == "completed" and self.current_page == "library":
+            in_group = anime_id in (self._completed_groups.get("rewatching") or [])
+            now_active = self.db.get_active_rewatch(anime_id) is not None
+            if in_group != now_active:
+                self._load_library()
 
     def _on_dropped_restored(self, new_id: int, ws: str):
         from ui.toast import Toast

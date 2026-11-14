@@ -105,6 +105,7 @@ class DatabaseManager:
                 conn.execute(col_sql)
             except Exception:
                 pass   # column already exists
+        self._ensure_rewatch_table(conn)
         # Backfill when existing Completed anime were finished: best signal
         # is the last episode the user marked, then when it was added.
         conn.execute(
@@ -347,6 +348,82 @@ class DatabaseManager:
                 return r[0] if r and r[0] else -1
             result.sort(key=_avg, reverse=True)
         return result
+
+    # ─── Rewatches ────────────────────────────────────────────────────────────
+    # A rewatch has its own episode counter so the original watch history
+    # (episodes, per-episode ratings, dates) is never touched.
+
+    def _ensure_rewatch_table(self, conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rewatches (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id    INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                number      INTEGER NOT NULL,
+                started_at  INTEGER,
+                finished_at INTEGER,
+                progress    INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rewatches_anime ON rewatches(anime_id)")
+
+    def get_rewatches(self, anime_id: int) -> List[Dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM rewatches WHERE anime_id=? ORDER BY number", (anime_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_active_rewatch(self, anime_id: int) -> Optional[Dict]:
+        row = self._get_conn().execute(
+            "SELECT * FROM rewatches WHERE anime_id=? AND finished_at IS NULL "
+            "ORDER BY number DESC LIMIT 1", (anime_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_active_rewatch_ids(self) -> List[int]:
+        rows = self._get_conn().execute(
+            "SELECT DISTINCT anime_id FROM rewatches WHERE finished_at IS NULL"
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def rewatch_count(self, anime_id: int) -> int:
+        row = self._get_conn().execute(
+            "SELECT COUNT(*) FROM rewatches WHERE anime_id=? AND finished_at IS NOT NULL",
+            (anime_id,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def start_rewatch(self, anime_id: int) -> Optional[int]:
+        """Start a rewatch (no-op if one is already running). Returns its id."""
+        active = self.get_active_rewatch(anime_id)
+        if active:
+            return active["id"]
+        conn = self._get_conn()
+        number = self.rewatch_count(anime_id) + 1
+        cur = conn.execute(
+            "INSERT INTO rewatches (anime_id, number, started_at, progress) VALUES (?,?,?,0)",
+            (anime_id, number, int(datetime.now().timestamp())))
+        conn.commit()
+        return cur.lastrowid
+
+    def set_rewatch_progress(self, rewatch_id: int, progress: int):
+        conn = self._get_conn()
+        conn.execute("UPDATE rewatches SET progress=? WHERE id=?",
+                     (max(0, int(progress)), rewatch_id))
+        conn.commit()
+
+    def finish_rewatch(self, rewatch_id: int, progress: Optional[int] = None):
+        conn = self._get_conn()
+        if progress is not None:
+            conn.execute("UPDATE rewatches SET progress=? WHERE id=?", (progress, rewatch_id))
+        conn.execute("UPDATE rewatches SET finished_at=? WHERE id=?",
+                     (int(datetime.now().timestamp()), rewatch_id))
+        conn.commit()
+
+    def abandon_rewatch(self, rewatch_id: int):
+        """Stopping a rewatch discards it (numbering stays contiguous)."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM rewatches WHERE id=? AND finished_at IS NULL", (rewatch_id,))
+        conn.commit()
 
     # ─── Completed housekeeping (archive) ─────────────────────────────────────
 

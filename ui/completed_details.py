@@ -21,7 +21,8 @@ from typing import Dict, List, Optional
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 _LABELS = {1: "Terrible", 2: "Bad", 3: "Fair", 4: "Good", 5: "Great", 6: "Masterpiece"}
@@ -129,6 +130,7 @@ class _SeasonCurve(QWidget):
 
 class CompletedTop(QWidget):
     rated = pyqtSignal(int)
+    rewatch_changed = pyqtSignal(int)
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -198,6 +200,65 @@ class CompletedTop(QWidget):
             grid.addWidget(t, i // 3, i % 3)
         self.journey_card.layout().addLayout(grid)
         lay.addWidget(self.journey_card)
+
+        # Rewatches
+        self.rewatch_card = _card("Rewatches")
+        rl = self.rewatch_card.layout()
+        self.rw_status = QLabel()
+        self.rw_status.setObjectName("plannedFactValue")
+        self.rw_status.setWordWrap(True)
+        rl.addWidget(self.rw_status)
+        # active rewatch controls
+        self.rw_active = QWidget()
+        al = QVBoxLayout(self.rw_active)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.setSpacing(8)
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        self.rw_minus = QPushButton("−")
+        self.rw_plus = QPushButton("+")
+        for b, d in ((self.rw_minus, -1), (self.rw_plus, 1)):
+            b.setObjectName("rewatchStep")
+            b.setFixedSize(34, 30)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _=False, d=d: self._step_rewatch(d))
+        self.rw_prog_lbl = QLabel()
+        self.rw_prog_lbl.setObjectName("rewatchProgress")
+        self.rw_prog_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        prow.addWidget(self.rw_minus)
+        prow.addWidget(self.rw_prog_lbl, 1)
+        prow.addWidget(self.rw_plus)
+        al.addLayout(prow)
+        self.rw_bar = QProgressBar()
+        self.rw_bar.setObjectName("rewatchBar")
+        self.rw_bar.setTextVisible(False)
+        self.rw_bar.setFixedHeight(6)
+        al.addWidget(self.rw_bar)
+        brow = QHBoxLayout()
+        self.rw_finish = QPushButton("✓  Finish rewatch")
+        self.rw_finish.setObjectName("primaryBtn")
+        self.rw_finish.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.rw_finish.clicked.connect(lambda: self._finish_rewatch())
+        self.rw_stop = QPushButton("Stop")
+        self.rw_stop.setObjectName("secondaryBtn")
+        self.rw_stop.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.rw_stop.clicked.connect(self._stop_rewatch)
+        brow.addWidget(self.rw_finish)
+        brow.addWidget(self.rw_stop)
+        brow.addStretch()
+        al.addLayout(brow)
+        rl.addWidget(self.rw_active)
+        self.rw_start = QPushButton("↻  Start a rewatch")
+        self.rw_start.setObjectName("secondaryBtn")
+        self.rw_start.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.rw_start.clicked.connect(self._start_rewatch)
+        rl.addWidget(self.rw_start, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.rw_history = QLabel()
+        self.rw_history.setObjectName("plannedReleaseHint")
+        self.rw_history.setWordWrap(True)
+        self.rw_history.setTextFormat(Qt.TextFormat.RichText)
+        rl.addWidget(self.rw_history)
+        lay.addWidget(self.rewatch_card)
 
         # Season curve
         self.curve_card = _card("Season curve")
@@ -269,6 +330,106 @@ class CompletedTop(QWidget):
         # Verdict
         self.rating.load(aid, episode_num=0)
         self._render_verdict()
+        self._render_rewatches()
+
+    # ── rewatches ─────────────────────────────────────────────────────────────
+
+    def _total(self) -> int:
+        a = self._anime or {}
+        return int(a.get("total_episodes") or 0) or len(self.db.get_episodes(a["id"])) or 0
+
+    def _render_rewatches(self):
+        a = self._anime
+        if not a:
+            return
+        history = [r for r in self.db.get_rewatches(a["id"]) if r.get("finished_at")]
+        active = self.db.get_active_rewatch(a["id"])
+        times = 1 + len(history)
+        self.rw_active.setVisible(bool(active))
+        self.rw_start.setVisible(not active)
+        total = self._total()
+        if active:
+            started = datetime.fromtimestamp(active["started_at"]).strftime("%b %d") if active.get("started_at") else ""
+            self.rw_status.setText(
+                f"Rewatch #{active['number']} in progress" + (f" · started {started}" if started else ""))
+            prog = int(active.get("progress") or 0)
+            self.rw_prog_lbl.setText(f"Episode {prog} / {total}" if total else f"Episode {prog}")
+            self.rw_bar.setMaximum(max(total, 1))
+            self.rw_bar.setValue(min(prog, total) if total else 0)
+            self.rw_bar.setVisible(bool(total))
+            self.rw_minus.setEnabled(prog > 0)
+        else:
+            self.rw_status.setText(
+                "Watched once." if times == 1 else f"Watched {times} times.")
+        rows = []
+        for r in reversed(history):
+            s = datetime.fromtimestamp(r["started_at"]) if r.get("started_at") else None
+            f = datetime.fromtimestamp(r["finished_at"])
+            span = ""
+            if s:
+                days = max(1, round((r["finished_at"] - r["started_at"]) / 86400))
+                span = f" · {days} day{'s' if days != 1 else ''}"
+            when = (s.strftime("%b %d") + " → " if s else "") + f.strftime("%b %d, %Y")
+            rows.append(f"<span style='color:#c4b8ff'>#{r['number']}</span>&nbsp;&nbsp;{when}{span}")
+        self.rw_history.setText("<br>".join(rows))
+        self.rw_history.setVisible(bool(rows))
+        # Finished card mentions repeat views too
+        if times > 1 and self.finish_sub.text():
+            base = self.finish_sub.text().split("  ·  Watched")[0]
+            self.finish_sub.setText(f"{base}  ·  Watched {times}×")
+
+    def _start_rewatch(self):
+        a = self._anime
+        if not a:
+            return
+        self.db.start_rewatch(a["id"])
+        self._render_rewatches()
+        self.rewatch_changed.emit(a["id"])
+
+    def _step_rewatch(self, delta: int):
+        a = self._anime
+        active = self.db.get_active_rewatch(a["id"]) if a else None
+        if not active:
+            return
+        total = self._total()
+        prog = max(0, int(active.get("progress") or 0) + delta)
+        if total:
+            prog = min(prog, total)
+        self.db.set_rewatch_progress(active["id"], prog)
+        if total and prog >= total:
+            self._finish_rewatch(auto=True)
+            return
+        self._render_rewatches()
+        self.rewatch_changed.emit(a["id"])
+
+    def _finish_rewatch(self, auto: bool = False):
+        a = self._anime
+        active = self.db.get_active_rewatch(a["id"]) if a else None
+        if not active:
+            return
+        total = self._total()
+        self.db.finish_rewatch(active["id"], progress=total or active.get("progress"))
+        self._render_rewatches()
+        self.rewatch_changed.emit(a["id"])
+        from ui.toast import Toast
+        Toast.show(self.window(), f"Rewatch #{active['number']} complete. "
+                                  f"That's {1 + self.db.rewatch_count(a['id'])} times watched.",
+                   kind="success")
+
+    def _stop_rewatch(self):
+        a = self._anime
+        active = self.db.get_active_rewatch(a["id"]) if a else None
+        if not active:
+            return
+        res = QMessageBox.question(
+            self, "Stop this rewatch?",
+            f"Stop rewatch #{active['number']}? Its progress won't be kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if res != QMessageBox.StandardButton.Yes:
+            return
+        self.db.abandon_rewatch(active["id"])
+        self._render_rewatches()
+        self.rewatch_changed.emit(a["id"])
 
     def _render_verdict(self):
         a = self._anime or {}

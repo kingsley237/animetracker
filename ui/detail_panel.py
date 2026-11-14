@@ -60,6 +60,7 @@ class DetailPanel(QWidget):
     open_sequel      = pyqtSignal(int)
     dropped_restored = pyqtSignal(int, str)
     dropped_removed  = pyqtSignal()
+    rewatch_changed  = pyqtSignal(int)
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -190,6 +191,7 @@ class DetailPanel(QWidget):
         from ui.completed_details import CompletedTop, CompletedBottom
         self.completed_top = CompletedTop(self.db)
         self.completed_top.rated.connect(lambda aid: self.stats_changed.emit())
+        self.completed_top.rewatch_changed.connect(self.rewatch_changed.emit)
         self.completed_top.setVisible(False)
         self._lay.addWidget(self.completed_top)
 
@@ -981,11 +983,13 @@ class _EpRow(QFrame):
         # Download
         # Watch
         self.watch_btn = QPushButton()
-        self.watch_btn.setFixedSize(26, 26)
-        self.watch_btn.setObjectName("iconBtn")
+        self.watch_btn.setFixedSize(28, 28)
+        # Own name: the shared "iconBtn" style adds padding + a 28px
+        # min-height that pushed the tick down and clipped it.
+        self.watch_btn.setObjectName("epWatchBtn")
         self.watch_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.watch_btn.clicked.connect(self._toggle_watch)
-        lay.addWidget(self.watch_btn)
+        lay.addWidget(self.watch_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._refresh()
 
@@ -1014,7 +1018,8 @@ class _EpRow(QFrame):
             self.watch_btn.setText("✓")
             self.watch_btn.setStyleSheet(
                 "QPushButton{background:#0e2a1f;color:#34d399;border-radius:6px;"
-                "font-size:13px;font-weight:700;border:1px solid #1f4b35;}"
+                "font-size:13px;font-weight:700;border:1px solid #1f4b35;"
+                "padding:0;min-height:0;}"
             )
             self.setStyleSheet(
                 "QFrame#episodeRow{background:#0c1a14;border:1px solid #1a3a28;"
@@ -1025,7 +1030,8 @@ class _EpRow(QFrame):
             self.watch_btn.setText("○")
             self.watch_btn.setStyleSheet(
                 "QPushButton{background:#111420;color:#7c849b;border:1px solid #1e2235;"
-                "border-radius:6px;font-size:13px;font-weight:700;}"
+                "border-radius:6px;font-size:13px;font-weight:700;"
+                "padding:0;min-height:0;}"
             )
             self.setStyleSheet(
                 "QFrame#episodeRow{background:#0d0f14;border:1px solid #1a1d28;"

@@ -1664,3 +1664,40 @@ QPlainTextEdit#dropReason {
 QPlainTextEdit#dropReason:focus {
     border-color: #4b3fa8;
 }
+
+/* ── Rewatches ─────────────────────────────────────────────────────────────── */
+QPushButton#rewatchStep {
+    background-color: #131620;
+    color: #e2e4ec;
+    border: 1px solid #1e2130;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 0;
+}
+
+QPushButton#rewatchStep:hover {
+    background-color: #4b3fa8;
+    border-color: #4b3fa8;
+}
+
+QPushButton#rewatchStep:disabled {
+    color: #3a3f55;
+}
+
+QLabel#rewatchProgress {
+    color: #c4b8ff;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QProgressBar#rewatchBar {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#rewatchBar::chunk {
+    background-color: #7c6af7;
+    border-radius: 3px;
+}
