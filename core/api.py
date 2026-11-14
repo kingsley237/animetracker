@@ -374,6 +374,82 @@ def refresh_airing_data(anilist_ids: List[int]) -> Dict[int, Optional[Dict]]:
     return results
 
 
+SEQUEL_FORMATS = {"TV", "TV_SHORT", "ONA", "MOVIE"}
+
+_SEQUEL_NODE_FIELDS = """
+    id
+    title { romaji english }
+    format
+    status
+    episodes
+    season
+    seasonYear
+    startDate { year month day }
+    endDate { year month day }
+    nextAiringEpisode { airingAt episode timeUntilAiring }
+    coverImage { large medium color }
+    bannerImage
+    trailer { id site }
+    averageScore
+    popularity
+    genres
+    studios(isMain: true) { nodes { name } }
+    description(asHtml: false)
+"""
+
+
+def get_sequels(anilist_ids: List[int], batch: int = 8) -> Dict[int, List[Dict]]:
+    """Return {prequel_anilist_id: [sequel media, ...]} for the given ids.
+
+    Only direct SEQUEL relations in watchable formats (TV / TV short / ONA /
+    movie) are returned - specials, music videos and side stories are noise
+    for a "new season is here" alert. Ids whose request failed are omitted,
+    so callers can tell "no sequel" ([]) apart from "unknown" (missing key).
+    """
+    results: Dict[int, List[Dict]] = {}
+    ids = [int(a) for a in anilist_ids if a]
+    for i in range(0, len(ids), batch):
+        chunk = ids[i:i + batch]
+        parts = []
+        variables: Dict[str, Any] = {}
+        for j, aid in enumerate(chunk):
+            parts.append(f"""
+                a{j}: Media(id: $id{j}, type: ANIME) {{
+                    id
+                    relations {{
+                        edges {{
+                            relationType
+                            node {{ type {_SEQUEL_NODE_FIELDS} }}
+                        }}
+                    }}
+                }}
+            """)
+            variables[f"id{j}"] = aid
+        var_decls = ", ".join(f"$id{j}: Int" for j in range(len(chunk)))
+        gql = f"query ({var_decls}) {{ {''.join(parts)} }}"
+        data = _post(gql, variables, timeout=15)
+        if not data:
+            continue
+        for j, aid in enumerate(chunk):
+            media = data.get(f"a{j}")
+            if media is None:
+                continue
+            sequels = []
+            for edge in ((media.get("relations") or {}).get("edges") or []):
+                node = edge.get("node") or {}
+                if edge.get("relationType") != "SEQUEL":
+                    continue
+                if node.get("type") not in (None, "ANIME"):
+                    continue
+                if (node.get("format") or "") not in SEQUEL_FORMATS:
+                    continue
+                sequels.append(node)
+            results[aid] = sequels
+        if i + batch < len(ids):
+            time.sleep(1.0)   # be gentle with AniList's rate limit
+    return results
+
+
 def check_connection() -> tuple[bool, str, float]:
     """Check AniList connectivity and measure latency."""
     import socket

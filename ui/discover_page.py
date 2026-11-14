@@ -480,29 +480,9 @@ class DiscoverPage(QWidget):
                 pass
             self._active_info_dlg = None
 
-        dlg = _InfoDialog(media, self)
+        dlg = open_media_info(media, self)
         self._active_info_dlg = dlg
         dlg.finished.connect(lambda _: setattr(self, "_active_info_dlg", None))
-        _center_on_parent_screen(dlg, self)
-        dlg.show()
-
-        # Always fetch full data — skeleton hides body until this completes
-        anilist_id = media.get("id")
-        if anilist_id:
-            def fetch():
-                return get_anime_by_id(anilist_id)
-            def update(full):
-                if dlg.isVisible() and full:
-                    dlg._update_with_full(full)
-                elif dlg.isVisible():
-                    # Fetch returned nothing — still dismiss skeleton
-                    dlg._update_with_full(media)
-            w = Worker(fetch)
-            w.signals.result.connect(update)
-            run_worker(w)
-        else:
-            # No AniList ID — dismiss skeleton immediately with what we have
-            dlg._update_with_full(media)
 
     # ── Add ───────────────────────────────────────────────────────────────────
 
@@ -554,35 +534,8 @@ class DiscoverPage(QWidget):
         run_worker(w)
 
     def _commit(self, media: Dict):
-        t    = media.get("title", {})
-        cov  = media.get("coverImage") or {}
-        nae  = media.get("nextAiringEpisode") or {}
-        sd   = media.get("startDate") or {}
-        api_s = (media.get("status") or "").upper()
-        ws   = "planned" if api_s == "NOT_YET_RELEASED" else "watching"
-
-        self.db.add_anime({
-            "anilist_id":       media.get("id"),
-            "romaji_title":     t.get("romaji", "Unknown"),
-            "english_title":    t.get("english") or "",
-            "native_title":     t.get("native") or "",
-            "watch_status":     ws,
-            "status":           media.get("status", ""),
-            "cover_url":        cov.get("large") or cov.get("medium") or "",
-            "banner_url":       media.get("bannerImage") or "",
-            "description":      media.get("description") or "",
-            "genres":           media.get("genres") or [],
-            "studios":          [s["name"] for s in
-                                 (media.get("studios", {}).get("nodes") or [])],
-            "total_episodes":   media.get("episodes"),
-            "season":           media.get("season") or "",
-            "season_year":      media.get("seasonYear"),
-            "average_score":    media.get("averageScore"),
-            "popularity":       media.get("popularity"),
-            "start_date":       format_air_date(sd),
-            "next_episode_at":  nae.get("airingAt"),
-            "next_episode_num": nae.get("episode"),
-        })
+        t  = media.get("title", {})
+        ws = add_media_to_library(self.db, media)
         label = "Plan to Watch" if ws == "planned" else "Watching"
         from ui.toast import Toast
         Toast.show(self.window(), f"'{t.get('romaji', '')}' added as '{label}'.", kind="success")
@@ -1362,3 +1315,70 @@ class _InfoDialog(QDialog):
         y = max(0, (sc.height() - h) // 2)
         self.cover_lbl.setPixmap(sc.copy(x, y, w, h))
         self.cover_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+
+# ─── Shared helpers (also used by the new-season spotlight) ──────────────────
+
+def add_media_to_library(db: DatabaseManager, media: Dict,
+                         watch_status: Optional[str] = None) -> str:
+    """Insert an AniList media dict into the library. Returns the watch
+    status used ('planned' for not-yet-released, else 'watching' unless
+    overridden)."""
+    t    = media.get("title", {}) or {}
+    cov  = media.get("coverImage") or {}
+    nae  = media.get("nextAiringEpisode") or {}
+    sd   = media.get("startDate") or {}
+    trailer = media.get("trailer") or {}
+    api_s = (media.get("status") or "").upper()
+    ws   = watch_status or ("planned" if api_s == "NOT_YET_RELEASED" else "watching")
+
+    db.add_anime({
+        "anilist_id":       media.get("id"),
+        "romaji_title":     t.get("romaji", "Unknown"),
+        "english_title":    t.get("english") or "",
+        "native_title":     t.get("native") or "",
+        "watch_status":     ws,
+        "status":           media.get("status", ""),
+        "cover_url":        cov.get("large") or cov.get("medium") or "",
+        "banner_url":       media.get("bannerImage") or "",
+        "description":      media.get("description") or "",
+        "genres":           media.get("genres") or [],
+        "studios":          [s["name"] for s in
+                             ((media.get("studios") or {}).get("nodes") or [])],
+        "total_episodes":   media.get("episodes"),
+        "season":           media.get("season") or "",
+        "season_year":      media.get("seasonYear"),
+        "average_score":    media.get("averageScore"),
+        "popularity":       media.get("popularity"),
+        "trailer_id":       trailer.get("id") or None,
+        "trailer_site":     trailer.get("site") or None,
+        "start_date":       format_air_date(sd),
+        "next_episode_at":  nae.get("airingAt"),
+        "next_episode_num": nae.get("episode"),
+    })
+    return ws
+
+
+def open_media_info(media: Dict, parent: Optional[QWidget] = None) -> "QDialog":
+    """Open the Discover info dialog for an AniList media dict (non-modal).
+    Shows a skeleton immediately and fills in once full data arrives."""
+    dlg = _InfoDialog(media, parent)
+    _center_on_parent_screen(dlg, parent)
+    dlg.show()
+    anilist_id = media.get("id")
+    if anilist_id:
+        def fetch():
+            return get_anime_by_id(anilist_id)
+
+        def update(full):
+            try:
+                if dlg.isVisible():
+                    dlg._update_with_full(full or media)
+            except RuntimeError:
+                pass   # dialog already destroyed
+        w = Worker(fetch)
+        w.signals.result.connect(update)
+        run_worker(w)
+    else:
+        dlg._update_with_full(media)
+    return dlg

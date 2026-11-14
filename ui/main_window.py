@@ -63,9 +63,11 @@ def _build_app_icon() -> QIcon:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: DatabaseManager, demo_new_season: bool = False):
         super().__init__()
         self.db = db
+        self._demo_new_season = demo_new_season
+        self._demo_items: List[Dict] = []
         self.current_page = "library"
         self.selected_anime_id: Optional[int] = None
         self._cards: Dict[int, AnimeCard] = {}
@@ -99,6 +101,8 @@ class MainWindow(QMainWindow):
         self._check_for_updates()
         self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
+        if self._demo_new_season:
+            QTimer.singleShot(3000, self._inject_demo_new_season)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -208,6 +212,12 @@ class MainWindow(QMainWindow):
         self.notification_banner.move_to_watching.connect(self._move_notification_to_watching)
         self.notification_banner.remind_later.connect(self._remind_notification_later)
         self.notification_banner.dismissed.connect(self._dismiss_notification)
+        from ui.new_season_spotlight import NewSeasonSpotlight
+        self.new_season_spotlight = NewSeasonSpotlight(central)
+        self.new_season_spotlight.dismissed.connect(self._dismiss_new_season)
+        self.new_season_spotlight.remind_later.connect(self._remind_new_season)
+        self.new_season_spotlight.open_prequel.connect(self._open_notification_anime)
+        self.new_season_spotlight.add_requested.connect(self._add_new_season)
         self.setStatusBar(self._build_status_bar())
 
 
@@ -482,6 +492,8 @@ class MainWindow(QMainWindow):
             self.notification_banner.resume_after_detail()
             if self.notification_banner.isVisible():
                 self.notification_banner.raise_()
+        if hasattr(self, "new_season_spotlight"):
+            self.new_season_spotlight.resume_after_detail()
 
     def _position_detail_overlay(self):
         host = self._content_host
@@ -499,6 +511,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "notification_banner"):
             self.notification_banner.pause_for_detail()
             self.notification_banner.lower()
+        if hasattr(self, "new_season_spotlight"):
+            self.new_season_spotlight.pause_for_detail()
 
     def _on_detail_links_changed(self):
         if self.selected_anime_id and self.selected_anime_id in self._cards:
@@ -660,7 +674,12 @@ class MainWindow(QMainWindow):
         for i in reversed(range(self.grid_layout.count())):
             item = self.grid_layout.itemAt(i)
             if item and item.widget():
-                item.widget().setParent(None)
+                w = item.widget()
+                w.hide()
+                w.setParent(None)
+                # Actually destroy it - a parentless widget that something
+                # still references can otherwise pop up as its own window.
+                w.deleteLater()
         self._cards.clear()
 
     def _render_library(self, anime_list: List[Dict],
@@ -685,6 +704,7 @@ class MainWindow(QMainWindow):
                 for idx, anime in enumerate(anime_list):
                     card = AnimeCard(anime, self.db)
                     card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
+                    card.new_season_clicked.connect(self._on_card_new_season)
                     self._cards[anime["id"]] = card
                     self.grid_layout.addWidget(card, idx // COLS, idx % COLS)
                     self._load_card_image(anime, card)
@@ -720,6 +740,7 @@ class MainWindow(QMainWindow):
                     row_num += 1
                 card = AnimeCard(anime, self.db)
                 card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
+                card.new_season_clicked.connect(self._on_card_new_season)
                 self._cards[anime["id"]] = card
                 self.grid_layout.addWidget(card, row_num, col_idx % COLS)
                 self._load_card_image(anime, card)
@@ -1054,6 +1075,7 @@ class MainWindow(QMainWindow):
             overlay = "user_rating"
         for card in self._cards.values():
             card.set_overlay_mode(overlay)
+        self._apply_new_season_ribbons()
 
     def _on_search(self, text: str):
         self._search_timer.stop()
@@ -1122,6 +1144,13 @@ class MainWindow(QMainWindow):
         self._notification_timer.start(300_000)
         QTimer.singleShot(1800, self._scan_notifications)
         QTimer.singleShot(1000, self._refresh_upcoming)
+
+        # Sequel / new-season check: relations change rarely, so every 6h.
+        self._sequel_timer = QTimer(self)
+        self._sequel_timer.timeout.connect(self._scan_sequels)
+        self._sequel_timer.start(6 * 3600 * 1000)
+        if not self._demo_new_season:
+            QTimer.singleShot(8000, self._scan_sequels)
 
     def _tick(self):
         import time as _time
@@ -1323,6 +1352,134 @@ class MainWindow(QMainWindow):
     def _dismiss_notification(self, notification_id: int):
         self.db.dismiss_notification(notification_id)
 
+    # ── New-season spotlight ───────────────────────────────────────────────────
+
+    def _scan_sequels(self):
+        from core.app_settings import app_settings
+        from core.notification_service import NotificationService
+        include_dropped = app_settings().value("new_season_include_dropped", True, type=bool)
+        service = NotificationService(self.db)
+        worker = Worker(service.scan_sequels, include_dropped=include_dropped)
+        worker.signals.result.connect(self._on_new_seasons_ready)
+        run_worker(worker)
+
+    def _on_new_seasons_ready(self, items):
+        self._apply_new_season_ribbons()
+        if items:
+            self.new_season_spotlight.show_notifications(items)
+            if self.detail_panel.isVisible():
+                self.new_season_spotlight.pause_for_detail()
+
+    def _new_season_items(self) -> List[Dict]:
+        if self._demo_new_season:
+            return list(self._demo_items)
+        return self.db.get_active_notifications("new_season")
+
+    def _apply_new_season_ribbons(self):
+        if not hasattr(self, "_cards") or not hasattr(self, "new_season_spotlight"):
+            return
+        by_prequel: Dict[int, Dict] = {}
+        for n in self._new_season_items():
+            aid = n.get("anime_id")
+            if aid and aid not in by_prequel:
+                by_prequel[aid] = n
+        for aid, card in self._cards.items():
+            n = by_prequel.get(aid)
+            if not n:
+                card.set_new_season_badge(None)
+                continue
+            payload = n.get("payload") or {}
+            seq = payload.get("sequel") or {}
+            text = {
+                "airing": "NEW SEASON AIRING",
+                "announced": "SEQUEL ANNOUNCED",
+            }.get(payload.get("phase"), "NEW SEASON OUT")
+            card.set_new_season_badge(text, f"{seq.get('title', 'New season')} - click to view")
+
+    def _on_card_new_season(self, anime_id: int):
+        items = [n for n in self._new_season_items() if n.get("anime_id") == anime_id]
+        if items:
+            self.new_season_spotlight.focus_prequel(anime_id, items)
+
+    def _find_new_season(self, notification_id: int) -> Optional[Dict]:
+        for n in self._new_season_items():
+            if n.get("id") == notification_id:
+                return n
+        return None
+
+    def _dismiss_new_season(self, notification_id: int):
+        if notification_id > 0:
+            self.db.dismiss_notification(notification_id)
+        else:
+            self._demo_items = [n for n in self._demo_items if n.get("id") != notification_id]
+        self._apply_new_season_ribbons()
+
+    def _remind_new_season(self, notification_id: int):
+        if notification_id > 0:
+            self.db.remind_notification_later(notification_id, hours=24)
+        from ui.toast import Toast
+        Toast.show(self, "Got it. You'll be reminded tomorrow.", kind="info")
+
+    def _add_new_season(self, notification_id: int, watch_status: str):
+        from ui.toast import Toast
+        item = self._find_new_season(notification_id)
+        seq = ((item or {}).get("payload") or {}).get("sequel") or {}
+        sid = seq.get("id")
+        label = "Plan to Watch" if watch_status == "planned" else "Watching"
+        title = seq.get("title") or "This anime"
+        if not item or not sid:
+            return
+        if notification_id < 0:
+            Toast.show(self, f"Demo: '{title}' would be added as {label}.", kind="success")
+            self._dismiss_new_season(notification_id)
+            self.new_season_spotlight.remove_notification(notification_id)
+            return
+        if self.db.get_anime_by_anilist_id(sid):
+            Toast.show(self, f"'{title}' is already in your library.", kind="info")
+            self._dismiss_new_season(notification_id)
+            self.new_season_spotlight.remove_notification(notification_id)
+            return
+
+        from core.api import get_anime_by_id
+
+        def done(media):
+            if not media:
+                Toast.show(self, "Could not reach AniList. Try again in a moment.", kind="error")
+                return
+            from ui.discover_page import add_media_to_library
+            add_media_to_library(self.db, media, watch_status)
+            self._dismiss_new_season(notification_id)
+            self.new_season_spotlight.remove_notification(notification_id)
+            Toast.show(self, f"'{title}' added as {label}.", kind="success")
+            self._load_library_for_current_page()
+
+        worker = Worker(get_anime_by_id, sid)
+        worker.signals.result.connect(done)
+        run_worker(worker)
+
+    def _inject_demo_new_season(self):
+        """`python main.py --demo-new-season`: show sample spotlights built
+        from real AniList art, without writing anything to the database."""
+        from ui.toast import Toast
+        Toast.show(self, "Demo mode: showing sample new-season alerts.", kind="info")
+        from ui.new_season_demo import build_demo_items
+        completed = [
+            {"anime_id": a["id"], "anilist_id": a.get("anilist_id"),
+             "title": a.get("english_title") or a.get("romaji_title"),
+             "rating": self.db.get_overall_rating(a["id"])}
+            for a in self.db.get_all_anime(watch_status="completed") if a.get("anilist_id")
+        ]
+        worker = Worker(build_demo_items, completed)
+        worker.signals.error.connect(lambda e: print("demo new-season failed:", e))
+
+        def ready(items):
+            self._demo_items = items or []
+            self._apply_new_season_ribbons()
+            self.new_season_spotlight.show_notifications(self._demo_items)
+
+        worker.signals.result.connect(ready)
+        run_worker(worker)
+
     def _check_connection(self):
         from core.connectivity import ConnectivityMonitor
         self._conn_monitor = ConnectivityMonitor(self)
@@ -1404,6 +1561,8 @@ class MainWindow(QMainWindow):
             self.update_banner._reposition()
         if hasattr(self, "notification_banner") and self.notification_banner.isVisible():
             self.notification_banner._reposition()
+        if hasattr(self, "new_season_spotlight") and self.new_season_spotlight.isVisible():
+            self.new_season_spotlight.reposition()
         if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
             self._offline_banner.reposition()
         if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():

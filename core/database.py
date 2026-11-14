@@ -853,16 +853,48 @@ class DatabaseManager:
         conn.commit()
         return cur.lastrowid
 
-    def get_due_notifications(self, limit: int = 3) -> List[Dict]:
+    def get_due_notifications(
+        self,
+        limit: int = 3,
+        kinds: Optional[List[str]] = None,
+        exclude_kinds: Optional[List[str]] = None,
+    ) -> List[Dict]:
         conn = self._get_conn()
         now = int(datetime.now().timestamp())
+        where = ["state='active'", "(remind_at IS NULL OR remind_at <= ?)"]
+        params: List[Any] = [now]
+        if kinds:
+            where.append(f"kind IN ({','.join('?' * len(kinds))})")
+            params.extend(kinds)
+        if exclude_kinds:
+            where.append(f"kind NOT IN ({','.join('?' * len(exclude_kinds))})")
+            params.extend(exclude_kinds)
+        params.append(limit)
         rows = conn.execute(
-            """SELECT * FROM notifications
-               WHERE state='active'
-                 AND (remind_at IS NULL OR remind_at <= ?)
+            f"""SELECT * FROM notifications
+               WHERE {' AND '.join(where)}
                ORDER BY last_seen DESC
                LIMIT ?""",
-            (now, limit),
+            params,
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item.get("payload") or "{}")
+            except Exception:
+                item["payload"] = {}
+            result.append(item)
+        return result
+
+    def get_active_notifications(self, kind: str) -> List[Dict]:
+        """All non-dismissed notifications of a kind, regardless of snooze -
+        used for persistent surfaces (e.g. the new-season card ribbon)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM notifications WHERE state='active' AND kind=? "
+            "ORDER BY last_seen DESC",
+            (kind,),
         ).fetchall()
         result = []
         for row in rows:

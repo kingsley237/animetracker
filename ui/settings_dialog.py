@@ -308,6 +308,18 @@ class SettingsDialog(QDialog):
         dl.addWidget(self._helper_text(
             "When off, Telegram and other app links open in their native apps when available."
         ))
+
+        sequel_cb = QCheckBox("Alert me about new seasons of anime I dropped")
+        sequel_cb.setChecked(
+            self.settings.value("new_season_include_dropped", True, type=bool)
+        )
+        sequel_cb.stateChanged.connect(
+            lambda v: self.settings.setValue("new_season_include_dropped", bool(v))
+        )
+        dl.addWidget(sequel_cb)
+        dl.addWidget(self._helper_text(
+            "Sequels of completed anime are always announced. Checked every 6 hours."
+        ))
         lay.addWidget(display)
 
         cache, cl = self._card("Image cache")
