@@ -342,6 +342,51 @@ class SettingsDialog(QDialog):
         ))
         lay.addWidget(display)
 
+        # TV shows & movies (Kinema) - data from TMDB
+        kin, kl = self._card("TV shows & movies")
+        reg_row = QHBoxLayout()
+        reg_lbl = QLabel("Your country")
+        reg_lbl.setObjectName("settingsValueText")
+        reg_row.addWidget(reg_lbl)
+        reg_row.addStretch()
+        self.region_combo = QComboBox()
+        _regions = [("United States", "US"), ("United Kingdom", "GB"), ("Canada", "CA"),
+                    ("France", "FR"), ("Germany", "DE"), ("Spain", "ES"), ("Italy", "IT"),
+                    ("Japan", "JP"), ("Brazil", "BR"), ("Mexico", "MX"), ("India", "IN"),
+                    ("Australia", "AU"), ("Nigeria", "NG"), ("South Africa", "ZA"),
+                    ("Cameroon", "CM")]
+        for text, code in _regions:
+            self.region_combo.addItem(text, code)
+        _cur_region = str(self.settings.value("tmdb_region", "US") or "US").upper()
+        self.region_combo.setCurrentIndex(
+            next((i for i, (_t, c) in enumerate(_regions) if c == _cur_region), 0))
+        self.region_combo.setFixedWidth(180)
+        self.region_combo.currentIndexChanged.connect(
+            lambda i: self.settings.setValue("tmdb_region", self.region_combo.itemData(i)))
+        reg_row.addWidget(self.region_combo)
+        kl.addLayout(reg_row)
+        kl.addWidget(self._helper_text(
+            "Used for where-to-watch and local release dates."))
+
+        from PyQt6.QtWidgets import QLineEdit
+        key_row = QHBoxLayout()
+        key_lbl = QLabel("Your own TMDB key (optional)")
+        key_lbl.setObjectName("settingsValueText")
+        key_row.addWidget(key_lbl)
+        key_row.addStretch()
+        self.tmdb_key_edit = QLineEdit()
+        self.tmdb_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tmdb_key_edit.setPlaceholderText("Paste a key or read token")
+        self.tmdb_key_edit.setFixedWidth(240)
+        self.tmdb_key_edit.setText(str(self.settings.value("tmdb_token_override", "") or ""))
+        self.tmdb_key_edit.editingFinished.connect(
+            lambda: self.settings.setValue("tmdb_token_override", self.tmdb_key_edit.text().strip()))
+        key_row.addWidget(self.tmdb_key_edit)
+        kl.addLayout(key_row)
+        kl.addWidget(self._helper_text(
+            "Leave empty to use the built-in key. A free key is available from themoviedb.org."))
+        lay.addWidget(kin)
+
         cache, cl = self._card("Image cache")
         row = QHBoxLayout()
         self.cache_lbl = QLabel(f"{cache_size_mb()} MB stored locally")
@@ -479,6 +524,9 @@ class SettingsDialog(QDialog):
 
         for text in [
             "Powered by the AniList GraphQL API for public anime data.",
+            "TV and movie data from TMDB. This product uses the TMDB API "
+            "but is not endorsed or certified by TMDB.",
+            "Where-to-watch availability provided by JustWatch.",
             "Built with Python and PyQt6.",
             "Your library database is stored locally on this machine.",
             "Cover art remains the property of its respective copyright holders.",

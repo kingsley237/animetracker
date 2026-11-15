@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 
-DB_VERSION = 4
+DB_VERSION = 5
 # Legacy data directory name (kept so existing installs keep their library).
 APP_DIR = Path.home() / ".animetracker"
 DB_PATH = APP_DIR / "anime.db"
@@ -72,6 +72,11 @@ class DatabaseManager:
             self._migrate_v3(conn)
         if current < 4:
             self._migrate_v4(conn)
+        if current < 5:
+            if current >= 1:
+                # Existing library: take a consistent safety copy first.
+                self._backup_before_upgrade(conn, "v5")
+            self._migrate_v5(conn)
 
         if current == 0:
             conn.execute("INSERT INTO schema_version VALUES (?)", (DB_VERSION,))
@@ -288,6 +293,70 @@ class DatabaseManager:
                 ON anime_links(anime_id, sort_order);
         """)
 
+    def _backup_before_upgrade(self, conn: sqlite3.Connection, tag: str) -> Optional[Path]:
+        """Copy the database before a schema upgrade, using SQLite's backup
+        API (consistent even with uncommitted WAL pages). Stored next to the
+        database being upgraded and named so routine backup pruning keeps it."""
+        try:
+            dest_dir = Path(self.db_path).parent / "backups"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = dest_dir / f"anime_pre_{tag}_{ts}.db"
+            target = sqlite3.connect(str(dest))
+            with target:
+                conn.backup(target)
+            target.close()
+            return dest
+        except Exception:
+            return None
+
+    def _migrate_v5(self, conn: sqlite3.Connection):
+        """Raikō: one library for anime, TV shows and movies.
+        Add-only - existing rows become media_type 'anime' and are untouched."""
+        for col_sql in [
+            "ALTER TABLE anime ADD COLUMN media_type TEXT DEFAULT 'anime'",
+            "ALTER TABLE anime ADD COLUMN tmdb_id INTEGER",
+            "ALTER TABLE anime ADD COLUMN imdb_id TEXT",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass
+        conn.executescript("""
+            UPDATE anime SET media_type='anime' WHERE media_type IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_anime_media ON anime(media_type);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_tmdb
+                ON anime(media_type, tmdb_id) WHERE tmdb_id IS NOT NULL;
+
+            -- TV: a show holds its seasons; episodes are (season, episode).
+            CREATE TABLE IF NOT EXISTS tv_seasons (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id      INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                season_number INTEGER NOT NULL,
+                name          TEXT,
+                episode_count INTEGER,
+                air_date      TEXT,
+                poster_url    TEXT,
+                overview      TEXT,
+                UNIQUE(anime_id, season_number)
+            );
+            CREATE TABLE IF NOT EXISTS tv_episodes (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id       INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                season_number  INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                name           TEXT,
+                air_date       TEXT,
+                runtime        INTEGER,
+                still_url      TEXT,
+                watched        INTEGER DEFAULT 0,
+                watched_at     INTEGER,
+                rating         REAL,
+                UNIQUE(anime_id, season_number, episode_number)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tv_episodes_anime ON tv_episodes(anime_id, season_number);
+        """)
+
     # ─── Anime CRUD ───────────────────────────────────────────────────────────
 
     def add_anime(self, data: Dict[str, Any]) -> int:
@@ -315,6 +384,7 @@ class DatabaseManager:
         watch_status: Optional[str] = None,
         sort_by: str = "release_date",
         archived: Optional[bool] = None,
+        media_type: Optional[str] = "anime",
     ) -> List[Dict]:
         """`archived`: None = everything, False = hide archived, True = only
         archived. Background scans keep the default so archived shows still
@@ -336,6 +406,11 @@ class DatabaseManager:
             params = ()
         if archived is not None:
             where += " AND COALESCE(archived,0)=" + ("1" if archived else "0")
+        if media_type:
+            # Default 'anime' keeps every existing screen and scan anime-only
+            # even once TV shows and movies share this table.
+            where += " AND COALESCE(media_type,'anime')=?"
+            params = tuple(params) + (media_type,)
         rows = conn.execute(
             f"SELECT * FROM anime {where} ORDER BY {ORDER}", params
         ).fetchall()
