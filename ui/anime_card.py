@@ -682,6 +682,49 @@ class AnimeCard(QFrame):
         else:
             self.progress_bar.setVisible(True)
 
+        # ── Movies (Kinema): runtime/year, release + verdict, no episodes ──
+        if anime.get("media_type") == "movie":
+            self._next_ep_at = None
+            bits = []
+            if anime.get("duration"):
+                h, m = divmod(int(anime["duration"]), 60)
+                bits.append(f"{h}h {m:02d}m" if h else f"{m}m")
+            if anime.get("season_year"):
+                bits.append(str(anime["season_year"]))
+            if anime["id"] > 0:
+                seen = 1 + self.db.rewatch_count(anime["id"]) if ws == "completed" else 0
+                if seen > 1:
+                    bits.append(f"seen {seen}×")
+            self.ep_label.setText("  ·  ".join(bits))
+            self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
+            upcoming = api_status == "NOT_YET_RELEASED"
+            note, note_color = "", "#9da5c0"
+            if ws == "completed":
+                self._set_badge("badgeCompleted", "WATCHED")
+                mine = self.db.get_overall_rating(anime["id"]) if anime["id"] > 0 else None
+                if mine:
+                    note, note_color = f"★ {mine:.0f}/6 · your rating", "#fbbf24"
+                accent = "completed"
+            elif upcoming:
+                self._set_badge("badgeUpcoming", "COMING SOON")
+                if anime.get("start_date"):
+                    note, note_color = f"In theaters {anime['start_date']}", "#fbbf24"
+                accent = "planned"
+            else:
+                self._set_badge("badgePlanned", "WATCHLIST")
+                accent = "planned"
+            self._static_note = note
+            self.countdown_label.setText(note)
+            self.countdown_label.setStyleSheet(
+                f"font-size:10px;font-weight:600;color:{note_color};background:transparent;")
+            for w in (self.progress_bar, self.behind_badge_lbl, self.score_badge_lbl,
+                      self.ep_cover_badge):
+                w.setVisible(False)
+            self.setProperty("cardAccent", accent)
+            self.update()
+            if hasattr(self, "_border_overlay"):
+                self._border_overlay.update()
+
         # Top overlay: you requested it to be present on Watching cards only.
         # (Planned cards do not have any top-right text; keep them clean.)
         self._top_grad.setVisible(ws == "watching")

@@ -30,7 +30,8 @@ from ui.update_banner import UpdateBanner
 
 NAV_SECTIONS = [
     ("Library", [
-        ("Library", "LIB", "library"),
+        ("Anime", "LIB", "library"),
+        ("Movies", "MOV", "movies"),
         ("Dropped", "DROP", "dropped"),
     ]),
     ("Explore", [
@@ -71,6 +72,7 @@ class MainWindow(QMainWindow):
         self._demo_planned = demo_planned
         self._meta_sync_running = False
         self._show_archived = False
+        self._media = "anime"           # which library the grid shows
         self._completed_groups: Dict[str, List[int]] = {}
         self._fold_overrides: Dict[str, bool] = self._load_fold_overrides()
         self._demo_items: List[Dict] = []
@@ -206,6 +208,7 @@ class MainWindow(QMainWindow):
         self.detail_panel.open_sequel.connect(self._on_card_new_season)
         self.detail_panel.dropped_restored.connect(self._on_dropped_restored)
         self.detail_panel.rewatch_changed.connect(self._on_rewatch_changed)
+        self.detail_panel.movie_changed.connect(self._on_movie_changed)
         self.detail_panel.dropped_removed.connect(self._on_dropped_removed)
 
         # central_content holds ONLY the content host — banner floats above it
@@ -296,6 +299,7 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         add_btn = QPushButton("+  Add Anime")
+        self._add_btn = add_btn
         add_btn.setObjectName("primaryBtn")
         add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         add_btn.clicked.connect(self._open_add_dialog)
@@ -339,7 +343,8 @@ class MainWindow(QMainWindow):
         self.refresh_btn = QPushButton("↻  Refresh Airing")
         self.refresh_btn.setObjectName("secondaryBtn")
         self.refresh_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.refresh_btn.clicked.connect(self._refresh_airing)
+        self.refresh_btn.clicked.connect(
+            lambda: self._sync_movies(manual=True) if self._media == "movie" else self._refresh_airing())
         hr.addWidget(self.refresh_btn)
         lay.addLayout(hr)
         lay.addSpacing(16)
@@ -376,19 +381,8 @@ class MainWindow(QMainWindow):
         fr.setContentsMargins(0, 0, 0, 0)
         fr.setSpacing(6)
         self._filter_btns: Dict[str, QPushButton] = {}
-        for label, fid in [
-            ("All","all"),("Watching","watching"),
-            ("Completed","completed"),("Planned","planned"),
-            ("Behind","behind"),
-        ]:
-            b = QPushButton(label)
-            b.setObjectName("filterPillBehind" if fid == "behind" else "filterPill")
-            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            b.clicked.connect(lambda _, f=fid: self._set_filter(f))
-            self._filter_btns[fid] = b
-            fr.addWidget(b)
-
-        fr.addStretch()
+        self._filter_layout = fr
+        self._build_filter_pills("anime")
         lay.addWidget(self.filter_row)
         lay.addSpacing(16)
 
@@ -426,6 +420,49 @@ class MainWindow(QMainWindow):
         self._set_filter("all")
         return page
 
+    _FILTERS = {
+        "anime": [("All", "all"), ("Watching", "watching"), ("Completed", "completed"),
+                  ("Planned", "planned"), ("Behind", "behind")],
+        "movie": [("All", "all"), ("Watchlist", "planned"), ("Watched", "completed")],
+    }
+
+    def _build_filter_pills(self, media: str):
+        fr = self._filter_layout
+        while fr.count():
+            it = fr.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._filter_btns = {}
+        for label, fid in self._FILTERS.get(media, self._FILTERS["anime"]):
+            b = QPushButton(label)
+            b.setObjectName("filterPillBehind" if fid == "behind" else "filterPill")
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _, f=fid: self._set_filter(f))
+            self._filter_btns[fid] = b
+            fr.addWidget(b)
+        fr.addStretch()
+        for pid, btn in self._filter_btns.items():
+            btn.setProperty("active", "true" if pid == self._current_filter else "false")
+
+    def _set_media(self, media: str):
+        """Switch the grid between the anime (Miroku) and movie (Kinema) libraries."""
+        if media == self._media:
+            return
+        self._media = media
+        self._current_filter = "all"
+        self._show_archived = False
+        self._search_query = ""
+        self.search_bar.blockSignals(True)
+        self.search_bar.clear()
+        self.search_bar.blockSignals(False)
+        self._build_filter_pills(media)
+        movie = media == "movie"
+        self.search_bar.setPlaceholderText("Search your movies…" if movie else "Search your library…")
+        self.refresh_btn.setText("↻  Refresh Movies" if movie else "↻  Refresh Airing")
+        self.anilist_user_menu.setVisible(not movie)
+        self._add_btn.setText("+  Add Movie" if movie else "+  Add Anime")
+        self._relabel_stats_strip()
+
     def _build_stats_strip(self) -> QWidget:
         w = QWidget()
         w.setStyleSheet("background:transparent;")
@@ -460,6 +497,8 @@ class MainWindow(QMainWindow):
             cl.addWidget(lbl)
 
             self._stat_labels[key] = val
+            self._stat_names = getattr(self, "_stat_names", {})
+            self._stat_names[key] = lbl
             lay.addWidget(card)
 
         lay.addStretch()
@@ -668,10 +707,19 @@ class MainWindow(QMainWindow):
                 self.stack.insertWidget(5, self._calendar_page)
             self.stack.setCurrentIndex(5)
             self._calendar_page.load()
+        elif page_id == "movies":
+            self.stack.setCurrentIndex(0)
+            self._set_media("movie")
+            self.page_title.setText("Movies")
+            self.filter_row.setVisible(True)
+            self.search_bar.setVisible(True)
+            self._update_stats_strip()
+            self._load_library()
         else:
             self.stack.setCurrentIndex(0)
+            self._set_media("anime")
             titles = {
-                "library":   "Library",
+                "library":   "Anime",
                 "watching":  "Watching",
                 "completed": "Completed",
                 "planned":   "Plan to Watch",
@@ -744,7 +792,19 @@ class MainWindow(QMainWindow):
         current_filter = self._current_filter
         current_page   = self.current_page
 
+        media = self._media
+
         def fetch_data():
+            if media == "movie":
+                if search_q:
+                    return self.db.search_titles(search_q, "movie")
+                if watch_status == "completed":
+                    return self.db.get_all_anime(watch_status="completed", sort_by="completed_at",
+                                                 archived=show_archived, media_type="movie")
+                if watch_status is None:
+                    return self.db.get_all_anime(sort_by=sort_by, archived=False, media_type="movie")
+                return self.db.get_all_anime(watch_status=watch_status, sort_by=sort_by,
+                                             media_type="movie")
             if search_q:
                 return self.db.search_anime(search_q)
             elif watch_status == "dropped":
@@ -799,8 +859,8 @@ class MainWindow(QMainWindow):
         self._clear_grid()
 
         has = bool(anime_list)
-        if (not has and current_filter == "completed" and current_page == "library"
-                and not self._search_query and (self._show_archived or self.db.count_archived())):
+        if (not has and current_filter == "completed" and current_page in ("library", "movies")
+                and not self._search_query and (self._show_archived or self.db.count_archived(self._media))):
             has = True   # keep the timeline (and its Archived toggle) visible
         self.empty_state.setVisible(not has)
         self.grid_container.setVisible(has)
@@ -808,12 +868,12 @@ class MainWindow(QMainWindow):
         if has:
             show_grouped = (
                 current_filter == "all"
-                and current_page == "library"
+                and current_page in ("library", "movies")
                 and not self._search_query
             )
             show_timeline = (
                 current_filter == "completed"
-                and current_page == "library"
+                and current_page in ("library", "movies")
                 and not self._search_query
             )
             if show_grouped:
@@ -844,6 +904,9 @@ class MainWindow(QMainWindow):
             ("〡 WATCHING",    "watching",  "#a594f9"),
             ("〡 PLAN TO WATCH", "planned", "#6b7280"),
             ("〡 COMPLETED",   "completed", "#34d399"),
+        ] if self._media != "movie" else [
+            ("〡 WATCHLIST",   "planned",   "#fbbf24"),
+            ("〡 WATCHED",     "completed", "#34d399"),
         ]
         row_num = 0
         for group_label, status, color in groups:
@@ -897,7 +960,8 @@ class MainWindow(QMainWindow):
         from ui.completed_view import CompletedToolbar, SectionHeader, group_completed
         COLS = max(self._calc_columns(), 1)
         row = 0
-        bar = CompletedToolbar(len(anime_list), self.db.count_archived(), self._show_archived)
+        bar = CompletedToolbar(len(anime_list), self.db.count_archived(self._media), self._show_archived,
+                               media=self._media)
         bar.archived_toggled.connect(self._toggle_archived_view)
         self.grid_layout.addWidget(bar, row, 0, 1, COLS)
         row += 1
@@ -905,7 +969,8 @@ class MainWindow(QMainWindow):
         color = "#9da5c0" if self._show_archived else "#34d399"
         action = "Restore all" if self._show_archived else "Archive these"
         rewatching = set(self.db.get_active_rewatch_ids())
-        for key, label, members in group_completed(anime_list, rewatching=rewatching):
+        for key, label, members in group_completed(anime_list, rewatching=rewatching,
+                                                   verb="Watched" if self._media == "movie" else "Finished"):
             self._completed_groups[key] = [a["id"] for a in members]
             folded = self._is_folded(key)
             hdr = SectionHeader(key, label, len(members), color, collapsed=folded,
@@ -962,13 +1027,30 @@ class MainWindow(QMainWindow):
     def _on_archive_changed(self, anime_id: int):
         self._load_library_for_current_page()
 
+    def _on_movie_changed(self, lib_id: int):
+        """A movie's status / rating / rewatches changed in the panel (or a
+        franchise film was added: lib_id -1)."""
+        self._update_stats_strip()
+        if lib_id < 0:
+            self._load_library()
+            return
+        row = self.db.get_anime_by_id(lib_id)
+        card = self._cards.get(lib_id)
+        if not row:
+            return
+        moved = (card is not None and card._anime.get("watch_status") != row.get("watch_status"))
+        if card is not None and not moved:
+            card.update_data(row)
+        else:
+            self._load_library()
+
     def _on_rewatch_changed(self, anime_id: int):
         card = self._cards.get(anime_id)
         row = self.db.get_anime_by_id(anime_id)
         if card is not None and row:
             card.update_data(row)
         # Starting/finishing a rewatch moves the card in/out of "Rewatching now"
-        if self._current_filter == "completed" and self.current_page == "library":
+        if self._current_filter == "completed" and self.current_page in ("library", "movies"):
             in_group = anime_id in (self._completed_groups.get("rewatching") or [])
             now_active = self.db.get_active_rewatch(anime_id) is not None
             if in_group != now_active:
@@ -1084,12 +1166,29 @@ class MainWindow(QMainWindow):
             elif size == "banner":
                 self.detail_panel.set_banner(path)
 
+    _STAT_NAMES = {
+        "anime": {"watching": "Watching", "completed": "Completed", "planned": "Planned", "dropped": "Dropped"},
+        "movie": {"watching": "Watchlist", "completed": "Watched", "planned": "Hours watched",
+                  "dropped": "This year"},
+    }
+
+    def _relabel_stats_strip(self):
+        names = self._STAT_NAMES.get(self._media, self._STAT_NAMES["anime"])
+        for key, lbl in getattr(self, "_stat_names", {}).items():
+            lbl.setText(names[key].upper())
+
     def _update_stats_strip(self):
-        stats = self.db.get_stats()
-        for key in ("watching", "completed", "planned", "dropped"):
+        if self._media == "movie":
+            m = self.db.get_movie_stats()
+            values = {"watching": m["watchlist"], "completed": m["watched"],
+                      "planned": m["hours"], "dropped": m["this_year"]}
+        else:
+            stats = self.db.get_stats()
+            values = {k: stats.get(k, 0) for k in ("watching", "completed", "planned", "dropped")}
+        for key, v in values.items():
             lbl = self._stat_labels.get(key)
             if lbl:
-                lbl.setText(str(stats.get(key, 0)))
+                lbl.setText(str(v))
 
     # ── Card interactions ──────────────────────────────────────────────────────
 
@@ -1222,7 +1321,7 @@ class MainWindow(QMainWindow):
         self._update_stats_strip()
 
         if (
-            self.current_page == "library"
+            self.current_page in ("library", "movies")
             and self._current_filter == "all"
             and not self._search_query
         ):
@@ -1309,7 +1408,7 @@ class MainWindow(QMainWindow):
     def _on_anime_dropped(self, anime_id: int):
         self._close_detail_panel()
         self._load_library(
-            watch_status=None if self.current_page == "library" else
+            watch_status=None if self.current_page in ("library", "movies") else
             {"watching":"watching","completed":"completed","planned":"planned"}.get(self.current_page)
         )
         self._update_stats_strip()
@@ -1352,7 +1451,38 @@ class MainWindow(QMainWindow):
 
     # ── Dialogs ────────────────────────────────────────────────────────────────
 
+    def _open_add_movie_dialog(self):
+        from ui.kinema_add_dialog import MovieAddDialog
+        from ui.toast import Toast
+        dlg = MovieAddDialog(self.db, self)
+
+        def added(lib_id: int, title: str):
+            row = self.db.get_anime_by_id(lib_id) or {}
+            where = "Watched" if row.get("watch_status") == "completed" else "your Watchlist"
+            Toast.show(self, f"'{title}' added to {where}.", kind="success")
+            self._load_library()
+            self._update_stats_strip()
+
+        dlg.added.connect(added)
+        dlg.exec()
+
+    def _sync_movies(self, manual: bool = False):
+        """Refresh movies from TMDB (dates, availability, art, trailers)."""
+        from core.kinema_sync import KinemaSync
+        if manual:
+            self.refresh_btn.setText("↻  Refreshing…")
+            self.refresh_btn.setEnabled(False)
+        worker = Worker(KinemaSync(self.db).sync_movies)
+        worker.signals.result.connect(self._on_metadata_synced)
+        if manual:
+            worker.signals.finished.connect(lambda: (
+                self.refresh_btn.setText("↻  Refresh Movies" if self._media == "movie" else "↻  Refresh Airing"),
+                self.refresh_btn.setEnabled(True)))
+        run_worker(worker)
+
     def _open_add_dialog(self):
+        if self._media == "movie":
+            return self._open_add_movie_dialog()
         from ui.add_dialog import AddAnimeDialog
         dlg = AddAnimeDialog(self.db, self)
         if dlg.exec():
@@ -1425,6 +1555,12 @@ class MainWindow(QMainWindow):
         self._meta_timer.timeout.connect(self._sync_metadata)
         self._meta_timer.start(3 * 3600 * 1000)
         QTimer.singleShot(12000, self._sync_metadata)
+
+        # Kinema: movies (release dates, streaming availability) every 6h
+        self._movie_timer = QTimer(self)
+        self._movie_timer.timeout.connect(self._sync_movies)
+        self._movie_timer.start(6 * 3600 * 1000)
+        QTimer.singleShot(15000, self._sync_movies)
         QTimer.singleShot(2500, self._run_auto_archive)
 
     def _tick(self):
@@ -1670,6 +1806,13 @@ class MainWindow(QMainWindow):
         metadata (10 min for Planned, a day otherwise) and its promo/theme
         video list (daily). The panel re-renders when it lands."""
         import time as _t
+        if anime.get("media_type") == "movie" and anime.get("tmdb_id"):
+            if _t.time() - (anime.get("meta_synced_at") or 0) > 6 * 3600:
+                from core.kinema_sync import KinemaSync
+                w = Worker(KinemaSync(self.db).sync_movies, only_ids=[anime["id"]])
+                w.signals.result.connect(self._on_metadata_synced)
+                run_worker(w)
+            return
         if not anime.get("anilist_id") or anime.get("id", 0) <= 0:
             return
         ws = anime.get("watch_status") or "watching"

@@ -80,7 +80,7 @@ class _Scanner:
         conn = self.db._get_conn()
 
         anime_rows = conn.execute(
-            "SELECT * FROM anime WHERE hof_only=0"
+            "SELECT * FROM anime WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchall()
 
         for row in anime_rows:
@@ -184,7 +184,7 @@ class _Scanner:
         # ── Issue 5: Duplicate anilist_ids ────────────────────────────────
         dup_rows = conn.execute(
             """SELECT anilist_id, COUNT(*) as c FROM anime
-               WHERE anilist_id IS NOT NULL AND hof_only=0
+               WHERE anilist_id IS NOT NULL AND hof_only=0 AND COALESCE(media_type,'anime')='anime'
                GROUP BY anilist_id HAVING c > 1"""
         ).fetchall()
         for dup in dup_rows:
@@ -379,7 +379,7 @@ class _Scanner:
                WHERE status='RELEASING'
                  AND next_episode_at IS NOT NULL
                  AND next_episode_at < ?
-                 AND hof_only=0""",
+                 AND hof_only=0 AND COALESCE(media_type,'anime')='anime'""",
             (stale_cutoff,),
         ).fetchall():
             aid = row["id"]

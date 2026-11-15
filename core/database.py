@@ -366,7 +366,7 @@ class DatabaseManager:
         data.setdefault("last_updated", now)
         if data.get("watch_status") == "completed":
             data.setdefault("completed_at", now)
-        for key in ("genres", "studios", "characters"):
+        for key in ("genres", "studios", "characters", "videos"):
             if key in data and isinstance(data[key], list):
                 data[key] = json.dumps(data[key])
 
@@ -502,6 +502,67 @@ class DatabaseManager:
 
     # ─── Completed housekeeping (archive) ─────────────────────────────────────
 
+    # ─── Kinema: TV shows & movies (TMDB) ────────────────────────────────────
+
+    _ROW_COLUMNS = None
+
+    def _anime_columns(self) -> set:
+        if self._ROW_COLUMNS is None:
+            self._ROW_COLUMNS = {r[1] for r in self._get_conn().execute(
+                "PRAGMA table_info(anime)").fetchall()}
+        return self._ROW_COLUMNS
+
+    def get_title_by_tmdb(self, media_type: str, tmdb_id: int) -> Optional[Dict]:
+        row = self._get_conn().execute(
+            "SELECT * FROM anime WHERE media_type=? AND tmdb_id=?", (media_type, tmdb_id)
+        ).fetchone()
+        return self._hydrate_anime(dict(row)) if row else None
+
+    def save_tmdb_title(self, row: Dict[str, Any], watch_status: Optional[str] = None) -> int:
+        """Insert or update a TV show / movie from a provider row (keys that
+        start with '_' are provider extras and are not stored as columns)."""
+        cols = self._anime_columns()
+        data = {k: v for k, v in row.items() if not k.startswith("_") and k in cols}
+        existing = self.get_title_by_tmdb(row["media_type"], row["tmdb_id"])
+        if existing:
+            # Never wipe what we have with a sparser response.
+            data = {k: v for k, v in data.items() if v not in (None, "", [], {})}
+            if watch_status:
+                data["watch_status"] = watch_status
+            self.update_anime(existing["id"], data)
+            return existing["id"]
+        data["watch_status"] = watch_status or "planned"
+        return self.add_anime(data)
+
+    def search_titles(self, query: str, media_type: str) -> List[Dict]:
+        q = f"%{(query or '').strip()}%"
+        rows = self._get_conn().execute(
+            "SELECT * FROM anime WHERE media_type=? AND hof_only=0 AND "
+            "(romaji_title LIKE ? OR english_title LIKE ? OR native_title LIKE ?) "
+            "ORDER BY romaji_title", (media_type, q, q, q)).fetchall()
+        return [self._hydrate_anime(dict(r)) for r in rows]
+
+    def get_movie_stats(self) -> Dict[str, int]:
+        conn = self._get_conn()
+        one = lambda sql, *a: (conn.execute(sql, a).fetchone() or [0])[0] or 0
+        year_start = int(datetime(datetime.now().year, 1, 1).timestamp())
+        watched_minutes = one(
+            "SELECT SUM(COALESCE(duration,0)) FROM anime WHERE media_type='movie' "
+            "AND watch_status='completed' AND hof_only=0")
+        rewatch_minutes = one(
+            "SELECT SUM(COALESCE(a.duration,0)) FROM rewatches r JOIN anime a ON a.id=r.anime_id "
+            "WHERE a.media_type='movie' AND r.finished_at IS NOT NULL")
+        return {
+            "watchlist": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                             "AND watch_status='planned' AND hof_only=0"),
+            "watched": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                           "AND watch_status='completed' AND hof_only=0"),
+            "hours": int(round((watched_minutes + rewatch_minutes) / 60)),
+            "this_year": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                             "AND watch_status='completed' AND hof_only=0 AND completed_at>=?",
+                             year_start),
+        }
+
     def set_archived(self, anime_ids: List[int], archived: bool) -> int:
         """Archive/unarchive Completed anime. Archived shows leave the
         everyday Completed view but stay in stats, search and scans."""
@@ -519,10 +580,11 @@ class DatabaseManager:
         conn.commit()
         return cur.rowcount
 
-    def count_archived(self) -> int:
+    def count_archived(self, media_type: str = "anime") -> int:
         row = self._get_conn().execute(
             "SELECT COUNT(*) FROM anime WHERE watch_status='completed' "
-            "AND COALESCE(archived,0)=1 AND hof_only=0"
+            "AND COALESCE(archived,0)=1 AND hof_only=0 AND COALESCE(media_type,'anime')=?",
+            (media_type,)
         ).fetchone()
         return int(row[0]) if row else 0
 
@@ -615,7 +677,7 @@ class DatabaseManager:
         rows = conn.execute(
             """SELECT anime.* FROM anime
                JOIN anime_fts ON anime.id = anime_fts.rowid
-               WHERE anime_fts MATCH ? AND anime.hof_only=0
+               WHERE anime_fts MATCH ? AND anime.hof_only=0 AND COALESCE(anime.media_type,'anime')='anime'
                ORDER BY rank""",
             (query + "*",),
         ).fetchall()
@@ -755,7 +817,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, COUNT(e.id) as cnt
             FROM anime a JOIN episodes e ON a.id=e.anime_id
-            WHERE e.watched=1 AND a.hof_only=0
+            WHERE e.watched=1 AND a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id ORDER BY cnt DESC LIMIT 1
         """).fetchone()
         if row: result["most_watched"] = dict(row)
@@ -764,7 +826,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, AVG(r.score) as avg_sc
             FROM anime a JOIN ratings r ON a.id=r.anime_id
-            WHERE a.hof_only=0
+            WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id HAVING COUNT(r.id) >= 1
             ORDER BY avg_sc DESC LIMIT 1
         """).fetchone()
@@ -774,7 +836,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, AVG(r.score) as avg_sc
             FROM anime a JOIN ratings r ON a.id=r.anime_id
-            WHERE a.hof_only=0
+            WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id HAVING COUNT(r.id) >= 1
             ORDER BY avg_sc ASC LIMIT 1
         """).fetchone()
@@ -783,7 +845,7 @@ class DatabaseManager:
         # Most recently added
         row = conn.execute("""
             SELECT id, romaji_title, english_title, date_added
-            FROM anime WHERE hof_only=0
+            FROM anime WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime'
             ORDER BY date_added DESC LIMIT 1
         """).fetchone()
         if row: result["most_recent"] = dict(row)
@@ -792,7 +854,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT id, romaji_title, english_title, next_episode_at
             FROM anime WHERE watch_status='planned' AND next_episode_at IS NOT NULL
-            AND hof_only=0
+            AND hof_only=0 AND COALESCE(media_type,'anime')='anime'
             ORDER BY next_episode_at DESC LIMIT 1
         """).fetchone()
         if row: result["longest_wait"] = dict(row)
@@ -805,30 +867,30 @@ class DatabaseManager:
         conn = self._get_conn()
         # All counts exclude hof_only entries
         total = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         watching = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='watching' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='watching' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         completed = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='completed' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='completed' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         planned = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='planned' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='planned' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         dropped = conn.execute("SELECT COUNT(*) FROM dropped_anime").fetchone()[0]
         total_watched = conn.execute(
             """SELECT COUNT(*) FROM episodes e
                JOIN anime a ON e.anime_id = a.id
-               WHERE e.watched=1 AND a.hof_only=0"""
+               WHERE e.watched=1 AND a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'"""
         ).fetchone()[0]
         avg_score = conn.execute(
             """SELECT AVG(r.score) FROM ratings r
                JOIN anime a ON r.anime_id = a.id
-               WHERE a.hof_only=0"""
+               WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'"""
         ).fetchone()[0]
         genre_counts = conn.execute(
-            "SELECT genres FROM anime WHERE genres != '[]' AND hof_only=0"
+            "SELECT genres FROM anime WHERE genres != '[]' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchall()
 
         genre_map: Dict[str, int] = {}
@@ -843,7 +905,7 @@ class DatabaseManager:
         top_genres = sorted(genre_map.items(), key=lambda x: x[1], reverse=True)[:8]
 
         studio_counts = conn.execute(
-            "SELECT studios FROM anime WHERE studios != '[]' AND hof_only=0"
+            "SELECT studios FROM anime WHERE studios != '[]' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchall()
 
         studio_map: Dict[str, int] = {}
@@ -874,7 +936,7 @@ class DatabaseManager:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT season_year FROM anime "
-            "WHERE hof_only=0 AND season_year IS NOT NULL"
+            "WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime' AND season_year IS NOT NULL"
         ).fetchall()
         counts: Dict[int, int] = {}
         for r in rows:

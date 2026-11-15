@@ -61,6 +61,7 @@ class DetailPanel(QWidget):
     dropped_restored = pyqtSignal(int, str)
     dropped_removed  = pyqtSignal()
     rewatch_changed  = pyqtSignal(int)
+    movie_changed    = pyqtSignal(int)
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -203,6 +204,14 @@ class DetailPanel(QWidget):
         self.dropped_section.setVisible(False)
         self._lay.addWidget(self.dropped_section)
 
+        # Kinema: movies
+        from ui.movie_details import MovieSection
+        self.movie_section = MovieSection(self.db)
+        self.movie_section.changed.connect(self.movie_changed.emit)
+        self.movie_section.open_hall_of_fame.connect(self.open_hall_of_fame.emit)
+        self.movie_section.setVisible(False)
+        self._lay.addWidget(self.movie_section)
+
         # Genres
         self.genres_w = QWidget()
         self.genres_l = FlowLayout(self.genres_w, h_spacing=6, v_spacing=6)
@@ -262,6 +271,7 @@ class DetailPanel(QWidget):
         arl.addWidget(self.archive_btn)
 
         drop_btn = QPushButton("Drop")
+        self.drop_btn = drop_btn
         drop_btn.setObjectName("dangerBtn")
         drop_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         drop_btn.clicked.connect(self._drop)
@@ -394,10 +404,19 @@ class DetailPanel(QWidget):
         meta_parts = []
         if season or year:
             meta_parts.append(f"{season} {year}".strip())
-        if total and anime.get("watch_status") != "dropped":
-            meta_parts.append(f"{total} episodes total")
-        if status_display:
-            meta_parts.append(status_display)
+        if anime.get("media_type") == "movie":
+            meta_parts = []
+            if anime.get("duration"):
+                h, m = divmod(int(anime["duration"]), 60)
+                meta_parts.append(f"{h}h {m:02d}m" if h else f"{m}m")
+            if anime.get("start_date"):
+                meta_parts.append(anime["start_date"])
+            meta_parts.append("Coming soon" if api_status == "NOT_YET_RELEASED" else "Movie")
+        else:
+            if total and anime.get("watch_status") != "dropped":
+                meta_parts.append(f"{total} episodes total")
+            if status_display:
+                meta_parts.append(status_display)
         self.meta_lbl.setText("  ·  ".join(meta_parts))
 
         # ── Progress block — clear, unambiguous ──────────────────────
@@ -505,6 +524,23 @@ class DetailPanel(QWidget):
         """Planned anime get release/trailer/facts/cast instead of the
         episode tracker and rating, which mean nothing before you start."""
         ws = anime.get("watch_status")
+        movie = anime.get("media_type") == "movie"
+        self.movie_section.setVisible(movie)
+        self.status_btn.setVisible(not movie)
+        self.drop_btn.setVisible(not movie)
+        if movie:
+            self.archive_btn.setVisible(ws == "completed")
+            self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")
+            self._actions_card.setVisible(True)
+            self._links_card.setVisible(True)
+            for w in (self.planned_top, self.planned_bottom, self.completed_top,
+                      self.completed_bottom, self.dropped_section, self._rating_card,
+                      self._episodes_card, self.progress_info_lbl):
+                w.setVisible(False)
+            self.planned_top.stop()
+            self.movie_section.load(anime)
+            return
+        self.movie_section.stop()
         planned = ws == "planned"
         completed = ws == "completed" and anime.get("id", 0) > 0
         dropped = ws == "dropped"

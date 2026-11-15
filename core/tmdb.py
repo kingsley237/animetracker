@@ -209,8 +209,18 @@ def watch_providers(details: Dict, country: Optional[str] = None) -> Dict[str, L
     """{'stream': [...], 'rent': [...], 'buy': [...], 'link': url} for a country."""
     country = (country or region()).upper()
     res = ((details or {}).get("watch/providers") or {}).get("results", {}).get(country) or {}
-    names = lambda key: [p.get("provider_name") for p in res.get(key) or [] if p.get("provider_name")]
-    return {"stream": names("flatrate") + [n for n in names("free") if n not in names("flatrate")],
+
+    def names(key):
+        # JustWatch's own ranking first; drop "X Amazon Channel"-style
+        # duplicates when the service itself is listed.
+        items = sorted(res.get(key) or [], key=lambda p: p.get("display_priority", 999))
+        out = [p.get("provider_name") for p in items if p.get("provider_name")]
+        bases = set(out)
+        return [n for n in out
+                if not any(n != b and n.startswith(b + " ") and "Channel" in n for b in bases)]
+
+    stream = names("flatrate")
+    return {"stream": stream + [n for n in names("free") if n not in stream],
             "rent": names("rent"), "buy": names("buy"), "link": res.get("link", "")}
 
 

@@ -157,5 +157,10 @@ def get_pool() -> QThreadPool:
     return _pool
 
 
-def run_worker(worker: QRunnable):
-    get_pool().start(worker)
+# Work the user is actively waiting on (search, a panel's live data) jumps
+# ahead of bulk image downloads in the shared pool.
+PRIORITY_INTERACTIVE = 10
+
+
+def run_worker(worker: QRunnable, priority: int = 0):
+    get_pool().start(worker, priority)

@@ -1701,3 +1701,72 @@ QProgressBar#rewatchBar::chunk {
     background-color: #7c6af7;
     border-radius: 3px;
 }
+
+/* ── Kinema: movies ────────────────────────────────────────────────────────── */
+QLabel#movieStamp {
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+    color: #fbbf24;
+    background-color: rgba(40, 28, 4, 0.95);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+}
+
+QLabel#movieStamp[kind="watched"] {
+    color: #34d399;
+    background-color: rgba(6, 34, 25, 0.95);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+}
+
+QLabel#movieStamp[kind="watchlist"] {
+    color: #c4b8ff;
+    background-color: rgba(24, 18, 56, 0.95);
+    border: 1px solid rgba(165, 148, 249, 0.45);
+}
+
+QLabel#movieCountdown {
+    color: #fbbf24;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QLabel#providerChip,
+QLabel#providerChipStream {
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    color: #c7cbd9;
+    background-color: #151929;
+    border: 1px solid #252a40;
+}
+
+QLabel#providerChipStream {
+    color: #bbf7d0;
+    background-color: rgba(6, 34, 25, 0.9);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+}
+
+QLabel#collectionNum {
+    color: #5c6482;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#collectionTag,
+QLabel#collectionTagThis {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-radius: 5px;
+    padding: 3px 7px;
+    color: #9da5c0;
+    background-color: #151929;
+}
+
+QLabel#collectionTagThis {
+    color: #fbbf24;
+    background-color: rgba(40, 28, 4, 0.95);
+}
