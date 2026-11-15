@@ -368,6 +368,28 @@ class SettingsDialog(QDialog):
         kl.addWidget(self._helper_text(
             "Used for where-to-watch and local release dates."))
 
+        alert_row = QHBoxLayout()
+        alert_lbl = QLabel("Tell me when a Watchlist film is out")
+        alert_lbl.setObjectName("settingsValueText")
+        alert_row.addWidget(alert_lbl)
+        alert_row.addStretch()
+        self.movie_alert_combo = QComboBox()
+        _modes = [("Digitally (HD)", "digital"), ("In cinemas", "cinema"),
+                  ("Both", "both"), ("Never", "off")]
+        for text, key in _modes:
+            self.movie_alert_combo.addItem(text, key)
+        _cur_mode = str(self.settings.value("movie_alert_mode", "digital") or "digital")
+        self.movie_alert_combo.setCurrentIndex(
+            next((i for i, (_t, k) in enumerate(_modes) if k == _cur_mode), 0))
+        self.movie_alert_combo.setFixedWidth(180)
+        self.movie_alert_combo.currentIndexChanged.connect(
+            lambda i: self.settings.setValue("movie_alert_mode", self.movie_alert_combo.itemData(i)))
+        alert_row.addWidget(self.movie_alert_combo)
+        kl.addLayout(alert_row)
+        kl.addWidget(self._helper_text(
+            "One notification per film, the day it's out. Your Watchlist also shows "
+            "Ready to watch and Waiting for HD at a glance."))
+
         from PyQt6.QtWidgets import QLineEdit
         key_row = QHBoxLayout()
         key_lbl = QLabel("Your own TMDB key (optional)")

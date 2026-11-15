@@ -697,7 +697,11 @@ class AnimeCard(QFrame):
                     bits.append(f"seen {seen}×")
             self.ep_label.setText("  ·  ".join(bits))
             self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
-            upcoming = api_status == "NOT_YET_RELEASED"
+            from core.kinema_sync import release_state
+            rs = release_state(anime)
+            def _d(ts):
+                d = datetime.fromtimestamp(ts)
+                return d.strftime("%b ") + str(d.day)
             note, note_color = "", "#9da5c0"
             if ws == "completed":
                 self._set_badge("badgeCompleted", "WATCHED")
@@ -705,13 +709,25 @@ class AnimeCard(QFrame):
                 if mine:
                     note, note_color = f"★ {mine:.0f}/6 · your rating", "#fbbf24"
                 accent = "completed"
-            elif upcoming:
-                self._set_badge("badgeUpcoming", "COMING SOON")
-                if anime.get("start_date"):
-                    note, note_color = f"In theaters {anime['start_date']}", "#fbbf24"
+            elif rs["state"] == "digital":
+                self._set_badge("badgeCompleted", "READY TO WATCH")
+                note, note_color = ("Out in HD since " + _d(rs["digital_ts"]) if rs["digital_ts"]
+                                    else "Out in HD"), "#34d399"
+                accent = "completed"
+            elif rs["state"] == "cinema":
+                self._set_badge("badgeUpcoming", "IN CINEMAS")
+                now = int(datetime.now().timestamp())
+                if rs["digital_ts"] and rs["digital_ts"] > now:
+                    days = max(1, round((rs["digital_ts"] - now) / 86400))
+                    note = f"HD {_d(rs['digital_ts'])} · in {days} day{'s' if days != 1 else ''}"
+                else:
+                    note = "HD date not announced yet"
+                note_color = "#fbbf24"
                 accent = "planned"
             else:
-                self._set_badge("badgePlanned", "WATCHLIST")
+                self._set_badge("badgeUpcoming", "COMING SOON")
+                if rs["cinema_ts"]:
+                    note, note_color = f"In cinemas {_d(rs['cinema_ts'])}, {datetime.fromtimestamp(rs['cinema_ts']).year}", "#fbbf24"
                 accent = "planned"
             self._static_note = note
             self.countdown_label.setText(note)

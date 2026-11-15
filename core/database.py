@@ -101,6 +101,11 @@ class DatabaseManager:
             "ALTER TABLE anime ADD COLUMN videos TEXT DEFAULT '[]'",
             "ALTER TABLE anime ADD COLUMN videos_synced_at INTEGER",
             "ALTER TABLE anime ADD COLUMN sequel_info TEXT",
+            # Kinema movies: release timeline in the user's country
+            "ALTER TABLE anime ADD COLUMN cinema_date TEXT",
+            "ALTER TABLE anime ADD COLUMN digital_date TEXT",
+            "ALTER TABLE anime ADD COLUMN physical_date TEXT",
+            "ALTER TABLE anime ADD COLUMN digital_available INTEGER DEFAULT 0",
             # Completed-list housekeeping
             "ALTER TABLE anime ADD COLUMN completed_at INTEGER",
             "ALTER TABLE anime ADD COLUMN archived INTEGER DEFAULT 0",
@@ -395,6 +400,12 @@ class DatabaseManager:
             "score":        "average_score DESC, romaji_title ASC",
             "date_added":   "date_added DESC",
             "completed_at": "COALESCE(completed_at, 0) DESC, romaji_title ASC",
+            # Movies: best first; unreleased films (no real score yet) follow,
+            # ordered by how anticipated they are.
+            "top_rated":    "CASE WHEN status='NOT_YET_RELEASED' THEN 1 ELSE 0 END, "
+                            "COALESCE(average_score,0) DESC, COALESCE(popularity,0) DESC",
+            "popularity":   "COALESCE(popularity,0) DESC, romaji_title ASC",
+            "newest":       "COALESCE(start_ts, 0) DESC, romaji_title ASC",
             "rating":       "romaji_title ASC",
         }.get(sort_by, "COALESCE(next_episode_at, 99999999999) ASC, romaji_title ASC")
         conn = self._get_conn()

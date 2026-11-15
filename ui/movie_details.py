@@ -95,7 +95,11 @@ class MovieSection(QWidget):
         self.sub = QLabel()
         self.sub.setObjectName("plannedReleaseHint")
         self.sub.setWordWrap(True)
-        for w in (self.main, self.count, self.sub):
+        self.timeline = QLabel()
+        self.timeline.setObjectName("releaseTimeline")
+        self.timeline.setTextFormat(Qt.TextFormat.RichText)
+        self.timeline.setWordWrap(True)
+        for w in (self.main, self.count, self.timeline, self.sub):
             sl.addWidget(w)
         self.actions_host = QWidget()
         self.actions = FlowLayout(self.actions_host, h_spacing=8, v_spacing=8)
@@ -219,11 +223,53 @@ class MovieSection(QWidget):
 
     # ── status / release ──────────────────────────────────────────────────────
 
+    def _timeline_html(self, rs: Dict) -> str:
+        """Cinemas / Digital (HD) / Disc with exact dates and where each stands."""
+        now = int(datetime.now().timestamp())
+        r = self._row
+
+        def line(name, ts, fallback_out=False):
+            if ts:
+                d = datetime.fromtimestamp(ts)
+                when = d.strftime("%a, %b ") + f"{d.day}, {d.year}"
+                if ts <= now:
+                    state = "<span style='color:#34d399'>✓ out</span>"
+                else:
+                    days = max(1, round((ts - now) / 86400))
+                    state = f"<span style='color:#fbbf24'>in {days} day{'s' if days != 1 else ''}</span>"
+            elif fallback_out:
+                when, state = "date not listed", "<span style='color:#34d399'>✓ available</span>"
+            else:
+                when, state = "not announced yet", "<span style='color:#5c6482'>—</span>"
+            return (f"<tr><td style='color:#7b84a3;padding:2px 14px 2px 0'>{name}</td>"
+                    f"<td style='color:#e2e4ec;padding:2px 12px 2px 0'>{when}</td><td>{state}</td></tr>")
+
+        return ("<table cellspacing='0'>"
+                + line("Cinemas", rs["cinema_ts"])
+                + line("Digital (HD)", rs["digital_ts"], fallback_out=bool(r.get("digital_available")))
+                + line("Disc", rs["physical_ts"])
+                + "</table>")
+
     def _render_status(self):
         r = self._row
         self._clear_flow(self.actions)
         now = int(datetime.now().timestamp())
-        if r.get("watch_status") == "completed":
+        from core.kinema_sync import release_state
+        rs = release_state(r, now)
+        self._rs = rs
+        self.timeline.setText(self._timeline_html(rs))
+        if r.get("watch_status") == "completed" and rs["state"] == "unreleased":
+            # Marked watched before it's out anywhere: offer the fix
+            self.stamp.setText("NOT OUT YET")
+            self.stamp.setProperty("kind", "soon")
+            self.main.setText("This film isn't out yet")
+            self.sub.setText("It can't have been watched. Move it back to your Watchlist and "
+                             "you'll be told when it's out in HD.")
+            self.count.setVisible(False)
+            self._timer.stop()
+            self._add_action("Move back to Watchlist", "primaryBtn", self._to_watchlist)
+            self.rw_history.setVisible(False)
+        elif r.get("watch_status") == "completed":
             self.stamp.setText("✓  WATCHED")
             self.stamp.setProperty("kind", "watched")
             when = r.get("completed_at")
@@ -239,31 +285,50 @@ class MovieSection(QWidget):
             self._add_action("Move to Watchlist", "secondaryBtn", self._to_watchlist)
             self._render_rewatches()
         else:
-            upcoming = (r.get("status") == "NOT_YET_RELEASED")
-            self.stamp.setText("COMING SOON" if upcoming else "ON YOUR WATCHLIST")
-            self.stamp.setProperty("kind", "soon" if upcoming else "watchlist")
-            start = r.get("start_ts") or 0
-            if upcoming and start:
-                self.main.setText(f"In theaters {r.get('start_date')}")
-            elif upcoming:
-                self.main.setText("Release date not announced yet")
+            st = rs["state"]
+            def fmt(ts):
+                d = datetime.fromtimestamp(ts)
+                return d.strftime("%b ") + f"{d.day}, {d.year}"
+            if st == "digital":
+                self.stamp.setText("READY TO WATCH")
+                self.stamp.setProperty("kind", "watched")
+                self.main.setText("Out in HD" + (f" since {fmt(rs['digital_ts'])}" if rs["digital_ts"]
+                                                 and rs["digital_ts"] <= now else ""))
+                self._count_target = 0
+            elif st == "cinema":
+                self.stamp.setText("IN CINEMAS · WAITING FOR HD")
+                self.stamp.setProperty("kind", "soon")
+                if rs["digital_ts"] and rs["digital_ts"] > now:
+                    self.main.setText(f"Out in HD {fmt(rs['digital_ts'])}")
+                    self._count_target = rs["digital_ts"]
+                else:
+                    self.main.setText("HD release date not announced yet")
+                    self._count_target = 0
             else:
-                self.main.setText(f"Released {r.get('start_date')}" if r.get("start_date") else "Released")
-            self.sub.setText("")
-            self.count.setVisible(upcoming and start > now)
+                self.stamp.setText("COMING SOON")
+                self.stamp.setProperty("kind", "soon")
+                if rs["cinema_ts"]:
+                    self.main.setText(f"In cinemas {fmt(rs['cinema_ts'])}")
+                    self._count_target = rs["cinema_ts"] if rs["cinema_ts"] > now else 0
+                else:
+                    self.main.setText("Release date not announced yet")
+                    self._count_target = 0
+            self.sub.setText("" if st != "unreleased" else
+                             "You can mark it watched once it's out.")
+            self.count.setVisible(bool(self._count_target))
             self._tick()
             self._timer.start(30_000)
-            self._add_action("✓  Mark as watched", "primaryBtn", self._mark_watched)
+            if st != "unreleased":
+                self._add_action("✓  Mark as watched", "primaryBtn", self._mark_watched)
             self.rw_history.setVisible(False)
         self.stamp.style().unpolish(self.stamp)
         self.stamp.style().polish(self.stamp)
 
     def _tick(self):
-        r = self._row or {}
-        start = r.get("start_ts") or 0
+        target = getattr(self, "_count_target", 0) or 0
         now = int(datetime.now().timestamp())
-        if start > now:
-            self.count.setText(f"in {_span(start - now)}")
+        if target > now:
+            self.count.setText(f"in {_span(target - now)}")
 
     def _add_action(self, text, obj, cb):
         b = QPushButton(text)
@@ -480,14 +545,20 @@ class MovieSection(QWidget):
             self.where_lay.addWidget(self._muted(
                 f"Not available to stream, rent or buy in {tmdb.region()} yet."))
 
-        rel = res["rel"]
-        extra = []
-        if rel.get("digital"):
-            extra.append(f"Digital {_date_label(rel['digital'])}")
-        if rel.get("physical"):
-            extra.append(f"Disc {_date_label(rel['physical'])}")
-        if extra and self._row.get("watch_status") != "completed":
-            self.sub.setText("  ·  ".join(extra))
+        rel = res["rel"] or {}
+        avail = 1 if any(w.get(k) for k in ("stream", "rent", "buy")) else 0
+        fresh = {**self._row,
+                 "cinema_date": rel.get("theatrical") or rel.get("theatrical_limited") or self._row.get("cinema_date"),
+                 "digital_date": rel.get("digital") or self._row.get("digital_date"),
+                 "physical_date": rel.get("physical") or self._row.get("physical_date"),
+                 "digital_available": avail or self._row.get("digital_available")}
+        if any(fresh.get(k) != self._row.get(k) for k in
+               ("cinema_date", "digital_date", "physical_date", "digital_available")):
+            self.db.update_anime(self._row["id"], {k: fresh[k] for k in
+                                 ("cinema_date", "digital_date", "physical_date", "digital_available")})
+            self._row = fresh
+            self._render_status()
+            self.changed.emit(self._row["id"])
 
         parts = res.get("parts") or []
         self.coll_card.setVisible(len(parts) > 1)

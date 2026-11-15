@@ -45,6 +45,12 @@ def tmdb_fake(monkeypatch):
     return state
 
 
+def add_movie_unreleased(db, state, mid, **kw):
+    from core.providers import movie_row
+    state["movies"][mid] = fake_movie(mid, status="Planned", **kw)
+    return db.save_tmdb_title(movie_row(state["movies"][mid]), "planned")
+
+
 def add_movie(db, state, mid, status="planned", **kw):
     from core.providers import movie_row
     state["movies"][mid] = fake_movie(mid, **kw)
@@ -85,51 +91,78 @@ def test_movie_stats(db, tmdb_fake):
 
 # ── sync & alerts ─────────────────────────────────────────────────────────────
 
-def _kinds(db):
-    return {n["kind"] for n in db.get_active_notifications("movie_streaming")} | \
-           {n["kind"] for n in db.get_active_notifications("movie_theaters")} | \
-           {n["kind"] for n in db.get_active_notifications("upcoming_date")} | \
-           {n["kind"] for n in db.get_active_notifications("upcoming_trailer")}
+def _active(db, *kinds):
+    out = []
+    for k in kinds:
+        out += db.get_active_notifications(k)
+    return out
 
 
-def test_streaming_and_theaters_alerts(db, tmdb_fake):
+def test_release_state():
+    from core.kinema_sync import release_state
+    now = int(time.time())
+    assert release_state({"status": "NOT_YET_RELEASED", "cinema_date": _date(10)}, now)["state"] == "unreleased"
+    assert release_state({"status": "Released", "cinema_date": _date(-10)}, now)["state"] == "cinema"
+    assert release_state({"cinema_date": _date(-40), "digital_date": _date(-1)}, now)["state"] == "digital"
+    assert release_state({"cinema_date": _date(-40), "digital_available": 1}, now)["state"] == "digital"
+
+
+def test_out_in_hd_alerts_once_on_transition(db, tmdb_fake):
     from core.kinema_sync import KinemaSync
-    add_movie(db, tmdb_fake, 10, providers={"flatrate": [{"provider_name": "Netflix", "display_priority": 1}]})
-    add_movie(db, tmdb_fake, 11, status="planned", release_date=_date(-1),
-              rel=[{"type": 3, "release_date": _date(-1) + "T00:00:00Z"}])
+    mid = add_movie(db, tmdb_fake, 10, release_date=_date(-20),
+                    rel=[{"type": 3, "release_date": _date(-20) + "T00:00:00Z"}])
+    KinemaSync(db).sync_movies()                         # quiet baseline (in cinemas)
+    assert not _active(db, "movie_digital", "movie_theaters")
+    # digital date gets announced -> one heads-up
+    tmdb_fake["movies"][10] = fake_movie(10, release_date=_date(-20), rel=[
+        {"type": 3, "release_date": _date(-20) + "T00:00:00Z"},
+        {"type": 4, "release_date": _date(5) + "T00:00:00Z"}])
+    KinemaSync(db).sync_movies()
+    assert [n["kind"] for n in _active(db, "movie_digital_date")] == ["movie_digital_date"]
+    # it lands to rent -> exactly one "Out in HD"
+    tmdb_fake["movies"][10] = fake_movie(10, release_date=_date(-20), rel=[
+        {"type": 3, "release_date": _date(-20) + "T00:00:00Z"},
+        {"type": 4, "release_date": _date(5) + "T00:00:00Z"}],
+        providers={"rent": [{"provider_name": "Apple TV Store", "display_priority": 1}]})
     res = KinemaSync(db).sync_movies()
-    msgs = {n["kind"]: n["message"] for n in res["notifications"]}
-    assert "Netflix" in msgs["movie_streaming"]
-    assert "in theaters" in msgs["movie_theaters"]
-    before = db._get_conn().execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+    hd = [n for n in res["notifications"] if n["kind"] == "movie_digital"]
+    assert len(hd) == 1 and "Apple TV Store" in hd[0]["message"]
     KinemaSync(db).sync_movies()
-    assert db._get_conn().execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == before
+    assert len(_active(db, "movie_digital")) == 1      # never repeated
+    assert db.get_anime_by_id(mid)["digital_available"] == 1
 
 
-def test_date_and_trailer_alerts_only_after_baseline(db, tmdb_fake):
+def test_cinema_alerts_only_when_chosen(db, tmdb_fake):
+    from core.app_settings import app_settings
     from core.kinema_sync import KinemaSync
-    mid = add_movie(db, tmdb_fake, 12, status="planned")
-    tmdb_fake["movies"][12] = fake_movie(12, status="Planned", release_date=_date(60),
-                                         rel=[{"type": 3, "release_date": _date(60) + "T00:00:00Z"}])
-    KinemaSync(db).sync_movies()                       # baseline
-    assert not _kinds(db)
-    tmdb_fake["movies"][12] = fake_movie(12, status="Planned", release_date=_date(75),
-                                         rel=[{"type": 3, "release_date": _date(75) + "T00:00:00Z"}],
-                                         videos=[{"site": "YouTube", "key": "NEW", "type": "Trailer"}])
+    add_movie(db, tmdb_fake, 11, status="planned")
+    tmdb_fake["movies"][11] = fake_movie(11, status="Planned", release_date=_date(20),
+                                         rel=[{"type": 3, "release_date": _date(20) + "T00:00:00Z"}])
+    KinemaSync(db).sync_movies()                          # baseline
+    tmdb_fake["movies"][11] = fake_movie(11, release_date=_date(-1),
+                                         rel=[{"type": 3, "release_date": _date(-1) + "T00:00:00Z"}])
+    KinemaSync(db).sync_movies()
+    assert not _active(db, "movie_theaters")              # default: digital only
+    app_settings().setValue("movie_alert_mode", "both")
+    db._get_conn().execute("UPDATE anime SET cinema_date=? WHERE tmdb_id=11", (_date(30),))
+    db._get_conn().commit()
+    KinemaSync(db).sync_movies()
+    assert [n["kind"] for n in _active(db, "movie_theaters")] == ["movie_theaters"]
+    app_settings().setValue("movie_alert_mode", "off")
+
+
+def test_trailer_alert_after_baseline_and_watched_stay_quiet(db, tmdb_fake):
+    from core.kinema_sync import KinemaSync
+    add_movie(db, tmdb_fake, 12, status="planned")
+    add_movie(db, tmdb_fake, 13, status="completed",
+              providers={"flatrate": [{"provider_name": "Netflix"}]})
+    KinemaSync(db).sync_movies()
+    tmdb_fake["movies"][12] = fake_movie(12, videos=[{"site": "YouTube", "key": "NEW", "type": "Trailer"}])
     res = KinemaSync(db).sync_movies()
-    assert {"upcoming_date", "upcoming_trailer"} <= {n["kind"] for n in res["notifications"]}
-    assert db.get_anime_by_id(mid)["trailer_id"] == "NEW"
-
-
-def test_watched_movies_raise_no_alerts_and_offline_keeps_data(db, tmdb_fake):
-    from core.kinema_sync import KinemaSync
-    mid = add_movie(db, tmdb_fake, 13, status="completed",
-                    providers={"flatrate": [{"provider_name": "Netflix"}]})
+    assert [n["kind"] for n in res["notifications"]] == ["upcoming_trailer"]
+    del tmdb_fake["movies"][13]                           # offline: data kept
     KinemaSync(db).sync_movies()
-    assert not _kinds(db)
-    del tmdb_fake["movies"][13]                        # "offline"
-    KinemaSync(db).sync_movies()
-    assert db.get_anime_by_id(mid)["romaji_title"] == "Film 13"
+    assert db.get_title_by_tmdb("movie", 13)["romaji_title"] == "Film 13"
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -144,8 +177,11 @@ def movie_window(qapp, db, tmdb_fake, monkeypatch):
         monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
     add_anime(db, "Some anime", "watching", status="RELEASING")
     ids = {
-        "soon": add_movie(db, tmdb_fake, 20, status="planned", release_date=_date(30)),
+        "soon": add_movie_unreleased(db, tmdb_fake, 20, release_date=_date(30),
+                                     rel=[{"type": 3, "release_date": _date(30) + "T00:00:00Z"}]),
         "list": add_movie(db, tmdb_fake, 21, status="planned"),
+        "ready": add_movie(db, tmdb_fake, 23, status="planned",
+                           providers={"rent": [{"provider_name": "Apple TV Store"}]}),
         "seen": add_movie(db, tmdb_fake, 22, status="completed"),
     }
     db.update_anime(ids["soon"], {"status": "NOT_YET_RELEASED"})
@@ -169,13 +205,19 @@ def test_movies_page_switches_library(movie_window):
     assert wait_until(lambda: set(win._cards) == set(ids.values()))
     assert list(win._filter_btns) == ["all", "planned", "completed"]
     assert win._filter_btns["planned"].text() == "Watchlist"
-    assert win._add_btn.text() == "+  Add Movie"
+    assert win._add_btn.media() == "movie" and win._empty_add.media() == "movie"
     badges = {aid: c.status_badge.text() for aid, c in win._cards.items()}
     assert badges[ids["soon"]] == "COMING SOON" and badges[ids["seen"]] == "WATCHED"
+    assert badges[ids["list"]] == "IN CINEMAS" and badges[ids["ready"]] == "READY TO WATCH"
+    from ui.completed_view import SectionHeader
+    heads = [win.grid_layout.itemAt(i).widget() for i in range(win.grid_layout.count())]
+    texts = [h.text() for h in heads if hasattr(h, "text") and not isinstance(h, SectionHeader)
+             and "〡" in (h.text() or "")]
+    assert texts[0].startswith("〡 READY TO WATCH") and texts[1].startswith("〡 WAITING FOR HD")
     assert not win._cards[ids["seen"]].progress_bar.isVisibleTo(win._cards[ids["seen"]])
     win._navigate("library")
     assert wait_until(lambda: set(win._cards) == anime_cards)
-    assert "behind" in win._filter_btns and win._add_btn.text() == "+  Add Anime"
+    assert "behind" in win._filter_btns and win._add_btn.media() == "anime"
 
 
 def test_movie_panel_modes(movie_window):
@@ -188,7 +230,7 @@ def test_movie_panel_modes(movie_window):
     sec = dp.movie_section
     assert sec.isVisibleTo(dp) and not dp._episodes_card.isVisibleTo(dp)
     assert not dp.status_btn.isVisibleTo(dp) and not sec.verdict_card.isVisibleTo(sec)
-    assert sec.stamp.text() == "ON YOUR WATCHLIST"
+    assert sec.stamp.text() == "IN CINEMAS · WAITING FOR HD"
     # Mark as watched from the panel -> verdict appears, card moves
     sec._mark_watched()
     pump(300)
@@ -196,6 +238,24 @@ def test_movie_panel_modes(movie_window):
     assert sec.verdict_card.isVisibleTo(sec) and sec.stamp.text() == "✓  WATCHED"
     sec._log_rewatch()
     assert win.db.rewatch_count(ids["list"]) == 1
+
+
+def test_unreleased_cannot_be_marked_watched(movie_window):
+    win, ids = movie_window
+    win._navigate("movies")
+    assert wait_until(lambda: ids["soon"] in win._cards)
+    win._on_card_clicked(ids["soon"])
+    pump(300)
+    sec = win.detail_panel.movie_section
+    labels = [sec.actions.itemAt(i).widget().text() for i in range(sec.actions.count())]
+    assert not any("watched" in t.lower() for t in labels)
+    # a film already wrongly marked watched offers the fix
+    win.db.update_anime(ids["soon"], {"watch_status": "completed"})
+    win._close_detail_panel()
+    win.detail_panel.load_anime(win.db.get_anime_by_id(ids["soon"]))
+    assert sec.stamp.text() == "NOT OUT YET"
+    sec._to_watchlist()
+    assert win.db.get_anime_by_id(ids["soon"])["watch_status"] == "planned"
 
 
 def test_add_movie_dialog(qapp, db, tmdb_fake):

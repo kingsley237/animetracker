@@ -298,11 +298,12 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        add_btn = QPushButton("+  Add Anime")
+        from ui.add_button import AddButton
+        add_btn = AddButton("anime", "sidebar")
         self._add_btn = add_btn
-        add_btn.setObjectName("primaryBtn")
-        add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         add_btn.clicked.connect(self._open_add_dialog)
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self._open_add_dialog)
         lay.addWidget(add_btn)
         lay.addSpacing(8)
 
@@ -365,9 +366,7 @@ class MainWindow(QMainWindow):
         sort_lbl.setStyleSheet("font-size:12px;color:#4a5070;")
         sr.addWidget(sort_lbl)
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems([
-            "Release Date", "Title", "AniList Score", "Date Added", "Your Rating"
-        ])
+        self._fill_sort_combo("anime")
         self.sort_combo.setFixedWidth(150)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         sr.addWidget(self.sort_combo)
@@ -456,11 +455,18 @@ class MainWindow(QMainWindow):
         self.search_bar.clear()
         self.search_bar.blockSignals(False)
         self._build_filter_pills(media)
+        self._fill_sort_combo(media)
         movie = media == "movie"
+        self._empty_icon.setText("🎬" if movie else "📺")
+        self._empty_title.setText("No movies yet" if movie else "Nothing here yet")
+        self._empty_sub.setText(
+            "Add films you want to see, or ones you've already watched." if movie else
+            "Add a currently airing or upcoming anime to start tracking.")
+        self._empty_add.set_media(media)
         self.search_bar.setPlaceholderText("Search your movies…" if movie else "Search your library…")
         self.refresh_btn.setText("↻  Refresh Movies" if movie else "↻  Refresh Airing")
         self.anilist_user_menu.setVisible(not movie)
-        self._add_btn.setText("+  Add Movie" if movie else "+  Add Anime")
+        self._add_btn.set_media(media)
         self._relabel_stats_strip()
 
     def _build_stats_strip(self) -> QWidget:
@@ -511,24 +517,26 @@ class MainWindow(QMainWindow):
         lay.setSpacing(14)
 
         icon = QLabel("📺")
+        self._empty_icon = icon
         icon.setStyleSheet("font-size:52px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(icon)
 
         t = QLabel("Nothing here yet")
+        self._empty_title = t
         t.setStyleSheet("font-size:18px;font-weight:600;color:#4a5070;")
         t.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(t)
 
         s = QLabel("Add a currently airing or upcoming anime to start tracking.")
+        self._empty_sub = s
         s.setStyleSheet("font-size:13px;color:#3a3f55;")
         s.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(s)
 
-        add = QPushButton("+ Add Anime")
-        add.setObjectName("primaryBtn")
-        add.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        add.setFixedWidth(180)
+        from ui.add_button import AddButton
+        add = AddButton("anime", "hero")
+        self._empty_add = add
         add.clicked.connect(self._open_add_dialog)
         lay.addWidget(add, alignment=Qt.AlignmentFlag.AlignCenter)
         return w
@@ -876,7 +884,11 @@ class MainWindow(QMainWindow):
                 and current_page in ("library", "movies")
                 and not self._search_query
             )
-            if show_grouped:
+            movie_shelves = (self._media == "movie" and current_filter in ("all", "planned")
+                             and current_page in ("library", "movies") and not self._search_query)
+            if movie_shelves:
+                self._populate_movie_shelves(anime_list, include_watched=current_filter == "all")
+            elif show_grouped:
                 self._populate_grouped_grid(anime_list)
             elif show_timeline:
                 self._populate_completed_timeline(anime_list)
@@ -892,6 +904,55 @@ class MainWindow(QMainWindow):
 
         self._update_stats_strip()
         self._apply_card_overlays()
+
+    def _populate_movie_shelves(self, movies: List[Dict], include_watched: bool):
+        """Watchlist split by what you can actually watch now (you watch in
+        HD at home): Ready to watch, then Waiting for HD. Watched follows as
+        one row in the All view."""
+        from core.kinema_sync import release_state
+        from ui.completed_view import SectionHeader
+        cols = max(self._calc_columns(), 1)
+        watch = [m for m in movies if m.get("watch_status") == "planned"]
+        ready = [m for m in watch if release_state(m)["state"] == "digital"]
+        waiting = [m for m in watch if m not in ready]
+        # Waiting: whatever lands in HD soonest first
+        far = 9_999_999_999
+        waiting.sort(key=lambda m: (release_state(m)["digital_ts"] or far,
+                                    release_state(m)["cinema_ts"] or far))
+        shelves = [("ready", "Ready to watch", "#34d399", ready),
+                   ("waiting", "Waiting for HD", "#fbbf24", waiting)]
+        if include_watched:
+            done = [m for m in movies if m.get("watch_status") == "completed"]
+            shelves.append(("watched", "Watched", "#7c6af7", done))
+        row = 0
+        for key, label, color, items in shelves:
+            if not items:
+                continue
+            shown = items[:cols] if key == "watched" else items
+            if key == "watched" and len(items) > cols:
+                hdr = SectionHeader("watched", label, len(items), color, collapsible=False,
+                                    action_text=f"View all {len(items)}  \u2192")
+                hdr.action.connect(lambda _k: self._set_filter("completed"))
+            else:
+                hdr = QLabel(f"〡 {label.upper()}  ·  {len(items)} {'film' if len(items) == 1 else 'films'}")
+                hdr.setObjectName("libSectionHeader")
+                hdr.setStyleSheet(f"color:{color};")
+            self.grid_layout.addWidget(hdr, row, 0, 1, cols)
+            row += 1
+            for i, m in enumerate(shown):
+                if i and i % cols == 0:
+                    row += 1
+                card = AnimeCard(m, self.db)
+                card.clicked.connect(lambda aid=m["id"]: self._on_card_clicked(aid))
+                card.new_season_clicked.connect(self._on_card_new_season)
+                self._cards[m["id"]] = card
+                self.grid_layout.addWidget(card, row, i % cols)
+                self._load_card_image(m, card)
+            row += 1
+        if not watch and not include_watched:
+            msg = QLabel("Your Watchlist is empty. Add a film you want to see.")
+            msg.setObjectName("completedToolbarHint")
+            self.grid_layout.addWidget(msg, row, 0, 1, cols)
 
     def _populate_grouped_grid(self, anime_list: List[Dict]):
         """
@@ -1420,15 +1481,26 @@ class MainWindow(QMainWindow):
 
     # ── Search & Sort ──────────────────────────────────────────────────────────
 
+    _SORTS = {
+        "anime": [("Release Date", "release_date"), ("Title", "title"), ("AniList Score", "score"),
+                  ("Date Added", "date_added"), ("Your Rating", "rating")],
+        # Movies default to best first; unreleased films follow by anticipation
+        "movie": [("Top Rated", "top_rated"), ("Most Anticipated", "popularity"),
+                  ("Newest", "newest"), ("Title", "title"), ("Date Added", "date_added"),
+                  ("Your Rating", "rating")],
+    }
+
+    def _fill_sort_combo(self, media: str):
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.clear()
+        for label, key in self._SORTS.get(media, self._SORTS["anime"]):
+            self.sort_combo.addItem(label, key)
+        self.sort_combo.setCurrentIndex(0)
+        self.sort_combo.blockSignals(False)
+        self._sort_by = self.sort_combo.currentData() or "release_date"
+
     def _on_sort_changed(self, index: int):
-        sort_map = {
-            0: "release_date",
-            1: "title",
-            2: "score",
-            3: "date_added",
-            4: "rating",
-        }
-        self._sort_by = sort_map.get(index, "release_date")
+        self._sort_by = self.sort_combo.itemData(index) or "release_date"
         self._load_library()
         # Apply persistent overlay to all cards based on sort
         self._apply_card_overlays()

@@ -244,6 +244,10 @@ def movie_row(d: Dict) -> Dict:
         "popularity": int(d.get("popularity") or 0) or None,
         "characters": cast,
         "site_url": f"https://www.themoviedb.org/movie/{d.get('id')}",
+        "cinema_date": rel.get("theatrical") or rel.get("theatrical_limited") or (d.get("release_date") or None),
+        "digital_date": rel.get("digital"),
+        "physical_date": rel.get("physical"),
+        "digital_available": 1 if any(tmdb.watch_providers(d).get(k) for k in ("stream", "rent", "buy")) else 0,
         "_release_dates": rel,
         "_collection": {"id": coll.get("id"), "name": coll.get("name")} if coll else None,
     }

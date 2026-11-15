@@ -1770,3 +1770,8 @@ QLabel#collectionTagThis {
     color: #fbbf24;
     background-color: rgba(40, 28, 4, 0.95);
 }
+
+QLabel#releaseTimeline {
+    font-size: 12px;
+    padding-top: 4px;
+}

@@ -285,7 +285,9 @@ class MovieAddDialog(QDialog):
         self.p_overview.setText(ov if len(ov) < 420 else ov[:410].rsplit(" ", 1)[0] + "…")
         existing = self.db.get_title_by_tmdb("movie", hit["provider_id"])
         self.btn_watchlist.setEnabled(not existing)
-        self.btn_watched.setEnabled(not existing or existing.get("watch_status") != "completed")
+        # Only enabled once details confirm the film is actually out
+        self.btn_watched.setEnabled(False)
+        self._existing = existing
         self.p_note.setText("Already in your library." if existing else "")
         self.p_backdrop.clear()
         raw = hit.get("raw") or {}
@@ -320,8 +322,22 @@ class MovieAddDialog(QDialog):
         if row.get("average_score"):
             bits.append(f"★ {row['average_score'] / 10:.1f}")
         self.p_meta.setText("  ·  ".join(b for b in bits if b))
-        if row.get("status") == "NOT_YET_RELEASED" and row.get("start_date"):
-            self.p_note.setText(self.p_note.text() or f"Releases {row['start_date']}.")
+        from core.kinema_sync import release_state
+        st = release_state(row)["state"]
+        existing = getattr(self, "_existing", None)
+        self.btn_watched.setEnabled(st != "unreleased" and
+                                    (not existing or existing.get("watch_status") != "completed"))
+        if existing:
+            return
+        if st == "unreleased":
+            when = f" It's in cinemas {row['start_date']}." if row.get("start_date") else ""
+            self.p_note.setText(f"Not out yet, so it can't be marked watched.{when} "
+                                "Add it to your Watchlist and you'll be told when it's out in HD.")
+        elif st == "cinema":
+            d = row.get("digital_date")
+            self.p_note.setText("In cinemas now. " + (f"Out in HD {d}." if d else "HD date not announced yet."))
+        else:
+            self.p_note.setText("Out in HD: ready to watch.")
 
     def _on_backdrop(self, result):
         try:
