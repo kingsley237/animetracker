@@ -371,14 +371,21 @@ class _MiniItem(QWidget, _Img):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(255, 255, 255, 12))
             p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 8, 8)
-        pr = QRectF(4, 4, self.PW, self.PH)
-        path = QPainterPath()
-        path.addRoundedRect(pr, 6, 6)
-        p.save()
-        p.setClipPath(path)
-        self._draw_cover(p, pr)
-        p.restore()
-        x = self.PW + 12
+        if self.width() >= 150:
+            pr = QRectF(4, 4, self.PW, self.PH)
+            path = QPainterPath()
+            path.addRoundedRect(pr, 6, 6)
+            p.save()
+            p.setClipPath(path)
+            self._draw_cover(p, pr)
+            p.restore()
+            x = self.PW + 12
+        else:
+            # narrow column (small screens): a colour bar instead of the poster
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(color))
+            p.drawRoundedRect(QRectF(3, 8, 3, self.PH - 8), 1.5, 1.5)
+            x = 12
         w = self.width() - x - 4
         f = QFont(self.font())
         f.setPointSizeF(8.5)
@@ -409,7 +416,7 @@ class _DayColumn(QWidget):
         super().__init__(parent)
         self.setObjectName("homeDayColToday" if today else "homeDayCol")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setMinimumWidth(150)
+        self.setMinimumWidth(96)       # shrinks on small screens; text elides
         l = QVBoxLayout(self)
         l.setContentsMargins(10, 12, 10, 12)
         l.setSpacing(4)
