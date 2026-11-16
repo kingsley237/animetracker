@@ -117,6 +117,9 @@ class AniListStatusMonitor(QObject):
             return self._probe()
 
         def on_done(result):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return              # window closed while the check ran
             is_up, message = result
             self._last_checked_at = time.time()
             was_up = self._is_up
