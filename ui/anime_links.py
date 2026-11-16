@@ -133,8 +133,8 @@ class LinkEditDialog(QDialog):
         self.label_edit = QLineEdit()
         self.label_edit.setPlaceholderText("Pick one below or type your own")
         form.addRow("Label", self.label_edit)
-        from ui.layout_helpers import FlowLayout
-        chips = QWidget()
+        from ui.layout_helpers import FlowHost, FlowLayout
+        chips = FlowHost()
         flow = FlowLayout(chips, h_spacing=6, v_spacing=6)
         self._preset_btns = []
         for text, platform in LABEL_PRESETS:
@@ -180,6 +180,20 @@ class LinkEditDialog(QDialog):
             idx = self.platform_combo.findData(platform)
             if idx >= 0:
                 self.platform_combo.setCurrentIndex(idx)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # once the chips know their real height, drop any leftover space
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._fit_height)
+
+    def _fit_height(self):
+        try:
+            self.layout().activate()
+            self.resize(self.width(), self.layout().heightForWidth(self.width())
+                        if self.layout().hasHeightForWidth() else self.sizeHint().height())
+        except RuntimeError:
+            pass
 
     def _use_preset(self, text: str, platform: Optional[str]):
         self.label_edit.setText(text)
