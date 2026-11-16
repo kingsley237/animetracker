@@ -56,24 +56,18 @@ class _BorderOverlay(QWidget):
         selected = card.property("selected") == "true"
         hovered  = card.property("hovered") == "true"
 
+        media = (getattr(card, "_anime", None) or {}).get("media_type") or "anime"
+        lib = {"anime": "#8b7bff", "tv": "#38bdf8", "movie": "#fbbf24"}.get(media, "#8b7bff")
         if selected:
-            border_color, width = QColor("#b8a8ff"), 2.5
-        elif hovered:
-            border_color, width = QColor("#6b5fc4"), 2.0
+            border_color, width = QColor(lib), 2.5
         elif accent == "behind":
-            border_color, width = QColor("#f87171"), 2.0
-        elif accent == "airing":
-            border_color, width = QColor("#7c6af7"), 1.5
-        elif accent == "planned":
-            border_color, width = QColor("#9d8fff"), 1.5
-        elif accent == "completed":
-            border_color, width = QColor("#34d399"), 1.5
+            border_color, width = QColor("#f87171"), 2.0          # new episode waiting
         elif accent == "incomplete":
-            border_color, width = QColor("#fbbf24"), 2.0
-        elif accent == "dropped":
-            border_color, width = QColor("#6b2f3a"), 1.5
+            border_color, width = QColor(251, 191, 36, 200), 1.5
+        elif hovered:
+            border_color, width = QColor(255, 255, 255, 90), 1.2
         else:
-            border_color, width = QColor("#2a3048"), 1.0
+            border_color, width = QColor(255, 255, 255, 26), 1.0   # premium hairline
 
         radius = getattr(card, "CARD_RADIUS", 10)
         inset  = (width / 2.0) + 0.5
@@ -83,6 +77,8 @@ class _BorderOverlay(QWidget):
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if hovered and not selected:
+            p.fillPath(path, QColor(255, 255, 255, 12))           # gentle lift on hover
         pen = QPen(border_color, width)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
@@ -187,10 +183,11 @@ class AnimeCard(QFrame):
     CARD_WIDTH   = 185
     CARD_HEIGHT  = 275
     COVER_HEIGHT = 275   # same as card — full bleed
-    CARD_RADIUS  = 10
+    CARD_RADIUS  = 14
 
     clicked       = pyqtSignal(int)
     watch_toggled = pyqtSignal(int)
+    quick_watched = pyqtSignal(int, str)    # library id, what was marked (e.g. "Ep 7")
     new_season_clicked = pyqtSignal(int)
     def __init__(self, anime: Dict[str, Any], db: DatabaseManager,
                  parent=None):
@@ -388,6 +385,16 @@ class AnimeCard(QFrame):
         self._info_w.raise_()
 
         root.addWidget(self._cover_w)
+
+        # Hover quick action: mark the next episode watched
+        self._quick = None
+        self.quick_btn = QPushButton("✓", self)
+        self.quick_btn.setObjectName("cardQuickTick")
+        self.quick_btn.setFixedSize(34, 34)
+        self.quick_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.quick_btn.move(self.CARD_WIDTH - 44, 10)
+        self.quick_btn.clicked.connect(self._do_quick)
+        self.quick_btn.setVisible(False)
 
         # Border overlay — parented to _cover_w so it sits above the cover image
         self._border_overlay = _BorderOverlay(self._cover_w)
@@ -761,6 +768,7 @@ class AnimeCard(QFrame):
 
         self._refresh_overlay()
         self.refresh_links()
+        self._compute_quick(anime)
 
     def _apply_anime(self, anime, ws, api_status, watched, aired, total, next_ep,
                      is_ended, still_airing_behind, has_behind, incomplete):
@@ -933,77 +941,26 @@ class AnimeCard(QFrame):
         menu.links_changed.connect(self.refresh_links)
         menu.exec(self.mapToGlobal(self.rect().center()))
 
+    _PILLS = {
+        # object name: (text colour, tint)
+        "badgeWatching":   ("#e2ddff", "rgba(139,123,255,0.30)"),
+        "badgeAlert":      ("#ffe1e1", "rgba(248,113,113,0.42)"),
+        "badgeCompleted":  ("#d2fbe7", "rgba(52,211,153,0.30)"),
+        "badgeDropped":    ("#f5c2ca", "rgba(181,72,90,0.40)"),
+        "badgeIncomplete": ("#fff1c2", "rgba(251,191,36,0.34)"),
+        "badgePlanned":    ("#f1efff", "rgba(157,143,255,0.26)"),
+        "badgeUpcoming":   ("#fff1c2", "rgba(251,191,36,0.30)"),
+    }
+
     def _set_badge(self, obj_name: str, text: str):
         self.status_badge.setObjectName(obj_name)
         self.status_badge.setText(text)
-        # High-contrast pills so status is readable on any cover art
-        if obj_name == "badgeWatching":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#d7d2ff;"
-                "border:1px solid #7c6af7;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeAlert":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fecaca;"
-                "border:1px solid #f87171;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeCompleted":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#bbf7d0;"
-                "border:1px solid #34d399;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeDropped":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(30,10,14,0.94);"
-                "color:#f0a3ad;"
-                "border:1px solid #b5485a;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:800;"
-                "padding:2px 8px;letter-spacing:0.8px;"
-            )
-        elif obj_name == "badgeIncomplete":
-            # Distinct from FINISHED (green) and AIRING alert (red) — this
-            # means the user marked it complete but hasn't watched everything.
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fde68a;"
-                "border:1px solid #fbbf24;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgePlanned":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#f4f2ff;"
-                "border:1px solid #9d8fff;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeUpcoming":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fde68a;"
-                "border:1px solid #fbbf24;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        else:
-            self.status_badge.setStyleSheet("")
+        fg, tint = self._PILLS.get(obj_name, ("#e8eaf2", "rgba(255,255,255,0.12)"))
+        # Glass pill: dark base for contrast on any art, tinted by state.
+        self.status_badge.setStyleSheet(
+            f"background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {tint},stop:1 rgba(8,9,14,0.86));"
+            f"color:{fg};border:1px solid rgba(255,255,255,0.10);border-radius:9px;"
+            "font-size:9px;font-weight:800;padding:2px 9px;letter-spacing:0.8px;")
         self.status_badge.style().unpolish(self.status_badge)
         self.status_badge.style().polish(self.status_badge)
         self.status_badge.adjustSize()
@@ -1040,7 +997,50 @@ class AnimeCard(QFrame):
         if hasattr(self, "_border_overlay"):
             self._border_overlay.update()
 
+    def _compute_quick(self, anime: Dict[str, Any]):
+        """What one click marks: the next aired episode of something you're watching."""
+        self._quick = None
+        if anime.get("id", 0) <= 0 or anime.get("watch_status") != "watching":
+            return
+        media = anime.get("media_type") or "anime"
+        if media == "tv":
+            nxt = self.db.tv_progress(anime["id"])["next"]
+            if nxt:
+                self._quick = ("tv", nxt["season_number"], nxt["episode_number"])
+        elif media == "anime":
+            total = anime.get("total_episodes") or 0
+            n_next = anime.get("next_episode_num")
+            ended = (anime.get("status") or "").upper() in ("FINISHED", "CANCELLED")
+            aired = total if (total and (ended or not n_next)) else (n_next - 1 if n_next and n_next > 1 else 0)
+            watched = {e["episode_num"] for e in self.db.get_episodes(anime["id"]) if e.get("watched")}
+            n = next((k for k in range(1, aired + 1) if k not in watched), None)
+            if n:
+                self._quick = ("anime", n)
+        if self._quick:
+            label = (f"S{self._quick[1]:02d}E{self._quick[2]:02d}" if self._quick[0] == "tv"
+                     else f"Episode {self._quick[1] + (anime.get('episode_offset') or 0)}")
+            self.quick_btn.setToolTip(f"Mark {label} watched")
+
+    def _do_quick(self):
+        q = self._quick
+        if not q:
+            return
+        if q[0] == "tv":
+            self.db.set_tv_episode_watched(self.anime_id, q[1], q[2], True)
+            what = f"S{q[1]:02d}E{q[2]:02d}"
+        else:
+            self.db.set_episode_watched(self.anime_id, q[1], True)
+            what = f"Episode {q[1] + (self._anime.get('episode_offset') or 0)}"
+        fresh = self.db.get_anime_by_id(self.anime_id)
+        if fresh:
+            self.update_data(fresh)
+        self.quick_btn.setVisible(bool(self._quick) and self.underMouse())
+        self.quick_watched.emit(self.anime_id, what)
+
     def enterEvent(self, event):
+        if self._quick and not self._overlay_mode:
+            self.quick_btn.setVisible(True)
+            self.quick_btn.raise_()
         if getattr(self, "_cover_faded", None) is not None:
             self.cover_label.setPixmap(self._cover_color)   # colour comes back on hover
         self.setProperty("hovered", "true")
@@ -1050,6 +1050,7 @@ class AnimeCard(QFrame):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        self.quick_btn.setVisible(False)
         if getattr(self, "_cover_faded", None) is not None:
             self.cover_label.setPixmap(self._cover_faded)
         self.setProperty("hovered", "false")

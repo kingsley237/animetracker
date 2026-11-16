@@ -1950,3 +1950,10 @@ QLabel#homeDayEmpty { color: #3d4359; font-size: 11px; background: transparent; 
 
 /* Raikō sidebar brand */
 QLabel#appLogoName { color: #f4f5fa; font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
+
+/* Library cards: hover quick action */
+QPushButton#cardQuickTick {
+    background: rgba(8, 9, 14, 0.82); color: #f4f5fa; border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 17px; font-size: 15px; font-weight: 900; padding: 0;
+}
+QPushButton#cardQuickTick:hover { background: #34d399; color: #062016; border-color: #34d399; }

@@ -983,6 +983,7 @@ class MainWindow(QMainWindow):
                     card = AnimeCard(anime, self.db)
                     card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                     card.new_season_clicked.connect(self._on_card_new_season)
+                    card.quick_watched.connect(self._on_card_quick_watched)
                     self._cards[anime["id"]] = card
                     self.grid_layout.addWidget(card, idx // COLS, idx % COLS)
                     self._load_card_image(anime, card)
@@ -1030,6 +1031,7 @@ class MainWindow(QMainWindow):
                 card = AnimeCard(m, self.db)
                 card.clicked.connect(lambda aid=m["id"]: self._on_card_clicked(aid))
                 card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
                 self._cards[m["id"]] = card
                 self.grid_layout.addWidget(card, row, i % cols)
                 self._load_card_image(m, card)
@@ -1088,6 +1090,7 @@ class MainWindow(QMainWindow):
                 card = AnimeCard(anime, self.db)
                 card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                 card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
                 self._cards[anime["id"]] = card
                 self.grid_layout.addWidget(card, row_num, col_idx % COLS)
                 self._load_card_image(anime, card)
@@ -1138,6 +1141,7 @@ class MainWindow(QMainWindow):
                 card = AnimeCard(anime, self.db)
                 card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                 card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
                 self._cards[anime["id"]] = card
                 self.grid_layout.addWidget(card, row, i % COLS)
                 self._load_card_image(anime, card)
@@ -1462,6 +1466,17 @@ class MainWindow(QMainWindow):
         page = self._discover_page if where == "anime" else self._kinema_discover
         if page is not None and query:
             page.search.setText(query)
+
+    def _on_card_quick_watched(self, lib_id: int, what: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        Toast.show(self, f"{row.get('english_title') or row.get('romaji_title') or 'Title'}: "
+                         f"{what} watched.", kind="success")
+        self._update_stats_strip()
+        if self.detail_panel.isVisible() and self.selected_anime_id == lib_id:
+            self.detail_panel.refresh_from_db()
+        if self._home_page is not None and self.current_page == "home":
+            self._home_page.load()
 
     def _on_home_changed(self, lib_id: int):
         row = self.db.get_anime_by_id(lib_id)

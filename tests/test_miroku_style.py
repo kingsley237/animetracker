@@ -136,3 +136,15 @@ def test_status_banners_themed_and_stacked(win):
     assert w._status_banners["offline"].is_shown() and not a.is_shown() and not t.is_shown()
     w._on_tmdb_down("x")
     assert not t.is_shown()
+
+
+def test_card_quick_watched_marks_next_episode(win):
+    w, ids = win
+    card = w._cards[ids["air"]]                    # ep 4 aired, unwatched
+    assert card._quick == ("anime", 4)
+    got = []
+    card.quick_watched.connect(lambda aid, what: got.append(what))
+    card._do_quick()
+    assert w.db.get_watched_count(ids["air"]) == 4 and got == ["Episode 4"]
+    assert card._quick is None                     # caught up now
+    assert w._cards[ids["done"]]._quick == ("anime", 1)
