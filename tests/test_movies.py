@@ -331,14 +331,15 @@ def test_sidebar_sections_and_kinema_discover(movie_window, monkeypatch):
     win, ids = movie_window
     assert [s for s, _ in mw.NAV_SECTIONS][:2] == ["Miroku", "Kinema"]
     miroku = [pid for _l, _t, pid in mw.NAV_SECTIONS[0][1]]
-    assert miroku == ["library", "dropped", "discover", "calendar", "stream"]
+    assert miroku == ["library", "dropped", "discover"]
+    assert len(mw.NAV_SECTIONS) == 2          # no Personal section any more
     assert [pid for _l, _t, pid in mw.NAV_SECTIONS[1][1]] == ["movies", "tv", "kinema_discover"]
     win._navigate("kinema_discover")
     assert win.stack.currentWidget() is win._kinema_discover
     assert win._add_btn.media() == "movie"
     win._kinema_discover.set_kind("tv")          # Movies | TV shows switch
     assert win._add_btn.media() == "tv"
-    win._navigate("calendar")
+    win._navigate("library")
     assert win._add_btn.media() == "anime"
 
 

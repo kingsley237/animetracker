@@ -31,8 +31,8 @@ TOUR_STEPS: List[Tuple[str, str, str]] = [
     (
         "sidebar",
         "Navigation",
-        "Use the sidebar to switch between your Library, Watching list, "
-        "Hall of Fame, Discover, and Statistics.",
+        "Miroku holds your anime (Library, Dropped, Discover). Kinema holds "
+        "your Movies and TV shows, with its own Discover.",
     ),
     (
         "search_bar",

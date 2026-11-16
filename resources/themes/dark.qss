@@ -1857,3 +1857,28 @@ QLabel#tvEpNameDim { color: #6b7391; font-size: 12px; }
 QLabel#tvEpRating { color: #fbbf24; font-size: 11px; font-weight: 700; }
 QLabel#tvEpDate { color: #5c6482; font-size: 11px; }
 QLabel#tvEpAirs { color: #7dd3fc; font-size: 11px; font-weight: 600; }
+
+/* ── Miroku: Watching section (Kinema layout, indigo) ──────────────────── */
+QLabel#animeStamp {
+    background: rgba(139, 123, 255, 0.14); color: #e0dbff;
+    border: 1px solid #8b7bff; border-radius: 5px;
+    padding: 3px 10px; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+}
+QWidget#animeProgressFill { background: #8b7bff; border-radius: 3px; }
+QLabel#animeNextAir { color: #b8adff; font-size: 12px; font-weight: 600; }
+QLabel#animeEpAirs { color: #b8adff; font-size: 11px; font-weight: 600; }
+QPushButton#animeEpTick {
+    background: transparent; border: 1.5px solid #3a3f55; border-radius: 12px;
+    color: #0b0d12; font-size: 12px; font-weight: 900; padding: 0;
+}
+QPushButton#animeEpTick:hover { border-color: #8b7bff; }
+QPushButton#animeEpTick[watched="true"] { background: #8b7bff; border-color: #8b7bff; }
+QPushButton#animeEpTick:disabled { border: 1.5px dashed #2a2e40; }
+QPushButton#animeBlockTab {
+    background: #141724; color: #8c93ad; border: 1px solid #23273a;
+    border-radius: 13px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+}
+QPushButton#animeBlockTab:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#animeBlockTab[active="true"] {
+    background: rgba(139, 123, 255, 0.16); color: #f0edff; border-color: #8b7bff;
+}

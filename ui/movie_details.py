@@ -4,7 +4,7 @@ Kinema - movie section of the detail panel.
 Watchlist  release dates (cinema / digital, your country) with a countdown,
            Mark as watched, where to watch, trailers, facts, cast, franchise.
 Watched    when you watched it, your verdict vs the community, rewatch log,
-           Hall of Fame, plus where to watch / trailers / franchise.
+           plus where to watch / trailers / franchise.
 """
 from __future__ import annotations
 
@@ -67,7 +67,6 @@ def _chip(text: str, kind: str) -> QLabel:
 
 class MovieSection(QWidget):
     changed = pyqtSignal(int)              # library id: status / rating / rewatch changed
-    open_hall_of_fame = pyqtSignal()
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -180,19 +179,6 @@ class MovieSection(QWidget):
         self.coll_card.layout().addWidget(self.coll_host)
         lay.addWidget(self.coll_card)
 
-        # Hall of Fame (watched)
-        self.hof_card = _card("Hall of Fame")
-        self.hof_text = QLabel()
-        self.hof_text.setObjectName("plannedFactValue")
-        self.hof_text.setWordWrap(True)
-        self.hof_btn = QPushButton()
-        self.hof_btn.setObjectName("secondaryBtn")
-        self.hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.hof_btn.clicked.connect(self._hof_action)
-        self.hof_card.layout().addWidget(self.hof_text)
-        self.hof_card.layout().addWidget(self.hof_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-        lay.addWidget(self.hof_card)
-
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
@@ -203,7 +189,6 @@ class MovieSection(QWidget):
         self._token += 1
         watched = row.get("watch_status") == "completed"
         self.verdict_card.setVisible(watched)
-        self.hof_card.setVisible(watched)
         self._render_status()
         self._render_facts()
         self._render_cast()
@@ -215,7 +200,6 @@ class MovieSection(QWidget):
         if watched:
             self.rating.load(row["id"], episode_num=0)
             self._render_verdict()
-            self._render_hof()
         self._fetch_live(row)
 
     def stop(self):
@@ -397,27 +381,6 @@ class MovieSection(QWidget):
     def _on_rated(self, *_):
         self._render_verdict()
         self.changed.emit(self._row["id"])
-
-    def _render_hof(self):
-        from ui.hall_of_fame import _migrate
-        _migrate(self.db)
-        hrow = self.db._get_conn().execute(
-            "SELECT rank, tier FROM hall_of_fame WHERE anime_id=?", (self._row["id"],)).fetchone()
-        if hrow:
-            tier = f" · Tier {hrow['tier']}" if hrow["tier"] else ""
-            self.hof_text.setText(f"★  In your Hall of Fame at #{hrow['rank']}{tier}.")
-            self.hof_btn.setText("Open Hall of Fame")
-        else:
-            self.hof_text.setText("Not in your Hall of Fame.")
-            self.hof_btn.setText("＋  Add to Hall of Fame")
-
-    def _hof_action(self):
-        from ui.hall_of_fame import _add_to_hof, _in_hof
-        if _in_hof(self.db, self._row["id"]):
-            self.open_hall_of_fame.emit()
-            return
-        _add_to_hof(self.db, self._row["id"])
-        self._render_hof()
 
     # ── facts / cast ──────────────────────────────────────────────────────────
 

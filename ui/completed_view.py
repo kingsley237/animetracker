@@ -5,7 +5,7 @@ The Completed list only ever grows. Like a watch diary (Letterboxd /
 AniList / MAL style), it's shown as a timeline of when you finished things:
 "Finished this month", "Earlier in 2026", "2025", ... Each group folds away
 (older years start folded) and can be archived in one click. Archived shows
-leave the everyday view but stay in stats, search, Hall of Fame and the
+leave the everyday view but stay in search and the
 sequel checks; the Archived toggle brings them back.
 """
 from __future__ import annotations
@@ -116,7 +116,7 @@ class CompletedToolbar(QWidget):
         lay.setSpacing(10)
         if showing_archived:
             text = f"Archive  ·  {shown} {'title' if shown == 1 else 'titles'} filed away"
-            hint = "Still counted in your stats, search and Hall of Fame."
+            hint = "Still findable in search."
         else:
             text = (f"Your movie diary  ·  {shown} {'film' if shown == 1 else 'films'}"
                     if media == "movie" else

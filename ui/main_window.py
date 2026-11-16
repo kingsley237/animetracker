@@ -4,7 +4,6 @@ Fixed:
   - Filter pills (All/Watching/Completed/Planned) ONLY shown on Library page
   - Dropped section loads and displays correctly
   - Stats strip updates in real-time on every status change
-  - Hall of Fame added to navigation
   - App icon set
   - Cover art loads reliably (forces re-download if local cache missing)
 """
@@ -29,23 +28,17 @@ from ui.update_banner import UpdateBanner
 
 
 # Raikō: one sidebar, a section per library. Each library keeps its own
-# tools under its own name; shared things live under Personal.
+# tools under its own name.
 NAV_SECTIONS = [
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
         ("Discover", "DISC", "discover"),
-        ("Calendar", "CAL", "calendar"),
-        ("Miroku Stream", "PLAY", "stream"),
     ]),
     ("Kinema", [
         ("Movies", "MOV", "movies"),
         ("TV shows", "TV", "tv"),
         ("Discover", "DISC", "kinema_discover"),
-    ]),
-    ("Personal", [
-        ("Hall of Fame", "HOF", "hof"),
-        ("Statistics", "DATA", "stats"),
     ]),
 ]
 
@@ -167,10 +160,6 @@ class MainWindow(QMainWindow):
 
         # Placeholders for lazy-loaded pages
         self._discover_page = None
-        self._stats_page    = None
-        self._hof_page      = None
-        self._stream_page   = None
-        self._calendar_page = None
 
         # Add placeholder widgets so indices stay fixed
         for _ in range(6):       # 1-5 Miroku pages, 6 Kinema Discover
@@ -209,7 +198,6 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         self.detail_panel.links_changed.connect(self._on_detail_links_changed)
         self.detail_panel.archive_changed.connect(self._on_archive_changed)
-        self.detail_panel.open_hall_of_fame.connect(lambda: (self._close_detail_panel(), self._navigate("hof")))
         self.detail_panel.open_sequel.connect(self._on_card_new_season)
         self.detail_panel.dropped_restored.connect(self._on_dropped_restored)
         self.detail_panel.rewatch_changed.connect(self._on_rewatch_changed)
@@ -710,7 +698,7 @@ class MainWindow(QMainWindow):
         self.current_page = page_id
         self._set_nav_active(page_id)
         self._close_detail_panel()
-        if page_id in ("discover", "calendar", "stream"):
+        if page_id == "discover":
             self._set_media("anime")       # Miroku pages: add button = anime
 
         if page_id == "discover":
@@ -721,39 +709,6 @@ class MainWindow(QMainWindow):
                 self.stack.insertWidget(1, self._discover_page)
             self.stack.setCurrentIndex(1)
             self._discover_page.load()
-        elif page_id == "stats":
-            if self._stats_page is None:
-                from ui.stats_page import StatsPage
-                self._stats_page = StatsPage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(2))
-                self.stack.insertWidget(2, self._stats_page)
-            self.stack.setCurrentIndex(2)
-            self._stats_page.load()
-        elif page_id == "hof":
-            if self._hof_page is None:
-                from ui.hall_of_fame import HallOfFamePage
-                self._hof_page = HallOfFamePage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(3))
-                self.stack.insertWidget(3, self._hof_page)
-            self.stack.setCurrentIndex(3)
-            self._hof_page.load()
-        elif page_id == "stream":
-            if self._stream_page is None:
-                from ui.animestream_page import AnimeStreamPage
-                self._stream_page = AnimeStreamPage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(4))
-                self.stack.insertWidget(4, self._stream_page)
-            self.stack.setCurrentIndex(4)
-        elif page_id == "calendar":
-            if self._calendar_page is None:
-                from ui.release_calendar_page import ReleaseCalendarPage
-                self._calendar_page = ReleaseCalendarPage(self.db, self)
-                self._calendar_page.anime_selected.connect(self._open_anime_from_calendar)
-                self._calendar_page.data_changed.connect(self._on_episode_changed)
-                self.stack.removeWidget(self.stack.widget(5))
-                self.stack.insertWidget(5, self._calendar_page)
-            self.stack.setCurrentIndex(5)
-            self._calendar_page.load()
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
@@ -1422,7 +1377,7 @@ class MainWindow(QMainWindow):
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
 
-    def _open_anime_from_calendar(self, anime_id: int):
+    def _open_title(self, anime_id: int):
         anime = self.db.get_anime_by_id(anime_id)
         if not anime:
             return
@@ -1443,8 +1398,6 @@ class MainWindow(QMainWindow):
         if anime and anime_id in self._cards:
             self._cards[anime_id].update_data(anime)
         self._update_stats_strip()
-        if self._calendar_page is not None:
-            self._calendar_page.load()
 
     def _on_watch_status_changed(self, anime_id: int, new_status: str):
         """Remove or update cards when watch status no longer matches the active view."""
@@ -1657,20 +1610,11 @@ class MainWindow(QMainWindow):
             self._update_stats_strip()
             if getattr(dlg, "added_title", ""):
                 from ui.toast import Toast
-                if getattr(dlg, "added_to_hof", False):
-                    Toast.show(
-                        self,
-                        f"'{dlg.added_title}' added to Hall of Fame.",
-                        kind="success",
-                    )
-                    if self._hof_page is not None:
-                        self._hof_page.load()
-                else:
-                    Toast.show(
-                        self,
-                        f"'{dlg.added_title}' added as {dlg.added_status}.",
-                        kind="success",
-                    )
+                Toast.show(
+                    self,
+                    f"'{dlg.added_title}' added as {dlg.added_status}.",
+                    kind="success",
+                )
 
     def _setup_anilist_session(self):
         from core.anilist_auth import get_anilist_auth
@@ -1802,8 +1746,6 @@ class MainWindow(QMainWindow):
                 refreshed = self.db.get_anime_by_id(anime["id"])
                 if refreshed:
                     self._cards[anime["id"]].update_data(refreshed)
-        if self._calendar_page is not None:
-            self._calendar_page.load()
     # ── Upcoming date refresh ─────────────────────────────────────────────────
 
     def _refresh_upcoming(self):
@@ -1846,8 +1788,6 @@ class MainWindow(QMainWindow):
                     refreshed = self.db.get_anime_by_id(anime["id"])
                     if refreshed:
                         self._cards[anime["id"]].update_data(refreshed)
-        if self._calendar_page is not None:
-            self._calendar_page.load()
     # ── Onboarding ─────────────────────────────────────────────────────────────
 
     def _maybe_show_onboarding(self):
@@ -1904,7 +1844,7 @@ class MainWindow(QMainWindow):
     def _open_notification_anime(self, anime_id: int):
         if hasattr(self, "notification_banner"):
             self.notification_banner.pause_for_detail()
-        self._open_anime_from_calendar(anime_id)
+        self._open_title(anime_id)
 
     def _mark_notification_episode(self, anime_id: int, episode: int):
         if not anime_id or not episode:

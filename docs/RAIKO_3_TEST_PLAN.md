@@ -64,6 +64,15 @@ meantime, it doesn't understand movies).
 - [ ] Discover: Movies | TV shows switch. TV lists: For you, Airing this week, New shows coming, Trending, Top rated,
       Popular (no talk/news/reality; anime stays in Miroku).
 
+## Miroku in the Kinema style (requested 2026-11-16) 🔨
+- [ ] Calendar, Miroku Stream, Hall of Fame and Statistics removed everywhere (data kept in the library file).
+- [ ] Anime cards read like TV cards: badge, "Next Ep 5 · 4/12", next airing or time left, progress bar —
+      all existing card info kept.
+- [ ] Anime detail panel in the Kinema layout: up next + one-click mark, progress, next episode countdown,
+      status actions, episode list (tick / up to here / rate), verdict, where to watch, trailers, facts, characters.
+- [ ] Miroku Discover in the Kinema flow (search, list chips, genre + sort, poster grid, preview + add), anime-themed.
+- [ ] Data Doctor covers anime, movies and TV; problems anywhere raise a notification that opens Data Doctor directly.
+
 ## One app (phase 4) 🕒
 - [ ] Up Next home across anime, TV and movies; unified search; stats & Hall of Fame across types.
 

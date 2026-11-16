@@ -338,7 +338,7 @@ class SettingsDialog(QDialog):
         arch_row.addWidget(self.archive_combo)
         dl.addLayout(arch_row)
         dl.addWidget(self._helper_text(
-            "Archived shows leave the Completed list but stay in stats, search and Hall of Fame."
+            "Archived shows leave the Completed list but stay in search."
         ))
         lay.addWidget(display)
 

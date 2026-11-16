@@ -181,6 +181,16 @@ class DetailPanel(QWidget):
         self.progress_info_lbl.setVisible(False)
         self._lay.addWidget(self.progress_info_lbl)
 
+        # Watching: the Kinema layout (up next, progress, episodes, trailers)
+        from ui.anime_watch import AnimeWatchSection
+        self.watch_section = AnimeWatchSection(self.db)
+        self.watch_section.changed.connect(self._on_watch_section_changed)
+        self.watch_section.status_requested.connect(self._set_status_from_section)
+        self.watch_section.drop_requested.connect(self._drop)
+        self.watch_section.export_requested.connect(self._export_ratings)
+        self.watch_section.setVisible(False)
+        self._lay.addWidget(self.watch_section)
+
         # Plan-to-Watch: release countdown + trailer (hidden otherwise)
         from ui.planned_details import PlannedTop, PlannedBottom
         self.planned_top = PlannedTop()
@@ -208,7 +218,6 @@ class DetailPanel(QWidget):
         from ui.movie_details import MovieSection
         self.movie_section = MovieSection(self.db)
         self.movie_section.changed.connect(self.movie_changed.emit)
-        self.movie_section.open_hall_of_fame.connect(self.open_hall_of_fame.emit)
         self.movie_section.setVisible(False)
         self._lay.addWidget(self.movie_section)
         from ui.tv_details import TVSection
@@ -270,7 +279,7 @@ class DetailPanel(QWidget):
         self.archive_btn = QPushButton("Archive")
         self.archive_btn.setObjectName("secondaryBtn")
         self.archive_btn.setToolTip(
-            "Hide from the Completed list. Stays in stats, search and Hall of Fame.")
+            "Hide from the Completed list. Stays in search.")
         self.archive_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.archive_btn.clicked.connect(self._toggle_archive)
         arl.addWidget(self.archive_btn)
@@ -543,6 +552,10 @@ class DetailPanel(QWidget):
         tv = anime.get("media_type") == "tv"
         self.movie_section.setVisible(movie)
         self.tv_section.setVisible(tv)
+        watching_anime = not (movie or tv) and ws == "watching" and anime.get("id", 0) > 0
+        self.watch_section.setVisible(watching_anime)
+        if not watching_anime:
+            self.watch_section.stop()
         self.status_btn.setVisible(not (movie or tv))
         self.drop_btn.setVisible(not (movie or tv))
         if tv:
@@ -590,6 +603,19 @@ class DetailPanel(QWidget):
             return
         self.archive_btn.setVisible(completed)
         self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")
+        if watching_anime:
+            # Kinema layout: status + episodes live in the watch section;
+            # facts & characters below like every other library.
+            for w in (self.planned_top, self.completed_top, self.completed_bottom,
+                      self._episodes_card, self.progress_info_lbl, self.status_btn):
+                w.setVisible(False)
+            self.planned_top.stop()
+            self.drop_btn.setVisible(False)
+            self._rating_card.setVisible(True)
+            self.planned_bottom.setVisible(True)
+            self.planned_bottom.load(anime)
+            self.watch_section.load(anime, keep_block=True)
+            return
         self.planned_top.setVisible(planned)
         self.planned_bottom.setVisible(planned)
         self.completed_top.setVisible(completed)
@@ -616,6 +642,35 @@ class DetailPanel(QWidget):
                 self.progress_info_lbl.setVisible(False)
             self.completed_top.load(anime)
             self.completed_bottom.load(anime)
+
+    def _on_watch_section_changed(self, aid: int):
+        self.overall_rating.refresh_average(self.db.get_overall_rating(aid))
+        self.episode_changed.emit(aid)
+
+    def _set_status_from_section(self, new: str):
+        """Watching -> Completed (finished shows) or Plan to Watch."""
+        if not self._anime:
+            return
+        aid = self._anime["id"]
+        if new == "planned":
+            watched = self.db.get_watched_count(aid)
+            if watched and QMessageBox.question(
+                    self, "Move to Plan to Watch?",
+                    f"You have already watched {watched} episode(s).\n"
+                    "Move this to Plan to Watch anyway? You can move it back any time.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return
+        self.db.update_anime(aid, {"watch_status": new})
+        self._anime["watch_status"] = new
+        self.watch_status_changed.emit(aid, new)
+        self.stats_changed.emit()
+        self.load_anime(self.db.get_anime_by_id(aid) or self._anime)
+        from ui.toast import Toast
+        name = self._anime.get("romaji_title", "Anime")
+        Toast.show(self.window(),
+                   f"You finished '{name}'! How was it?" if new == "completed"
+                   else f"'{name}' moved to Plan to Watch.", kind="success")
 
     def _toggle_episodes(self):
         show = not self.ep_container.isVisible()
@@ -1279,7 +1334,7 @@ class _RatingWidget(QWidget):
     def _maybe_sync_to_anilist(self, our_score: int):
         """If logged into AniList, offer to sync the rating - but only for
         anime the user has actually finished (fully watched + marked
-        Completed) or that they've placed in the Hall of Fame. A rating on
+        Completed). A rating on
         something still in progress isn't a verdict worth pushing to a
         public list yet."""
         from core.anilist_auth import SCORE_MAP, get_anilist_auth
@@ -1296,8 +1351,7 @@ class _RatingWidget(QWidget):
         is_fully_completed = (
             anime.get("watch_status") == "completed" and (not total or watched >= total)
         )
-        from ui.hall_of_fame import _in_hof
-        if not (is_fully_completed or _in_hof(self.db, self._aid)):
+        if not is_fully_completed:
             return
 
         anilist_score = SCORE_MAP.get(our_score, our_score * 16)

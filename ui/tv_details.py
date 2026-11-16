@@ -145,7 +145,6 @@ class _EpisodeRow(QWidget):
 
 class TVSection(QWidget):
     changed = pyqtSignal(int)               # library id: progress / status / rating changed
-    open_hall_of_fame = pyqtSignal()
 
     def __init__(self, db, parent=None):
         super().__init__(parent)

@@ -1,0 +1,73 @@
+"""Miroku in the Kinema style: anime cards, Watching panel, removed screens."""
+import pytest
+
+from tests.conftest import add_anime, pump, wait_until
+
+
+@pytest.fixture
+def win(qapp, db, monkeypatch):
+    from ui.main_window import MainWindow
+    for name in ("_check_connection", "_check_anilist_status", "_check_for_updates",
+                 "_setup_anilist_session", "_maybe_show_onboarding", "_scan_sequels",
+                 "_sync_metadata", "_refresh_upcoming", "_refresh_airing", "_scan_notifications",
+                 "_sync_movies", "_refresh_open_anime"):
+        monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
+    ids = {
+        "done": add_anime(db, "Finished Show", "watching", status="FINISHED", total_episodes=3),
+        "air": add_anime(db, "Airing Show", "watching", status="RELEASING", total_episodes=12,
+                         next_episode_num=5, next_episode_at=2_000_000_000),
+    }
+    for ep in (1, 2, 3):
+        db.set_episode_watched(ids["air"], ep, True)
+    w = MainWindow(db)
+    w.setGeometry(0, 0, 1600, 1000)
+    w.show()
+    assert wait_until(lambda: set(ids.values()) <= set(w._cards))
+    yield w, ids
+    w.close()
+    w.deleteLater()
+    pump(50)
+    import core.anilist_auth as auth
+    auth._auth_instance = None
+
+
+def test_anime_cards_read_like_tv(win):
+    w, ids = win
+    card = w._cards[ids["air"]]
+    assert card.status_badge.text() == "NEW EPISODE"            # ep 4 aired, unwatched
+    assert card.ep_label.text().startswith("Next Ep 4  ·  3/12")
+    assert "1 left" in card.countdown_label.text()
+    assert not card.score_badge_lbl.isVisible() and not card.ep_cover_badge.isVisible()
+
+
+def test_watching_panel_marks_and_completes(win):
+    w, ids = win
+    w._on_card_clicked(ids["done"])
+    sec = w.detail_panel.watch_section
+    assert sec.isVisible() and sec.main.text() == "Up next: Episode 1"
+    assert not w.detail_panel._episodes_card.isVisible()
+    sec._toggle(1, True)
+    assert sec.main.text() == "Up next: Episode 2"
+    sec._through(3)                                   # last episode of a finished show
+    assert w.db.get_anime_by_id(ids["done"])["watch_status"] == "completed"
+    assert not sec.isVisible()
+
+
+def test_unaired_episodes_locked_with_air_time(win):
+    w, ids = win
+    w._on_card_clicked(ids["air"])
+    sec = w.detail_panel.watch_section
+    rows = [sec.eps.itemAt(i).widget() for i in range(sec.eps.count())]
+    assert len(rows) == 12
+    assert [r.tick.isEnabled() for r in rows][:6] == [True, True, True, True, False, False]
+    assert rows[3].objectName() == "tvEpRowNext"
+    assert "Episode 5 of 12 airs" in sec.next_air.text()
+
+
+def test_retired_screens_are_gone():
+    import importlib.util
+    import ui.main_window as mw
+    pages = [pid for _s, items in mw.NAV_SECTIONS for _l, _t, pid in items]
+    assert not {"calendar", "stream", "hof", "stats"} & set(pages)
+    for mod in ("ui.stats_page", "ui.release_calendar_page", "ui.animestream_page"):
+        assert importlib.util.find_spec(mod) is None
