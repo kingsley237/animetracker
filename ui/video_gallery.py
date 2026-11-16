@@ -192,6 +192,8 @@ class _Tile(QWidget):
 
 
 class VideoGallery(QWidget):
+    MAX_TILES = 8
+
     def __init__(self, empty_text: str = "No videos yet.", parent=None):
         super().__init__(parent)
         self._items: List[Dict] = []
@@ -229,7 +231,9 @@ class VideoGallery(QWidget):
         if not has:
             return
         if len(self._items) > 1:
-            for i, it in enumerate(self._items):
+            # Show the best few as tiles (trailers/teasers are listed first);
+            # everything stays reachable in the player's Up Next list.
+            for i, it in enumerate(self._items[:self.MAX_TILES]):
                 t = _Tile(i, it)
                 t.clicked.connect(self._choose)
                 self.tiles.addWidget(t)
@@ -243,8 +247,10 @@ class VideoGallery(QWidget):
         n = len(self._items)
         self.hero.set_caption(f"▶  {it.get('title') or 'Trailer'}")
         self.hero.set_pixmap(None)
-        self.caption.setText(
-            f"{it.get('title') or 'Trailer'}" + (f"   ·   {i + 1} of {n}  ·  click a tile to switch" if n > 1 else ""))
+        more = n - self.MAX_TILES
+        hint = (f"   ·   {i + 1} of {n}" + (f"  ·  {more} more in the player" if more > 0
+                                            else "  ·  click a tile to switch")) if n > 1 else ""
+        self.caption.setText(f"{it.get('title') or 'Trailer'}{hint}")
         for t in self._tiles:
             t.set_selected(t.index == i)
         self._fetch(it.get("thumb"), ("hero", self._token, i))

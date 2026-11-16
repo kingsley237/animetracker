@@ -4,7 +4,6 @@ Fixed:
   - Filter pills (All/Watching/Completed/Planned) ONLY shown on Library page
   - Dropped section loads and displays correctly
   - Stats strip updates in real-time on every status change
-  - Hall of Fame added to navigation
   - App icon set
   - Cover art loads reliably (forces re-download if local cache missing)
 """
@@ -28,19 +27,19 @@ from ui.anime_card import AnimeCard
 from ui.update_banner import UpdateBanner
 
 
+# Raikō: one sidebar, a section per library. Each library keeps its own
+# tools under its own name.
 NAV_SECTIONS = [
-    ("Library", [
+    ("", [("Home", "⌂", "home")]),
+    ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
-    ]),
-    ("Explore", [
         ("Discover", "DISC", "discover"),
-        ("Calendar", "CAL", "calendar"),
-        ("Miroku Stream", "PLAY", "stream"),
     ]),
-    ("Personal", [
-        ("Hall of Fame", "HOF", "hof"),
-        ("Statistics", "DATA", "stats"),
+    ("Kinema", [
+        ("Movies", "MOV", "movies"),
+        ("TV shows", "TV", "tv"),
+        ("Discover", "DISC", "kinema_discover"),
     ]),
 ]
 
@@ -48,15 +47,42 @@ NAV_SECTIONS = [
 _FILTER_PAGES = {"library"}
 
 
+_ERROR_WINDOW = None
+
+
+def _watch_app_errors(window):
+    """Chain onto sys.excepthook (main.py's crash guard logs the error);
+    then let the current window raise an 'Open Data Doctor' alert."""
+    import sys
+    import weakref
+    global _ERROR_WINDOW
+    first = _ERROR_WINDOW is None
+    _ERROR_WINDOW = weakref.ref(window)
+    if not first:
+        return
+    previous = sys.excepthook
+
+    def hook(t, v, tb):
+        previous(t, v, tb)
+        w = _ERROR_WINDOW() if _ERROR_WINDOW else None
+        if w is not None:
+            try:
+                QTimer.singleShot(0, w._on_app_error)
+            except Exception:
+                pass
+
+    sys.excepthook = hook
+
+
 def _build_app_icon() -> QIcon:
     resources = Path(__file__).parent.parent / "resources"
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
-        path = resources / f"miroku_lettermark_{size}.png"
+        path = resources / f"raiko_icon_{size}.png"
         if path.exists():
             icon.addFile(str(path))
     if icon.isNull():
-        ico = resources / "miroku_app_icon.ico"
+        ico = resources / "raiko_app_icon.ico"
         if ico.exists():
             icon = QIcon(str(ico))
     return icon
@@ -71,6 +97,7 @@ class MainWindow(QMainWindow):
         self._demo_planned = demo_planned
         self._meta_sync_running = False
         self._show_archived = False
+        self._media = "anime"           # which library the grid shows
         self._completed_groups: Dict[str, List[int]] = {}
         self._fold_overrides: Dict[str, bool] = self._load_fold_overrides()
         self._demo_items: List[Dict] = []
@@ -88,7 +115,7 @@ class MainWindow(QMainWindow):
         self._search_timer    = QTimer(self)
         self._notification_timer = QTimer(self)
 
-        self.setWindowTitle("Miroku")
+        self.setWindowTitle("Raikō")
         self.setMinimumSize(1100, 700)
 
         # Window icon
@@ -104,6 +131,15 @@ class MainWindow(QMainWindow):
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
+        self._check_tmdb_status()
+        # Raikō opens on Home (Settings key 'start_page' can say 'library')
+        try:
+            from core.app_settings import app_settings
+            start = app_settings().value("start_page", "home")
+        except Exception:
+            start = "home"
+        if start == "home":
+            QTimer.singleShot(0, lambda: self._navigate("home"))
         self._check_for_updates()
         self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
@@ -161,16 +197,14 @@ class MainWindow(QMainWindow):
 
         # Placeholders for lazy-loaded pages
         self._discover_page = None
-        self._stats_page    = None
-        self._hof_page      = None
-        self._stream_page   = None
-        self._calendar_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(5):
+        for _ in range(7):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
+        self._kinema_discover = None
+        self._home_page = None
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -202,10 +236,10 @@ class MainWindow(QMainWindow):
         self.detail_panel.anime_deleted.connect(self._on_anime_deleted)
         self.detail_panel.links_changed.connect(self._on_detail_links_changed)
         self.detail_panel.archive_changed.connect(self._on_archive_changed)
-        self.detail_panel.open_hall_of_fame.connect(lambda: (self._close_detail_panel(), self._navigate("hof")))
         self.detail_panel.open_sequel.connect(self._on_card_new_season)
         self.detail_panel.dropped_restored.connect(self._on_dropped_restored)
         self.detail_panel.rewatch_changed.connect(self._on_rewatch_changed)
+        self.detail_panel.movie_changed.connect(self._on_movie_changed)
         self.detail_panel.dropped_removed.connect(self._on_dropped_removed)
 
         # central_content holds ONLY the content host — banner floats above it
@@ -228,6 +262,8 @@ class MainWindow(QMainWindow):
         self.notification_banner.remind_later.connect(self._remind_notification_later)
         self.notification_banner.dismissed.connect(self._dismiss_notification)
         self.notification_banner.play_trailer.connect(self._play_trailer)
+        self.notification_banner.open_doctor.connect(self.open_data_doctor)
+        _watch_app_errors(self)
         from ui.new_season_spotlight import NewSeasonSpotlight
         self.new_season_spotlight = NewSeasonSpotlight(central)
         self.new_season_spotlight.dismissed.connect(self._dismiss_new_season)
@@ -240,6 +276,7 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
+        self.sidebar = sidebar
         sidebar.setFixedWidth(232)
         lay = QVBoxLayout(sidebar)
         lay.setContentsMargins(14, 0, 14, 14)
@@ -254,8 +291,7 @@ class MainWindow(QMainWindow):
         ll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         resources = Path(__file__).parent.parent / "resources"
-        lettermark_path = resources / "miroku_lettermark_512.png"
-        icon_path = lettermark_path if lettermark_path.exists() else resources / "miroku_lettermark_256.png"
+        icon_path = resources / "raiko_glyph_256.png"
         if icon_path.exists():
             icon_lbl = QLabel()
             px = QPixmap(str(icon_path)).scaled(
@@ -268,7 +304,11 @@ class MainWindow(QMainWindow):
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        sub = QLabel("Anime progress tracker")
+        name = QLabel("Raikō")
+        name.setObjectName("appLogoName")
+        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ll.addWidget(name, alignment=Qt.AlignmentFlag.AlignHCenter)
+        sub = QLabel("Anime · TV · Movies")
         sub.setObjectName("appLogoSub")
         sub.setWordWrap(False)
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -276,11 +316,42 @@ class MainWindow(QMainWindow):
         lay.addWidget(logo_w)
 
         self._nav_buttons: Dict[str, QPushButton] = {}
+        brands = {"Miroku": ("#8b7bff", "Anime"), "Kinema": ("#fbbf24", "Movies & TV")}
         for section, items in NAV_SECTIONS:
-            header = QLabel(section.upper())
-            header.setObjectName("sidebarSectionLabel")
-            lay.addWidget(header)
-            lay.addSpacing(6)
+            if section in brands:
+                color, what = brands[section]
+                header = QWidget()
+                header.setObjectName("sidebarBrandHeader")
+                hl = QHBoxLayout(header)
+                hl.setContentsMargins(14, 2, 8, 2)
+                hl.setSpacing(8)
+                dot = QLabel()
+                dot.setFixedSize(16, 16)
+                mark = resources / f"{section.lower()}_mark_64.png"
+                if mark.exists():
+                    dot.setPixmap(QPixmap(str(mark)).scaled(
+                        16, 16, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation))
+                else:
+                    dot.setFixedSize(8, 8)
+                    dot.setStyleSheet(f"background:{color};border-radius:4px;")
+                hl.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
+                name = QLabel(section)
+                name.setObjectName("sidebarBrandName")
+                name.setStyleSheet(f"color:{color};")
+                hl.addWidget(name)
+                sub = QLabel(what)
+                sub.setObjectName("sidebarBrandSub")
+                hl.addWidget(sub)
+                hl.addStretch()
+            elif section:
+                header = QLabel(section.upper())
+                header.setObjectName("sidebarSectionLabel")
+            else:
+                header = None
+            if header is not None:
+                lay.addWidget(header)
+                lay.addSpacing(4)
 
             for label, token, page_id in items:
                 btn = QPushButton(f"{token:<4}  {label}")
@@ -289,20 +360,24 @@ class MainWindow(QMainWindow):
                 btn.clicked.connect(lambda _, p=page_id: self._navigate(p))
                 self._nav_buttons[page_id] = btn
                 lay.addWidget(btn)
-                lay.addSpacing(4)
+                lay.addSpacing(2)
 
-            lay.addSpacing(12)
+            lay.addSpacing(10)
 
         lay.addStretch()
 
-        add_btn = QPushButton("+  Add Anime")
-        add_btn.setObjectName("primaryBtn")
-        add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        from ui.add_button import AddButton
+        add_btn = AddButton("anime", "sidebar")
+        self._add_btn = add_btn
         add_btn.clicked.connect(self._open_add_dialog)
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self._open_add_dialog)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_search)
         lay.addWidget(add_btn)
         lay.addSpacing(8)
 
         cfg_btn = QPushButton("SET   Settings")
+        self._settings_btn = cfg_btn
         cfg_btn.setObjectName("navBtn")
         cfg_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         cfg_btn.clicked.connect(self._open_settings)
@@ -339,7 +414,9 @@ class MainWindow(QMainWindow):
         self.refresh_btn = QPushButton("↻  Refresh Airing")
         self.refresh_btn.setObjectName("secondaryBtn")
         self.refresh_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.refresh_btn.clicked.connect(self._refresh_airing)
+        self.refresh_btn.clicked.connect(
+            lambda: self._sync_movies(manual=True) if self._media in ("movie", "tv")
+            else self._refresh_airing())
         hr.addWidget(self.refresh_btn)
         lay.addLayout(hr)
         lay.addSpacing(16)
@@ -360,9 +437,7 @@ class MainWindow(QMainWindow):
         sort_lbl.setStyleSheet("font-size:12px;color:#4a5070;")
         sr.addWidget(sort_lbl)
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems([
-            "Release Date", "Title", "AniList Score", "Date Added", "Your Rating"
-        ])
+        self._fill_sort_combo("anime")
         self.sort_combo.setFixedWidth(150)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         sr.addWidget(self.sort_combo)
@@ -376,19 +451,8 @@ class MainWindow(QMainWindow):
         fr.setContentsMargins(0, 0, 0, 0)
         fr.setSpacing(6)
         self._filter_btns: Dict[str, QPushButton] = {}
-        for label, fid in [
-            ("All","all"),("Watching","watching"),
-            ("Completed","completed"),("Planned","planned"),
-            ("Behind","behind"),
-        ]:
-            b = QPushButton(label)
-            b.setObjectName("filterPillBehind" if fid == "behind" else "filterPill")
-            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            b.clicked.connect(lambda _, f=fid: self._set_filter(f))
-            self._filter_btns[fid] = b
-            fr.addWidget(b)
-
-        fr.addStretch()
+        self._filter_layout = fr
+        self._build_filter_pills("anime")
         lay.addWidget(self.filter_row)
         lay.addSpacing(16)
 
@@ -426,6 +490,66 @@ class MainWindow(QMainWindow):
         self._set_filter("all")
         return page
 
+    _FILTERS = {
+        "anime": [("All", "all"), ("Watching", "watching"), ("Completed", "completed"),
+                  ("Planned", "planned"), ("Behind", "behind")],
+        "movie": [("All", "all"), ("Watchlist", "planned"), ("Watched", "completed")],
+        "tv": [("All", "all"), ("Watching", "watching"), ("Watchlist", "planned"),
+               ("Completed", "completed"), ("Dropped", "dropped")],
+    }
+
+    def _build_filter_pills(self, media: str):
+        fr = self._filter_layout
+        while fr.count():
+            it = fr.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._filter_btns = {}
+        for label, fid in self._FILTERS.get(media, self._FILTERS["anime"]):
+            b = QPushButton(label)
+            b.setObjectName("filterPillBehind" if fid == "behind" else "filterPill")
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _, f=fid: self._set_filter(f))
+            self._filter_btns[fid] = b
+            fr.addWidget(b)
+        fr.addStretch()
+        for pid, btn in self._filter_btns.items():
+            btn.setProperty("active", "true" if pid == self._current_filter else "false")
+
+    def _set_media(self, media: str):
+        """Switch the grid between the anime (Miroku) and movie (Kinema) libraries."""
+        if media == self._media:
+            return
+        self._media = media
+        self._current_filter = "all"
+        self._show_archived = False
+        self._search_query = ""
+        self.search_bar.blockSignals(True)
+        self.search_bar.clear()
+        self.search_bar.blockSignals(False)
+        self._build_filter_pills(media)
+        self._fill_sort_combo(media)
+        movie = media == "movie"
+        tv = media == "tv"
+        self._empty_icon.setText("🎬" if movie else "📺")
+        self._empty_title.setText("No movies yet" if movie else
+                                  "No TV shows yet" if tv else "Nothing here yet")
+        self._empty_sub.setText(
+            "Add films you want to see, or ones you've already watched." if movie else
+            "Add a show you're watching, want to start, or already finished." if tv else
+            "Add a currently airing or upcoming anime to start tracking.")
+        self._empty_add.set_media(media)
+        self.search_bar.setPlaceholderText("Search your movies…" if movie else
+                                           "Search your shows…" if tv else "Search your library…")
+        self.refresh_btn.setText(self._refresh_label())
+        self.anilist_user_menu.setVisible(media == "anime")
+        self._add_btn.set_media(media)
+        self._relabel_stats_strip()
+
+    def _refresh_label(self) -> str:
+        return {"movie": "↻  Refresh Movies", "tv": "↻  Refresh Shows"}.get(
+            self._media, "↻  Refresh Airing")
+
     def _build_stats_strip(self) -> QWidget:
         w = QWidget()
         w.setStyleSheet("background:transparent;")
@@ -460,6 +584,8 @@ class MainWindow(QMainWindow):
             cl.addWidget(lbl)
 
             self._stat_labels[key] = val
+            self._stat_names = getattr(self, "_stat_names", {})
+            self._stat_names[key] = lbl
             lay.addWidget(card)
 
         lay.addStretch()
@@ -472,24 +598,26 @@ class MainWindow(QMainWindow):
         lay.setSpacing(14)
 
         icon = QLabel("📺")
+        self._empty_icon = icon
         icon.setStyleSheet("font-size:52px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(icon)
 
         t = QLabel("Nothing here yet")
+        self._empty_title = t
         t.setStyleSheet("font-size:18px;font-weight:600;color:#4a5070;")
         t.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(t)
 
         s = QLabel("Add a currently airing or upcoming anime to start tracking.")
+        self._empty_sub = s
         s.setStyleSheet("font-size:13px;color:#3a3f55;")
         s.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(s)
 
-        add = QPushButton("+ Add Anime")
-        add.setObjectName("primaryBtn")
-        add.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        add.setFixedWidth(180)
+        from ui.add_button import AddButton
+        add = AddButton("anime", "hero")
+        self._empty_add = add
         add.clicked.connect(self._open_add_dialog)
         lay.addWidget(add, alignment=Qt.AlignmentFlag.AlignCenter)
         return w
@@ -503,6 +631,10 @@ class MainWindow(QMainWindow):
         self.anilist_status_label.setObjectName("connStatus")
         self.anilist_status_label.setVisible(False)
         bar.addPermanentWidget(self.anilist_status_label)
+        self.tmdb_status_label = QLabel()
+        self.tmdb_status_label.setObjectName("connStatus")
+        self.tmdb_status_label.setVisible(False)
+        bar.addPermanentWidget(self.tmdb_status_label)
         return bar
 
     def _reserve_panel_space(self, reserve: bool):
@@ -626,50 +758,59 @@ class MainWindow(QMainWindow):
         self.current_page = page_id
         self._set_nav_active(page_id)
         self._close_detail_panel()
+        if page_id == "discover":
+            self._set_media("anime")       # Miroku pages: add button = anime
 
         if page_id == "discover":
             if self._discover_page is None:
-                from ui.discover_page import DiscoverPage
-                self._discover_page = DiscoverPage(self.db, self)
+                from ui.kinema_add_dialog import MovieBrowser
+                page = MovieBrowser(self.db, heading="Discover anime", start_source="for_you",
+                                    kind="anime")
+                page.setObjectName("contentArea")
+                page.added.connect(self._on_anime_discover_added)
+                self._discover_page = page
                 self.stack.removeWidget(self.stack.widget(1))
-                self.stack.insertWidget(1, self._discover_page)
+                self.stack.insertWidget(1, page)
             self.stack.setCurrentIndex(1)
-            self._discover_page.load()
-        elif page_id == "stats":
-            if self._stats_page is None:
-                from ui.stats_page import StatsPage
-                self._stats_page = StatsPage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(2))
-                self.stack.insertWidget(2, self._stats_page)
-            self.stack.setCurrentIndex(2)
-            self._stats_page.load()
-        elif page_id == "hof":
-            if self._hof_page is None:
-                from ui.hall_of_fame import HallOfFamePage
-                self._hof_page = HallOfFamePage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(3))
-                self.stack.insertWidget(3, self._hof_page)
-            self.stack.setCurrentIndex(3)
-            self._hof_page.load()
-        elif page_id == "stream":
-            if self._stream_page is None:
-                from ui.animestream_page import AnimeStreamPage
-                self._stream_page = AnimeStreamPage(self.db, self)
-                self.stack.removeWidget(self.stack.widget(4))
-                self.stack.insertWidget(4, self._stream_page)
-            self.stack.setCurrentIndex(4)
-        elif page_id == "calendar":
-            if self._calendar_page is None:
-                from ui.release_calendar_page import ReleaseCalendarPage
-                self._calendar_page = ReleaseCalendarPage(self.db, self)
-                self._calendar_page.anime_selected.connect(self._open_anime_from_calendar)
-                self._calendar_page.data_changed.connect(self._on_episode_changed)
-                self.stack.removeWidget(self.stack.widget(5))
-                self.stack.insertWidget(5, self._calendar_page)
-            self.stack.setCurrentIndex(5)
-            self._calendar_page.load()
+        elif page_id == "home":
+            if self._home_page is None:
+                from ui.home_page import HomePage
+                page = HomePage(self.db, self)
+                page.open_title.connect(self._open_title)
+                page.changed.connect(self._on_home_changed)
+                page.search_online.connect(self._search_online)
+                page.open_pick.connect(self._open_pick)
+                page.play_trailer.connect(self._play_trailer)
+                self._home_page = page
+                self.stack.removeWidget(self.stack.widget(7))
+                self.stack.insertWidget(7, page)
+            self.stack.setCurrentIndex(7)
+            self._home_page.load()
+        elif page_id == "kinema_discover":
+            if self._kinema_discover is None:
+                from ui.kinema_add_dialog import MovieBrowser
+                start = "tv" if self._media == "tv" else "movie"
+                page = MovieBrowser(self.db, heading="Discover", start_source="for_you",
+                                    kind=start, kind_switch=True)
+                page.setObjectName("contentArea")
+                page.added.connect(self._on_discover_added)
+                page.kind_changed.connect(self._set_media)
+                self._kinema_discover = page
+                self.stack.removeWidget(self.stack.widget(6))
+                self.stack.insertWidget(6, page)
+            self.stack.setCurrentIndex(6)
+            self._set_media(self._kinema_discover.kind)
+        elif page_id in ("movies", "tv"):
+            self.stack.setCurrentIndex(0)
+            self._set_media("movie" if page_id == "movies" else "tv")
+            self.page_title.setText("Movies" if page_id == "movies" else "TV shows")
+            self.filter_row.setVisible(True)
+            self.search_bar.setVisible(True)
+            self._update_stats_strip()
+            self._load_library()
         else:
             self.stack.setCurrentIndex(0)
+            self._set_media("anime")
             titles = {
                 "library":   "Library",
                 "watching":  "Watching",
@@ -744,7 +885,19 @@ class MainWindow(QMainWindow):
         current_filter = self._current_filter
         current_page   = self.current_page
 
+        media = self._media
+
         def fetch_data():
+            if media in ("movie", "tv"):
+                if search_q:
+                    return self.db.search_titles(search_q, media)
+                if watch_status == "completed":
+                    return self.db.get_all_anime(watch_status="completed", sort_by="completed_at",
+                                                 archived=show_archived, media_type=media)
+                if watch_status is None:
+                    return self.db.get_all_anime(sort_by=sort_by, archived=False, media_type=media)
+                return self.db.get_all_anime(watch_status=watch_status, sort_by=sort_by,
+                                             media_type=media)
             if search_q:
                 return self.db.search_anime(search_q)
             elif watch_status == "dropped":
@@ -795,12 +948,15 @@ class MainWindow(QMainWindow):
 
     def _render_library(self, anime_list: List[Dict],
                          current_filter: str, current_page: str):
+        from PyQt6 import sip
+        if sip.isdeleted(self) or sip.isdeleted(self.grid_container):
+            return                      # window closed while the load was running
         """Called from worker result — renders real cards replacing skeletons."""
         self._clear_grid()
 
         has = bool(anime_list)
-        if (not has and current_filter == "completed" and current_page == "library"
-                and not self._search_query and (self._show_archived or self.db.count_archived())):
+        if (not has and current_filter == "completed" and current_page in ("library", "movies", "tv")
+                and not self._search_query and (self._show_archived or self.db.count_archived(self._media))):
             has = True   # keep the timeline (and its Archived toggle) visible
         self.empty_state.setVisible(not has)
         self.grid_container.setVisible(has)
@@ -808,15 +964,19 @@ class MainWindow(QMainWindow):
         if has:
             show_grouped = (
                 current_filter == "all"
-                and current_page == "library"
+                and current_page in ("library", "movies", "tv")
                 and not self._search_query
             )
             show_timeline = (
                 current_filter == "completed"
-                and current_page == "library"
+                and current_page in ("library", "movies", "tv")
                 and not self._search_query
             )
-            if show_grouped:
+            movie_shelves = (self._media == "movie" and current_filter in ("all", "planned")
+                             and current_page in ("library", "movies", "tv") and not self._search_query)
+            if movie_shelves:
+                self._populate_movie_shelves(anime_list, include_watched=current_filter == "all")
+            elif show_grouped:
                 self._populate_grouped_grid(anime_list)
             elif show_timeline:
                 self._populate_completed_timeline(anime_list)
@@ -826,12 +986,63 @@ class MainWindow(QMainWindow):
                     card = AnimeCard(anime, self.db)
                     card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                     card.new_season_clicked.connect(self._on_card_new_season)
+                    card.quick_watched.connect(self._on_card_quick_watched)
                     self._cards[anime["id"]] = card
                     self.grid_layout.addWidget(card, idx // COLS, idx % COLS)
                     self._load_card_image(anime, card)
 
         self._update_stats_strip()
         self._apply_card_overlays()
+
+    def _populate_movie_shelves(self, movies: List[Dict], include_watched: bool):
+        """Watchlist split by what you can actually watch now (you watch in
+        HD at home): Ready to watch, then Waiting for HD. Watched follows as
+        one row in the All view."""
+        from core.kinema_sync import release_state
+        from ui.completed_view import SectionHeader
+        cols = max(self._calc_columns(), 1)
+        watch = [m for m in movies if m.get("watch_status") == "planned"]
+        ready = [m for m in watch if release_state(m)["state"] == "digital"]
+        waiting = [m for m in watch if m not in ready]
+        # Waiting: whatever lands in HD soonest first
+        far = 9_999_999_999
+        waiting.sort(key=lambda m: (release_state(m)["digital_ts"] or far,
+                                    release_state(m)["cinema_ts"] or far))
+        shelves = [("ready", "Ready to watch", "#34d399", ready),
+                   ("waiting", "Waiting for HD", "#fbbf24", waiting)]
+        if include_watched:
+            done = [m for m in movies if m.get("watch_status") == "completed"]
+            shelves.append(("watched", "Watched", "#7c6af7", done))
+        row = 0
+        for key, label, color, items in shelves:
+            if not items:
+                continue
+            shown = items[:cols] if key == "watched" else items
+            if key == "watched" and len(items) > cols:
+                hdr = SectionHeader("watched", label, len(items), color, collapsible=False,
+                                    action_text=f"View all {len(items)}  \u2192")
+                hdr.action.connect(lambda _k: self._set_filter("completed"))
+            else:
+                hdr = QLabel(f"〡 {label.upper()}  ·  {len(items)} {'film' if len(items) == 1 else 'films'}")
+                hdr.setObjectName("libSectionHeader")
+                hdr.setStyleSheet(f"color:{color};")
+            self.grid_layout.addWidget(hdr, row, 0, 1, cols)
+            row += 1
+            for i, m in enumerate(shown):
+                if i and i % cols == 0:
+                    row += 1
+                card = AnimeCard(m, self.db)
+                card.clicked.connect(lambda aid=m["id"]: self._on_card_clicked(aid))
+                card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
+                self._cards[m["id"]] = card
+                self.grid_layout.addWidget(card, row, i % cols)
+                self._load_card_image(m, card)
+            row += 1
+        if not watch and not include_watched:
+            msg = QLabel("Your Watchlist is empty. Add a film you want to see.")
+            msg.setObjectName("completedToolbarHint")
+            self.grid_layout.addWidget(msg, row, 0, 1, cols)
 
     def _populate_grouped_grid(self, anime_list: List[Dict]):
         """
@@ -844,6 +1055,14 @@ class MainWindow(QMainWindow):
             ("〡 WATCHING",    "watching",  "#a594f9"),
             ("〡 PLAN TO WATCH", "planned", "#6b7280"),
             ("〡 COMPLETED",   "completed", "#34d399"),
+        ] if self._media == "anime" else [
+            ("〡 WATCHLIST",   "planned",   "#fbbf24"),
+            ("〡 WATCHED",     "completed", "#34d399"),
+        ] if self._media == "movie" else [
+            ("〡 WATCHING",    "watching",  "#38bdf8"),
+            ("〡 WATCHLIST",   "planned",   "#6b7280"),
+            ("〡 COMPLETED",   "completed", "#34d399"),
+            ("〡 DROPPED",     "dropped",   "#b5485a"),
         ]
         row_num = 0
         for group_label, status, color in groups:
@@ -874,6 +1093,7 @@ class MainWindow(QMainWindow):
                 card = AnimeCard(anime, self.db)
                 card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                 card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
                 self._cards[anime["id"]] = card
                 self.grid_layout.addWidget(card, row_num, col_idx % COLS)
                 self._load_card_image(anime, card)
@@ -897,7 +1117,8 @@ class MainWindow(QMainWindow):
         from ui.completed_view import CompletedToolbar, SectionHeader, group_completed
         COLS = max(self._calc_columns(), 1)
         row = 0
-        bar = CompletedToolbar(len(anime_list), self.db.count_archived(), self._show_archived)
+        bar = CompletedToolbar(len(anime_list), self.db.count_archived(self._media), self._show_archived,
+                               media=self._media)
         bar.archived_toggled.connect(self._toggle_archived_view)
         self.grid_layout.addWidget(bar, row, 0, 1, COLS)
         row += 1
@@ -905,7 +1126,8 @@ class MainWindow(QMainWindow):
         color = "#9da5c0" if self._show_archived else "#34d399"
         action = "Restore all" if self._show_archived else "Archive these"
         rewatching = set(self.db.get_active_rewatch_ids())
-        for key, label, members in group_completed(anime_list, rewatching=rewatching):
+        for key, label, members in group_completed(anime_list, rewatching=rewatching,
+                                                   verb="Watched" if self._media == "movie" else "Finished"):
             self._completed_groups[key] = [a["id"] for a in members]
             folded = self._is_folded(key)
             hdr = SectionHeader(key, label, len(members), color, collapsed=folded,
@@ -922,6 +1144,7 @@ class MainWindow(QMainWindow):
                 card = AnimeCard(anime, self.db)
                 card.clicked.connect(lambda aid=anime["id"]: self._on_card_clicked(aid))
                 card.new_season_clicked.connect(self._on_card_new_season)
+                card.quick_watched.connect(self._on_card_quick_watched)
                 self._cards[anime["id"]] = card
                 self.grid_layout.addWidget(card, row, i % COLS)
                 self._load_card_image(anime, card)
@@ -962,13 +1185,30 @@ class MainWindow(QMainWindow):
     def _on_archive_changed(self, anime_id: int):
         self._load_library_for_current_page()
 
+    def _on_movie_changed(self, lib_id: int):
+        """A movie's status / rating / rewatches changed in the panel (or a
+        franchise film was added: lib_id -1)."""
+        self._update_stats_strip()
+        if lib_id < 0:
+            self._load_library()
+            return
+        row = self.db.get_anime_by_id(lib_id)
+        card = self._cards.get(lib_id)
+        if not row:
+            return
+        moved = (card is not None and card._anime.get("watch_status") != row.get("watch_status"))
+        if card is not None and not moved:
+            card.update_data(row)
+        else:
+            self._load_library()
+
     def _on_rewatch_changed(self, anime_id: int):
         card = self._cards.get(anime_id)
         row = self.db.get_anime_by_id(anime_id)
         if card is not None and row:
             card.update_data(row)
         # Starting/finishing a rewatch moves the card in/out of "Rewatching now"
-        if self._current_filter == "completed" and self.current_page == "library":
+        if self._current_filter == "completed" and self.current_page in ("library", "movies", "tv"):
             in_group = anime_id in (self._completed_groups.get("rewatching") or [])
             now_active = self.db.get_active_rewatch(anime_id) is not None
             if in_group != now_active:
@@ -1084,12 +1324,35 @@ class MainWindow(QMainWindow):
             elif size == "banner":
                 self.detail_panel.set_banner(path)
 
+    _STAT_NAMES = {
+        "anime": {"watching": "Watching", "completed": "Completed", "planned": "Planned", "dropped": "Dropped"},
+        "movie": {"watching": "Watchlist", "completed": "Watched", "planned": "Hours watched",
+                  "dropped": "This year"},
+        "tv": {"watching": "Watching", "completed": "Completed", "planned": "Watchlist",
+               "dropped": "Episodes seen"},
+    }
+
+    def _relabel_stats_strip(self):
+        names = self._STAT_NAMES.get(self._media, self._STAT_NAMES["anime"])
+        for key, lbl in getattr(self, "_stat_names", {}).items():
+            lbl.setText(names[key].upper())
+
     def _update_stats_strip(self):
-        stats = self.db.get_stats()
-        for key in ("watching", "completed", "planned", "dropped"):
+        if self._media == "movie":
+            m = self.db.get_movie_stats()
+            values = {"watching": m["watchlist"], "completed": m["watched"],
+                      "planned": m["hours"], "dropped": m["this_year"]}
+        elif self._media == "tv":
+            t = self.db.get_tv_stats()
+            values = {"watching": t["watching"], "completed": t["completed"],
+                      "planned": t["planned"], "dropped": t["episodes"]}
+        else:
+            stats = self.db.get_stats()
+            values = {k: stats.get(k, 0) for k in ("watching", "completed", "planned", "dropped")}
+        for key, v in values.items():
             lbl = self._stat_labels.get(key)
             if lbl:
-                lbl.setText(str(stats.get(key, 0)))
+                lbl.setText(str(v))
 
     # ── Card interactions ──────────────────────────────────────────────────────
 
@@ -1195,11 +1458,57 @@ class MainWindow(QMainWindow):
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
 
-    def _open_anime_from_calendar(self, anime_id: int):
-        self._navigate("library")
+    def _open_search(self):
+        """Ctrl+K: one search across anime, shows and movies."""
+        if self.current_page != "home":
+            self._navigate("home")
+        self._home_page.focus_search()
+
+    def _open_pick(self, hit: Dict):
+        """A recommendation from Home: open it in the matching Discover preview,
+        where it can be added."""
+        kind = hit.get("media_type") or "anime"
+        if kind == "anime":
+            self._navigate("discover")
+            page = self._discover_page
+        else:
+            self._navigate("kinema_discover")
+            page = self._kinema_discover
+            page.set_kind(kind)
+        if page is not None:
+            page._select(dict(hit))
+
+    def _search_online(self, where: str, query: str):
+        self._navigate("discover" if where == "anime" else "kinema_discover")
+        page = self._discover_page if where == "anime" else self._kinema_discover
+        if page is not None and query:
+            page.search.setText(query)
+
+    def _on_card_quick_watched(self, lib_id: int, what: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        Toast.show(self, f"{row.get('english_title') or row.get('romaji_title') or 'Title'}: "
+                         f"{what} watched.", kind="success")
+        self._update_stats_strip()
+        if self.detail_panel.isVisible() and self.selected_anime_id == lib_id:
+            self.detail_panel.refresh_from_db()
+        if self._home_page is not None and self.current_page == "home":
+            self._home_page.load()
+
+    def _on_home_changed(self, lib_id: int):
+        row = self.db.get_anime_by_id(lib_id)
+        card = self._cards.get(lib_id)
+        if row and card is not None:
+            card.update_data(row)
+        self._update_stats_strip()
+
+    def _open_title(self, anime_id: int):
         anime = self.db.get_anime_by_id(anime_id)
         if not anime:
             return
+        page = {"movie": "movies", "tv": "tv"}.get(anime.get("media_type") or "anime", "library")
+        if self.current_page != page:
+            self._navigate(page)
         self.selected_anime_id = anime_id
         self.detail_panel.load_anime(anime)
         self._open_detail_panel()
@@ -1214,15 +1523,13 @@ class MainWindow(QMainWindow):
         if anime and anime_id in self._cards:
             self._cards[anime_id].update_data(anime)
         self._update_stats_strip()
-        if self._calendar_page is not None:
-            self._calendar_page.load()
 
     def _on_watch_status_changed(self, anime_id: int, new_status: str):
         """Remove or update cards when watch status no longer matches the active view."""
         self._update_stats_strip()
 
         if (
-            self.current_page == "library"
+            self.current_page in ("library", "movies", "tv")
             and self._current_filter == "all"
             and not self._search_query
         ):
@@ -1309,7 +1616,7 @@ class MainWindow(QMainWindow):
     def _on_anime_dropped(self, anime_id: int):
         self._close_detail_panel()
         self._load_library(
-            watch_status=None if self.current_page == "library" else
+            watch_status=None if self.current_page in ("library", "movies", "tv") else
             {"watching":"watching","completed":"completed","planned":"planned"}.get(self.current_page)
         )
         self._update_stats_strip()
@@ -1321,15 +1628,29 @@ class MainWindow(QMainWindow):
 
     # ── Search & Sort ──────────────────────────────────────────────────────────
 
+    _SORTS = {
+        "anime": [("Release Date", "release_date"), ("Title", "title"), ("AniList Score", "score"),
+                  ("Date Added", "date_added"), ("Your Rating", "rating")],
+        # Movies default to best first; unreleased films follow by anticipation
+        "movie": [("Top Rated", "top_rated"), ("Most Anticipated", "popularity"),
+                  ("Newest", "newest"), ("Title", "title"), ("Date Added", "date_added"),
+                  ("Your Rating", "rating")],
+        "tv": [("Recently Watched", "recent"), ("Next Episode", "release_date"),
+               ("Top Rated", "top_rated"), ("Title", "title"), ("Date Added", "date_added"),
+               ("Your Rating", "rating")],
+    }
+
+    def _fill_sort_combo(self, media: str):
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.clear()
+        for label, key in self._SORTS.get(media, self._SORTS["anime"]):
+            self.sort_combo.addItem(label, key)
+        self.sort_combo.setCurrentIndex(0)
+        self.sort_combo.blockSignals(False)
+        self._sort_by = self.sort_combo.currentData() or "release_date"
+
     def _on_sort_changed(self, index: int):
-        sort_map = {
-            0: "release_date",
-            1: "title",
-            2: "score",
-            3: "date_added",
-            4: "rating",
-        }
-        self._sort_by = sort_map.get(index, "release_date")
+        self._sort_by = self.sort_combo.itemData(index) or "release_date"
         self._load_library()
         # Apply persistent overlay to all cards based on sort
         self._apply_card_overlays()
@@ -1352,28 +1673,77 @@ class MainWindow(QMainWindow):
 
     # ── Dialogs ────────────────────────────────────────────────────────────────
 
-    def _open_add_dialog(self):
-        from ui.add_dialog import AddAnimeDialog
-        dlg = AddAnimeDialog(self.db, self)
-        if dlg.exec():
+    def _open_add_movie_dialog(self):
+        from ui.kinema_add_dialog import MovieAddDialog
+        from ui.toast import Toast
+        dlg = MovieAddDialog(self.db, self, kind=self._media if self._media in ("movie", "tv") else "movie")
+
+        def added(lib_id: int, title: str):
+            row = self.db.get_anime_by_id(lib_id) or {}
+            where = self._where_label(row)
+            Toast.show(self, f"'{title}' added to {where}.", kind="success")
             self._load_library()
             self._update_stats_strip()
-            if getattr(dlg, "added_title", ""):
-                from ui.toast import Toast
-                if getattr(dlg, "added_to_hof", False):
-                    Toast.show(
-                        self,
-                        f"'{dlg.added_title}' added to Hall of Fame.",
-                        kind="success",
-                    )
-                    if self._hof_page is not None:
-                        self._hof_page.load()
-                else:
-                    Toast.show(
-                        self,
-                        f"'{dlg.added_title}' added as {dlg.added_status}.",
-                        kind="success",
-                    )
+            if self._kinema_discover is not None:
+                self._kinema_discover.refresh()
+
+        dlg.added.connect(added)
+        dlg.exec()
+
+    def _on_discover_added(self, lib_id: int, title: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        Toast.show(self, f"'{title}' added to {self._where_label(row)}.", kind="success")
+        self._update_stats_strip()
+
+    @staticmethod
+    def _where_label(row: Dict) -> str:
+        ws = row.get("watch_status")
+        if row.get("media_type") == "tv":
+            return {"watching": "Watching", "completed": "Completed"}.get(ws, "your Watchlist")
+        return "Watched" if ws == "completed" else "your Watchlist"
+
+    def _sync_movies(self, manual: bool = False):
+        """Refresh movies from TMDB (dates, availability, art, trailers)."""
+        from core.kinema_sync import KinemaSync
+        if manual:
+            self.refresh_btn.setText("↻  Refreshing…")
+            self.refresh_btn.setEnabled(False)
+        def both():
+            ks = KinemaSync(self.db)
+            a, b = ks.sync_movies(), ks.sync_tv()
+            return {"changed": a["changed"] + b["changed"],
+                    "art_changed": a["art_changed"] + b["art_changed"],
+                    "notifications": (a["notifications"] + [n for n in b["notifications"]
+                                      if n not in a["notifications"]])[:6]}
+
+        worker = Worker(both)
+        worker.signals.result.connect(self._on_metadata_synced)
+        if manual:
+            worker.signals.finished.connect(lambda: (
+                self.refresh_btn.setText(self._refresh_label()),
+                self.refresh_btn.setEnabled(True)))
+        run_worker(worker)
+
+    def _open_add_dialog(self):
+        if self._media in ("movie", "tv"):
+            return self._open_add_movie_dialog()
+        from ui.kinema_add_dialog import MovieAddDialog
+        dlg = MovieAddDialog(self.db, self, kind="anime")
+        dlg.added.connect(self._on_anime_discover_added)
+        dlg.exec()
+
+    def _on_anime_discover_added(self, lib_id: int, title: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        where = {"watching": "Watching", "completed": "Completed"}.get(
+            row.get("watch_status"), "Plan to Watch")
+        Toast.show(self, f"'{title}' added to {where}.", kind="success")
+        if self.current_page == "library":
+            self._load_library()
+        self._update_stats_strip()
+        if self._discover_page is not None and self.sender() is not self._discover_page:
+            self._discover_page.refresh()
 
     def _setup_anilist_session(self):
         from core.anilist_auth import get_anilist_auth
@@ -1425,6 +1795,18 @@ class MainWindow(QMainWindow):
         self._meta_timer.timeout.connect(self._sync_metadata)
         self._meta_timer.start(3 * 3600 * 1000)
         QTimer.singleShot(12000, self._sync_metadata)
+
+        # Data Doctor: quick health check shortly after start, then every 6h
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._health_check)
+        self._health_timer.start(6 * 3600 * 1000)
+        QTimer.singleShot(25000, self._health_check)
+
+        # Kinema: movies (release dates, streaming availability) every 6h
+        self._movie_timer = QTimer(self)
+        self._movie_timer.timeout.connect(self._sync_movies)
+        self._movie_timer.start(6 * 3600 * 1000)
+        QTimer.singleShot(15000, self._sync_movies)
         QTimer.singleShot(2500, self._run_auto_archive)
 
     def _tick(self):
@@ -1499,8 +1881,6 @@ class MainWindow(QMainWindow):
                 refreshed = self.db.get_anime_by_id(anime["id"])
                 if refreshed:
                     self._cards[anime["id"]].update_data(refreshed)
-        if self._calendar_page is not None:
-            self._calendar_page.load()
     # ── Upcoming date refresh ─────────────────────────────────────────────────
 
     def _refresh_upcoming(self):
@@ -1543,26 +1923,40 @@ class MainWindow(QMainWindow):
                     refreshed = self.db.get_anime_by_id(anime["id"])
                     if refreshed:
                         self._cards[anime["id"]].update_data(refreshed)
-        if self._calendar_page is not None:
-            self._calendar_page.load()
     # ── Onboarding ─────────────────────────────────────────────────────────────
 
     def _maybe_show_onboarding(self):
-        # ── Toggle for testing: set True to always show tutorial ──────────────
-        FORCE_ONBOARDING = False
-        # ─────────────────────────────────────────────────────────────────────
+        """Raikō welcome + tour, once. People upgrading from Miroku (who have a
+        library or saw the old tour) get the 'Miroku is now Raikō' welcome."""
         from core.app_settings import app_settings
-        settings    = app_settings()
-        seen        = settings.value("onboarding_seen", False, type=bool)
-        total_anime = len(self.db.get_all_anime())
-        # First ever use = never seen the tour AND library is completely empty
-        is_first_use = (not seen) and (total_anime == 0)
-        if FORCE_ONBOARDING or is_first_use:
-            from ui.onboarding import OnboardingOverlay
-            overlay = OnboardingOverlay(self, self.centralWidget())
-            overlay.finished.connect(
-                lambda: settings.setValue("onboarding_seen", True)
-            )
+        settings = app_settings()
+        if settings.value("onboarding_v3_seen", False, type=bool):
+            return
+        upgrading = settings.value("onboarding_seen", False, type=bool) or any(
+            self.db.get_all_anime(media_type=m) for m in ("anime", "tv", "movie"))
+        self.start_onboarding(upgrading)
+
+    def start_onboarding(self, upgrading: bool = False):
+        from core.app_settings import app_settings
+        from ui.onboarding import OnboardingOverlay, WelcomeOverlay
+        settings = app_settings()
+
+        def mark_seen():
+            settings.setValue("onboarding_v3_seen", True)
+            settings.setValue("onboarding_seen", True)
+
+        def tour():
+            mark_seen()
+            if self.current_page != "home":
+                self._navigate("home")
+            ov = OnboardingOverlay(self, self.centralWidget())
+            ov.finished.connect(lambda: self._navigate("home"))
+            self._tour = ov
+
+        welcome = WelcomeOverlay(self.centralWidget(), upgrading)
+        welcome.tour.connect(tour)
+        welcome.done.connect(mark_seen)
+        self._welcome = welcome
 
     # ── Update check ───────────────────────────────────────────────────────────
 
@@ -1601,7 +1995,7 @@ class MainWindow(QMainWindow):
     def _open_notification_anime(self, anime_id: int):
         if hasattr(self, "notification_banner"):
             self.notification_banner.pause_for_detail()
-        self._open_anime_from_calendar(anime_id)
+        self._open_title(anime_id)
 
     def _mark_notification_episode(self, anime_id: int, episode: int):
         if not anime_id or not episode:
@@ -1623,6 +2017,75 @@ class MainWindow(QMainWindow):
         self.db.remind_notification_later(notification_id, hours=24)
         from ui.toast import Toast
         Toast.show(self, "Reminder moved to tomorrow.", kind="info")
+
+    # ── Data Doctor: background health check + error alerts ──────────────────
+
+    def open_data_doctor(self):
+        """Open Data Doctor; it starts diagnosing right away."""
+        from ui.data_doctor import DataDoctorDialog
+        dlg = DataDoctorDialog(self.db, self)
+        dlg.data_changed.connect(self._after_doctor_fix)
+        dlg.exec()
+
+    def _after_doctor_fix(self):
+        self._load_library()
+        self._update_stats_strip()
+
+    def _health_check(self):
+        """Quick, offline scan; problems that need you raise ONE alert with
+        an Open Data Doctor button (not repeated for the same problems)."""
+        from core.data_health import Scanner
+
+        def work():
+            return Scanner(self.db).scan(quick=True)
+
+        w = Worker(work)
+        w.signals.result.connect(self._on_health)
+        run_worker(w)
+
+    def _on_health(self, issues):
+        from PyQt6 import sip
+        if sip.isdeleted(self):
+            return
+        import hashlib
+        from core.data_health import attention_needed
+        need = attention_needed(issues or [])
+        if not need:
+            return
+        key = hashlib.sha1(",".join(sorted(i.issue_id for i in need)).encode()).hexdigest()[:12]
+        n = len(need)
+        names = "; ".join(dict.fromkeys(i.title for i in need[:3]))
+        self.db.upsert_notification({
+            "fingerprint": f"data-health:{key}", "kind": "data_health",
+            "anime_id": None, "anilist_id": None,
+            "title": f"Data Doctor found {n} thing{'s' if n != 1 else ''} to fix",
+            "message": f"{names}. Open Data Doctor to review and fix in one click.",
+            "payload": {"issues": [i.issue_id for i in need]}})
+        self._show_alerts_of("data_health")
+
+    def _on_app_error(self):
+        """An error escaped somewhere in the app (caught and logged by the
+        crash guard). At most one alert every 10 minutes."""
+        import time as _t
+        from PyQt6 import sip
+        if sip.isdeleted(self) or _t.time() - getattr(self, "_last_error_alert", 0) < 600:
+            return
+        self._last_error_alert = _t.time()
+        self.db.upsert_notification({
+            "fingerprint": f"app-error:{int(_t.time())}", "kind": "app_error",
+            "anime_id": None, "anilist_id": None,
+            "title": "Something went wrong",
+            "message": "Raikō caught an unexpected error and kept running. Data Doctor can check "
+                       "your library and show what happened.",
+            "payload": {}})
+        self._show_alerts_of("app_error")
+
+    def _show_alerts_of(self, kind: str):
+        notes = self.db.get_due_notifications(limit=1, kinds=[kind])
+        if notes:
+            self.notification_banner.show_notifications(notes)
+            if self.detail_panel.isVisible():
+                self.notification_banner.pause_for_detail()
 
     def _dismiss_notification(self, notification_id: int):
         self.db.dismiss_notification(notification_id)
@@ -1670,6 +2133,16 @@ class MainWindow(QMainWindow):
         metadata (10 min for Planned, a day otherwise) and its promo/theme
         video list (daily). The panel re-renders when it lands."""
         import time as _t
+        if anime.get("media_type") in ("movie", "tv") and anime.get("tmdb_id"):
+            limit = 6 * 3600 if anime["media_type"] == "movie" else 3600
+            if _t.time() - (anime.get("meta_synced_at") or 0) > limit:
+                from core.kinema_sync import KinemaSync
+                ks = KinemaSync(self.db)
+                fn = ks.sync_movies if anime["media_type"] == "movie" else ks.sync_tv
+                w = Worker(fn, only_ids=[anime["id"]])
+                w.signals.result.connect(self._on_metadata_synced)
+                run_worker(w)
+            return
         if not anime.get("anilist_id") or anime.get("id", 0) <= 0:
             return
         ws = anime.get("watch_status") or "watching"
@@ -1825,7 +2298,7 @@ class MainWindow(QMainWindow):
             if not media:
                 Toast.show(self, "Could not reach AniList. Try again in a moment.", kind="error")
                 return
-            from ui.discover_page import add_media_to_library
+            from core.anime_add import add_media_to_library
             add_media_to_library(self.db, media, watch_status)
             self._dismiss_new_season(notification_id)
             self.new_season_spotlight.remove_notification(notification_id)
@@ -1878,20 +2351,37 @@ class MainWindow(QMainWindow):
             self.conn_label.setText(f"⬤  Online  ({latency_ms:.0f}ms)")
             self.conn_label.setStyleSheet("color:#34d399;")
 
+    def _status_banner(self, kind: str):
+        """The themed status banner for 'offline' / 'anilist' / 'tmdb'."""
+        banners = self.__dict__.setdefault("_status_banners", {})
+        if kind not in banners:
+            from ui.status_banner import StatusBanner
+            retry = {"offline": None,
+                     "anilist": lambda: self._anilist_status_monitor.force_check(),
+                     "tmdb": lambda: self._tmdb_status_monitor.force_check()}[kind]
+            banners[kind] = StatusBanner(kind, self.centralWidget(),
+                                         on_retry=None if kind == "offline" else retry)
+        return banners[kind]
+
     def _on_went_offline(self):
-        """Show floating offline banner."""
-        if not hasattr(self, "_offline_banner"):
-            from ui.offline_banner import OfflineBanner
-            self._offline_banner = OfflineBanner(self.centralWidget())
-        self._offline_banner.show_offline()
+        self._status_banner("offline").show_banner()
+        # the services can't be judged while you're offline
+        for k in ("anilist", "tmdb"):
+            if k in self.__dict__.get("_status_banners", {}):
+                self._status_banners[k].hide_banner()
 
     def _on_reconnected(self):
-        """Hide offline banner and refresh airing data."""
-        if hasattr(self, "_offline_banner"):
-            self._offline_banner.hide_offline()
+        if "offline" in self.__dict__.get("_status_banners", {}):
+            self._status_banners["offline"].hide_banner()
         QTimer.singleShot(500, self._refresh_airing)
         if hasattr(self, "_anilist_status_monitor"):
             self._anilist_status_monitor.force_check()
+        if hasattr(self, "_tmdb_status_monitor"):
+            self._tmdb_status_monitor.force_check()
+
+    def _is_offline(self) -> bool:
+        b = self.__dict__.get("_status_banners", {}).get("offline")
+        return bool(b and b.is_shown())
 
     # ── AniList API status ────────────────────────────────────────────────────
 
@@ -1911,22 +2401,46 @@ class MainWindow(QMainWindow):
         else:
             self.anilist_status_label.setText("⬤  AniList down")
             self.anilist_status_label.setStyleSheet("color:#fbbf24;")
-        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
-            self._api_status_banner.update_message(message)
+        b = self.__dict__.get("_status_banners", {}).get("anilist")
+        if b and b.is_shown():
+            b.set_message(message)
 
     def _on_anilist_down(self, message: str):
-        if not hasattr(self, "_api_status_banner"):
-            from ui.api_status_banner import ApiStatusBanner
-            self._api_status_banner = ApiStatusBanner(self.centralWidget())
-            self._api_status_banner.set_on_retry(
-                lambda: self._anilist_status_monitor.force_check()
-            )
-        self._api_status_banner.show_down(message)
+        if not self._is_offline():
+            self._status_banner("anilist").show_banner(message)
 
     def _on_anilist_up(self):
-        if hasattr(self, "_api_status_banner"):
-            self._api_status_banner.hide_down()
+        b = self.__dict__.get("_status_banners", {}).get("anilist")
+        if b:
+            b.hide_banner()
         QTimer.singleShot(500, self._refresh_airing)
+
+    # ── TMDB status (Kinema) ──────────────────────────────────────────────────
+
+    def _check_tmdb_status(self):
+        from core.anilist_status import TMDBStatusMonitor
+        self._tmdb_status_monitor = TMDBStatusMonitor(self)
+        self._tmdb_status_monitor.checked.connect(self._on_tmdb_checked)
+        self._tmdb_status_monitor.api_down.connect(self._on_tmdb_down)
+        self._tmdb_status_monitor.api_up.connect(self._on_tmdb_up)
+        self._tmdb_status_monitor.start()
+
+    def _on_tmdb_checked(self, is_up: bool, message: str):
+        self.tmdb_status_label.setVisible(True)
+        self.tmdb_status_label.setText("⬤  TMDB OK" if is_up else "⬤  TMDB down")
+        self.tmdb_status_label.setStyleSheet("color:#34d399;" if is_up else "color:#fbbf24;")
+        b = self.__dict__.get("_status_banners", {}).get("tmdb")
+        if b and b.is_shown():
+            b.set_message(message)
+
+    def _on_tmdb_down(self, message: str):
+        if not self._is_offline():
+            self._status_banner("tmdb").show_banner(message)
+
+    def _on_tmdb_up(self):
+        b = self.__dict__.get("_status_banners", {}).get("tmdb")
+        if b:
+            b.hide_banner()
 
     # ── Resize ─────────────────────────────────────────────────────────────────
 
@@ -1943,10 +2457,9 @@ class MainWindow(QMainWindow):
             self.notification_banner._reposition()
         if hasattr(self, "new_season_spotlight") and self.new_season_spotlight.isVisible():
             self.new_season_spotlight.reposition()
-        if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
-            self._offline_banner.reposition()
-        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
-            self._api_status_banner.reposition()
+        if self.__dict__.get("_status_banners"):
+            from ui.status_banner import relayout
+            relayout(self.centralWidget())
 
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 

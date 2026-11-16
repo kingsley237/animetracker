@@ -9,6 +9,15 @@ import threading
 
 # ─── Generic Worker Runnable ──────────────────────────────────────────────────
 
+
+def _emit(signals, name: str, *args):
+    """Emit unless the signal object is gone (app closing): a worker that
+    finishes after shutdown must not raise from its thread."""
+    try:
+        getattr(signals, name).emit(*args)
+    except RuntimeError:
+        pass
+
 class WorkerSignals(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -30,11 +39,11 @@ class Worker(QRunnable):
     def run(self):
         try:
             result = self.fn(*self.args, **self.kwargs)
-            self.signals.result.emit(result)
+            _emit(self.signals, "result", result)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Image Download Worker ────────────────────────────────────────────────────
@@ -54,11 +63,11 @@ class ImageWorker(QRunnable):
         try:
             from core.image_cache import download_image
             path = download_image(self.url)
-            self.signals.result.emit((self.target_id, self.size, path))
+            _emit(self.signals, "result", (self.target_id, self.size, path))
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Search Worker ────────────────────────────────────────────────────────────
@@ -74,11 +83,11 @@ class SearchWorker(QRunnable):
         try:
             from core.api import search_anime
             results = search_anime(self.query, per_page=20)
-            self.signals.result.emit(results)
+            _emit(self.signals, "result", results)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Seasonal Worker ──────────────────────────────────────────────────────────
@@ -97,11 +106,11 @@ class SeasonalWorker(QRunnable):
         try:
             from core.api import get_seasonal_anime
             results = get_seasonal_anime(self.season, self.year, self.sort, self.genre)
-            self.signals.result.emit(results)
+            _emit(self.signals, "result", results)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Airing Refresh Worker ────────────────────────────────────────────────────
@@ -117,11 +126,11 @@ class AiringRefreshWorker(QRunnable):
         try:
             from core.api import refresh_airing_data
             results = refresh_airing_data(self.anilist_ids)
-            self.signals.result.emit(results)
+            _emit(self.signals, "result", results)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Legacy JSON Import Worker ────────────────────────────────────────────────
@@ -137,11 +146,11 @@ class ImportWorker(QRunnable):
     def run(self):
         try:
             count = self.db.import_legacy_json(self.json_path)
-            self.signals.result.emit(count)
+            _emit(self.signals, "result", count)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            _emit(self.signals, "error", str(e))
         finally:
-            self.signals.finished.emit()
+            _emit(self.signals, "finished")
 
 
 # ─── Thread pool singleton ────────────────────────────────────────────────────
@@ -157,5 +166,10 @@ def get_pool() -> QThreadPool:
     return _pool
 
 
-def run_worker(worker: QRunnable):
-    get_pool().start(worker)
+# Work the user is actively waiting on (search, a panel's live data) jumps
+# ahead of bulk image downloads in the shared pool.
+PRIORITY_INTERACTIVE = 10
+
+
+def run_worker(worker: QRunnable, priority: int = 0):
+    get_pool().start(worker, priority)

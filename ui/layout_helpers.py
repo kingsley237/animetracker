@@ -10,7 +10,7 @@ FitWidthScroll   - a vertical-only scroll area whose content is always exactly
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, Qt
-from PyQt6.QtWidgets import QFrame, QLayout, QScrollArea, QSizePolicy, QWidgetItem
+from PyQt6.QtWidgets import QFrame, QLayout, QScrollArea, QSizePolicy, QWidget, QWidgetItem
 
 
 class FlowLayout(QLayout):
@@ -23,6 +23,7 @@ class FlowLayout(QLayout):
 
     def addItem(self, item):
         self._items.append(item)
+        self.invalidate()
 
     def count(self):
         return len(self._items)
@@ -40,6 +41,7 @@ class FlowLayout(QLayout):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+        self.invalidate()
 
     def expandingDirections(self):
         return Qt.Orientation(0)
@@ -113,3 +115,17 @@ class FitWidthScroll(QScrollArea):
         if w is not None:
             w.setFixedWidth(self.viewport().width())
         self.horizontalScrollBar().setValue(0)
+
+
+class FlowHost(QWidget):
+    """A widget holding a FlowLayout that is always exactly as tall as its
+    wrapped content (some parent layouts, e.g. QFormLayout, over-estimate
+    height-for-width and leave a big empty gap below the chips)."""
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        lay = self.layout()
+        if lay is not None and e.size().width() > 0:
+            h = lay.heightForWidth(e.size().width())
+            if h > 0 and h != self.height():
+                self.setFixedHeight(h)

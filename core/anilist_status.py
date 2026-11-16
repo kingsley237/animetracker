@@ -107,13 +107,19 @@ class AniListStatusMonitor(QObject):
         """
         self._check()
 
+    def _probe(self):
+        return check_anilist_status()
+
     def _check(self):
         from workers.workers import Worker, run_worker
 
         def fetch():
-            return check_anilist_status()
+            return self._probe()
 
         def on_done(result):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return              # window closed while the check ran
             is_up, message = result
             self._last_checked_at = time.time()
             was_up = self._is_up
@@ -129,3 +135,11 @@ class AniListStatusMonitor(QObject):
         w = Worker(fetch)
         w.signals.result.connect(on_done)
         run_worker(w)
+
+
+class TMDBStatusMonitor(AniListStatusMonitor):
+    """Same behaviour for TMDB (Kinema: movies & TV)."""
+
+    def _probe(self):
+        from core import tmdb
+        return tmdb.check_status()

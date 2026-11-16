@@ -1701,3 +1701,301 @@ QProgressBar#rewatchBar::chunk {
     background-color: #7c6af7;
     border-radius: 3px;
 }
+
+/* ── Kinema: movies ────────────────────────────────────────────────────────── */
+QLabel#movieStamp {
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+    color: #fbbf24;
+    background-color: rgba(40, 28, 4, 0.95);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+}
+
+QLabel#movieStamp[kind="watched"] {
+    color: #34d399;
+    background-color: rgba(6, 34, 25, 0.95);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+}
+
+QLabel#movieStamp[kind="watchlist"] {
+    color: #c4b8ff;
+    background-color: rgba(24, 18, 56, 0.95);
+    border: 1px solid rgba(165, 148, 249, 0.45);
+}
+
+QLabel#movieCountdown {
+    color: #fbbf24;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QLabel#providerChip,
+QLabel#providerChipStream {
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    color: #c7cbd9;
+    background-color: #151929;
+    border: 1px solid #252a40;
+}
+
+QLabel#providerChipStream {
+    color: #bbf7d0;
+    background-color: rgba(6, 34, 25, 0.9);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+}
+
+QLabel#collectionNum {
+    color: #5c6482;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#collectionTag,
+QLabel#collectionTagThis {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-radius: 5px;
+    padding: 3px 7px;
+    color: #9da5c0;
+    background-color: #151929;
+}
+
+QLabel#collectionTagThis {
+    color: #fbbf24;
+    background-color: rgba(40, 28, 4, 0.95);
+}
+
+QLabel#releaseTimeline {
+    font-size: 12px;
+    padding-top: 4px;
+}
+
+QLabel#browserReason {
+    color: #fbbf24;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ── Sidebar library headers (Miroku / Kinema) ────────────────────────────── */
+QLabel#sidebarBrandName {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+QLabel#sidebarBrandSub {
+    color: #4a5070;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+/* ── Kinema Discover: Movies | TV shows switch ─────────────────────────── */
+QPushButton#kindSwitch {
+    background: transparent;
+    color: #8c93ad;
+    border: 1px solid #262a3a;
+    border-radius: 15px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#kindSwitch:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#kindSwitch[active="true"] {
+    background: rgba(56, 189, 248, 0.12);
+    color: #e6f6ff;
+    border-color: #38bdf8;
+}
+
+/* ── Kinema TV: detail panel ───────────────────────────────────────────── */
+QLabel#tvStamp {
+    background: rgba(56, 189, 248, 0.12); color: #bae6fd;
+    border: 1px solid #38bdf8; border-radius: 5px;
+    padding: 3px 10px; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+}
+QLabel#tvStamp[ws="planned"]   { background: rgba(157,143,255,0.10); color: #d7d2ff; border-color: #9d8fff; }
+QLabel#tvStamp[ws="completed"] { background: rgba(52,211,153,0.10); color: #bbf7d0; border-color: #34d399; }
+QLabel#tvStamp[ws="dropped"]   { background: rgba(181,72,90,0.12); color: #f0a3ad; border-color: #b5485a; }
+QLabel#tvShowState { color: #8c93ad; font-size: 11px; font-weight: 600; padding-left: 6px; }
+QWidget#tvProgressTrack { background: #1c2030; border-radius: 3px; }
+QWidget#tvProgressFill  { background: #38bdf8; border-radius: 3px; }
+QLabel#tvNextAir { color: #7dd3fc; font-size: 12px; font-weight: 600; }
+
+QPushButton#tvSeasonTab {
+    background: #141724; color: #8c93ad; border: 1px solid #23273a;
+    border-radius: 13px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+}
+QPushButton#tvSeasonTab:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#tvSeasonTab[active="true"] {
+    background: rgba(56, 189, 248, 0.14); color: #e6f6ff; border-color: #38bdf8;
+}
+QLabel#tvSeasonTitle { color: #f0f1f6; font-size: 14px; font-weight: 700; }
+QPushButton#tvStar {
+    background: transparent; border: none; color: #3a3f55; font-size: 14px; padding: 0;
+}
+QPushButton#tvStar:hover { color: #fde68a; }
+QPushButton#tvStar[on="true"] { color: #fbbf24; }
+
+QWidget#tvEpRow, QWidget#tvEpRowNext { border-radius: 7px; background: transparent; }
+QWidget#tvEpRow:hover { background: #151827; }
+QWidget#tvEpRowNext { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); }
+QPushButton#tvEpTick {
+    background: transparent; border: 1.5px solid #3a3f55; border-radius: 12px;
+    color: #0b0d12; font-size: 12px; font-weight: 900; padding: 0;
+}
+QPushButton#tvEpTick:hover { border-color: #38bdf8; }
+QPushButton#tvEpTick[watched="true"] { background: #38bdf8; border-color: #38bdf8; }
+QPushButton#tvEpTick:disabled { border: 1.5px dashed #2a2e40; }
+QLabel#tvEpNum { color: #6b7391; font-size: 11px; font-weight: 700; }
+QLabel#tvEpName { color: #dfe2ec; font-size: 12px; }
+QLabel#tvEpNameDim { color: #6b7391; font-size: 12px; }
+QLabel#tvEpRating { color: #fbbf24; font-size: 11px; font-weight: 700; }
+QLabel#tvEpDate { color: #5c6482; font-size: 11px; }
+QLabel#tvEpAirs { color: #7dd3fc; font-size: 11px; font-weight: 600; }
+
+/* ── Miroku: Watching section (Kinema layout, indigo) ──────────────────── */
+QLabel#animeStamp {
+    background: rgba(139, 123, 255, 0.14); color: #e0dbff;
+    border: 1px solid #8b7bff; border-radius: 5px;
+    padding: 3px 10px; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+}
+QWidget#animeProgressFill { background: #8b7bff; border-radius: 3px; }
+QLabel#animeNextAir { color: #b8adff; font-size: 12px; font-weight: 600; }
+QLabel#animeEpAirs { color: #b8adff; font-size: 11px; font-weight: 600; }
+QPushButton#animeEpTick {
+    background: transparent; border: 1.5px solid #3a3f55; border-radius: 12px;
+    color: #0b0d12; font-size: 12px; font-weight: 900; padding: 0;
+}
+QPushButton#animeEpTick:hover { border-color: #8b7bff; }
+QPushButton#animeEpTick[watched="true"] { background: #8b7bff; border-color: #8b7bff; }
+QPushButton#animeEpTick:disabled { border: 1.5px dashed #2a2e40; }
+QPushButton#animeBlockTab {
+    background: #141724; color: #8c93ad; border: 1px solid #23273a;
+    border-radius: 13px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+}
+QPushButton#animeBlockTab:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#animeBlockTab[active="true"] {
+    background: rgba(139, 123, 255, 0.16); color: #f0edff; border-color: #8b7bff;
+}
+
+/* Browser preview: the "Because you…" line takes the library colour */
+QLabel#browserReason[kind="tv"]    { color: #7dd3fc; }
+QLabel#browserReason[kind="anime"] { color: #b8adff; }
+
+/* Quick links: one-click label presets */
+QPushButton#linkPreset {
+    background: #141724; color: #b7bdd3; border: 1px solid #262a3a;
+    border-radius: 12px; padding: 3px 10px; font-size: 11px;
+}
+QPushButton#linkPreset:hover { color: #f0f1f6; border-color: #8b7bff; background: rgba(139,123,255,0.10); }
+
+/* ── Raikō Home ──────────────────────────────────────────────────────────── */
+QLabel#homeSummary { color: #9da5c0; font-size: 13px; }
+QLabel#homeSection {
+    color: #8c93ad; font-size: 11px; font-weight: 800; letter-spacing: 1.6px; padding-top: 14px;
+}
+QLabel#homeDay { color: #c7cbe0; font-size: 12px; font-weight: 700; padding: 8px 0 2px 2px; }
+QWidget#homeUpRow { background: #11131c; border: 1px solid #1c2030; border-radius: 10px; }
+QWidget#homeUpRow:hover { background: #161a27; border-color: #2a3150; }
+QLabel#homeUpTitle { color: #eceef6; font-size: 13px; font-weight: 600; }
+QLabel#homeUpLabel { font-size: 11px; font-weight: 600; }
+QLabel#homeUpWhen { color: #8c93ad; font-size: 11px; font-weight: 600; }
+QPushButton#homeWatchedBtn {
+    background: rgba(8, 9, 14, 0.82); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 9px; padding: 5px 11px; font-size: 11px; font-weight: 700;
+}
+QPushButton#homeWatchedBtn:hover { background: #34d399; color: #062016; border-color: #34d399; }
+
+/* ── Raikō Home v2 ───────────────────────────────────────────────────────── */
+QLabel#homeHello { color: #f4f5fa; font-size: 24px; font-weight: 800; }
+QLabel#homeDate { color: #7f87a3; font-size: 12px; }
+QLineEdit#homeSearch {
+    background: #12141d; border: 1px solid #23273a; border-radius: 20px;
+    padding: 0 16px; color: #e8eaf2; font-size: 12px;
+}
+QLineEdit#homeSearch:focus { border-color: #8b7bff; background: #151827; }
+QLabel#heroKicker { font-size: 11px; font-weight: 800; letter-spacing: 1.6px; background: transparent; }
+QLabel#heroTitle { color: #ffffff; font-size: 30px; font-weight: 800; background: transparent; }
+QLabel#heroNext { color: #dfe2ee; font-size: 14px; font-weight: 600; background: transparent; }
+QLabel#heroBlurb { color: #a8aec6; font-size: 12px; background: transparent; }
+QPushButton#heroPrimary {
+    border: none; border-radius: 11px; padding: 0 20px; font-size: 13px; font-weight: 800;
+}
+QPushButton#heroSecondary {
+    background: rgba(255,255,255,0.10); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 11px; padding: 0 18px; font-size: 13px; font-weight: 700;
+}
+QPushButton#heroSecondary:hover { background: rgba(255,255,255,0.18); }
+QWidget#homeStat { background: #11131c; border: 1px solid #1c2030; border-radius: 12px; }
+QLabel#homeStatValue { font-size: 22px; font-weight: 800; background: transparent; }
+QLabel#homeStatLabel { color: #7f87a3; font-size: 9px; font-weight: 800; letter-spacing: 1.2px; background: transparent; }
+QLabel#homeSection { color: #eef0f7; font-size: 17px; font-weight: 800; }
+QLabel#homeEmpty { color: #7f87a3; font-size: 12px; }
+QPushButton#cardTick {
+    background: #34d399; color: #062016; border: none; border-radius: 17px;
+    font-size: 15px; font-weight: 900; padding: 0;
+}
+QWidget#homeDayCol, QWidget#homeDayColToday {
+    background: #0f1119; border: 1px solid #1a1d2a; border-radius: 12px;
+}
+QWidget#homeDayColToday { background: #13122a; border-color: #3b3470; }
+QLabel#homeDayTitle { color: #eef0f7; font-size: 12px; font-weight: 800; background: transparent; }
+QLabel#homeDaySub { color: #6b7391; font-size: 10px; background: transparent; }
+QLabel#homeDayEmpty { color: #3d4359; font-size: 11px; background: transparent; }
+
+/* Raikō sidebar brand */
+QLabel#appLogoName { color: #f4f5fa; font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
+
+/* Library cards: hover quick action */
+QPushButton#cardQuickTick {
+    background: rgba(8, 9, 14, 0.82); color: #f4f5fa; border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 17px; font-size: 15px; font-weight: 900; padding: 0;
+}
+QPushButton#cardQuickTick:hover { background: #34d399; color: #062016; border-color: #34d399; }
+
+/* ── Raikō onboarding ────────────────────────────────────────────────────── */
+QWidget#welcomeCard { background: #0f1119; border: 1px solid #262a3d; border-radius: 22px; }
+QLabel#welcomeHead { color: #f4f5fa; font-size: 24px; font-weight: 800; background: transparent; }
+QLabel#welcomeSub { color: #a8aec6; font-size: 13px; background: transparent; }
+QWidget#welcomeTile { background: #141724; border: 1px solid #22263a; border-radius: 14px; }
+QPushButton#welcomeGo {
+    background: #8b7bff; color: #0b0d12; border: none; border-radius: 12px;
+    padding: 0 22px; font-size: 13px; font-weight: 800;
+}
+QPushButton#welcomeGo:hover { background: #a294ff; }
+QPushButton#welcomeSkip { background: transparent; color: #7f87a3; border: none; font-size: 12px; padding: 0 8px; }
+QPushButton#welcomeSkip:hover { color: #e2e4ec; }
+QWidget#tourCard { background: #12142a; border: 1px solid #3b3470; border-radius: 16px; }
+QLabel#tourCounter { color: #8b7bff; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; background: transparent; }
+QLabel#tourDots { color: #4a4f7a; font-size: 9px; letter-spacing: 2px; background: transparent; }
+QLabel#tourTitle { color: #f4f5fa; font-size: 16px; font-weight: 800; background: transparent; }
+QLabel#tourDesc { color: #a8aec6; font-size: 12px; background: transparent; }
+QPushButton#tourNext {
+    background: #8b7bff; color: #0b0d12; border: none; border-radius: 9px;
+    padding: 7px 18px; font-size: 12px; font-weight: 800;
+}
+QPushButton#tourNext:hover { background: #a294ff; }
+QPushButton#tourBack {
+    background: transparent; color: #c7cbe0; border: 1px solid #2f3450; border-radius: 9px;
+    padding: 7px 14px; font-size: 12px;
+}
+QPushButton#tourSkip { background: transparent; color: #6b7391; border: none; font-size: 11px; }
+QPushButton#tourSkip:hover { color: #c7cbe0; }
+QLabel#homeCaughtUp {
+    color: #bbf7d0; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25);
+    border-radius: 12px; padding: 14px 18px; font-size: 13px; font-weight: 600;
+}
+
+/* Home spotlight carousel */
+QLabel#spotReason { color: #e8eaf2; font-size: 12px; font-weight: 600; background: rgba(8,9,14,0.55);
+                    border-radius: 8px; padding: 4px 10px; }
+QPushButton#spotArrow {
+    background: rgba(8, 9, 14, 0.62); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 18px; font-size: 18px; font-weight: 700; padding: 0 0 3px 0;
+}
+QPushButton#spotArrow:hover { background: rgba(255,255,255,0.16); }

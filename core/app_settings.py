@@ -5,7 +5,7 @@ from PyQt6.QtCore import QSettings
 
 _LEGACY_ORG = "AnimeTracker"
 _LEGACY_APP = "AnimeTracker"
-_ORG = "Miroku"
+_ORG = "Miroku"          # kept: changing it would lose existing settings
 _APP = "Miroku"
 _MIGRATED_KEY = "settings_migrated_from_animetracker"
 

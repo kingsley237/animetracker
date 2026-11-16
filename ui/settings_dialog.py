@@ -87,7 +87,7 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(18, 22, 18, 18)
         lay.setSpacing(8)
 
-        brand = QLabel("Miroku")
+        brand = QLabel("Raikō")
         brand.setObjectName("settingsNavBrand")
         lay.addWidget(brand)
 
@@ -338,9 +338,76 @@ class SettingsDialog(QDialog):
         arch_row.addWidget(self.archive_combo)
         dl.addLayout(arch_row)
         dl.addWidget(self._helper_text(
-            "Archived shows leave the Completed list but stay in stats, search and Hall of Fame."
+            "Archived shows leave the Completed list but stay in search."
         ))
         lay.addWidget(display)
+
+        # TV shows & movies (Kinema) - data from TMDB
+        kin, kl = self._card("TV shows & movies")
+        reg_row = QHBoxLayout()
+        reg_lbl = QLabel("Your country")
+        reg_lbl.setObjectName("settingsValueText")
+        reg_row.addWidget(reg_lbl)
+        reg_row.addStretch()
+        self.region_combo = QComboBox()
+        _regions = [("United States", "US"), ("United Kingdom", "GB"), ("Canada", "CA"),
+                    ("France", "FR"), ("Germany", "DE"), ("Spain", "ES"), ("Italy", "IT"),
+                    ("Japan", "JP"), ("Brazil", "BR"), ("Mexico", "MX"), ("India", "IN"),
+                    ("Australia", "AU"), ("Nigeria", "NG"), ("South Africa", "ZA"),
+                    ("Cameroon", "CM")]
+        for text, code in _regions:
+            self.region_combo.addItem(text, code)
+        _cur_region = str(self.settings.value("tmdb_region", "US") or "US").upper()
+        self.region_combo.setCurrentIndex(
+            next((i for i, (_t, c) in enumerate(_regions) if c == _cur_region), 0))
+        self.region_combo.setFixedWidth(180)
+        self.region_combo.currentIndexChanged.connect(
+            lambda i: self.settings.setValue("tmdb_region", self.region_combo.itemData(i)))
+        reg_row.addWidget(self.region_combo)
+        kl.addLayout(reg_row)
+        kl.addWidget(self._helper_text(
+            "Used for where-to-watch and local release dates."))
+
+        alert_row = QHBoxLayout()
+        alert_lbl = QLabel("Tell me when a Watchlist film is out")
+        alert_lbl.setObjectName("settingsValueText")
+        alert_row.addWidget(alert_lbl)
+        alert_row.addStretch()
+        self.movie_alert_combo = QComboBox()
+        _modes = [("Digitally (HD)", "digital"), ("In cinemas", "cinema"),
+                  ("Both", "both"), ("Never", "off")]
+        for text, key in _modes:
+            self.movie_alert_combo.addItem(text, key)
+        _cur_mode = str(self.settings.value("movie_alert_mode", "digital") or "digital")
+        self.movie_alert_combo.setCurrentIndex(
+            next((i for i, (_t, k) in enumerate(_modes) if k == _cur_mode), 0))
+        self.movie_alert_combo.setFixedWidth(180)
+        self.movie_alert_combo.currentIndexChanged.connect(
+            lambda i: self.settings.setValue("movie_alert_mode", self.movie_alert_combo.itemData(i)))
+        alert_row.addWidget(self.movie_alert_combo)
+        kl.addLayout(alert_row)
+        kl.addWidget(self._helper_text(
+            "One notification per film, the day it's out. Your Watchlist also shows "
+            "Ready to watch and Waiting for HD at a glance."))
+
+        from PyQt6.QtWidgets import QLineEdit
+        key_row = QHBoxLayout()
+        key_lbl = QLabel("Your own TMDB key (optional)")
+        key_lbl.setObjectName("settingsValueText")
+        key_row.addWidget(key_lbl)
+        key_row.addStretch()
+        self.tmdb_key_edit = QLineEdit()
+        self.tmdb_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tmdb_key_edit.setPlaceholderText("Paste a key or read token")
+        self.tmdb_key_edit.setFixedWidth(240)
+        self.tmdb_key_edit.setText(str(self.settings.value("tmdb_token_override", "") or ""))
+        self.tmdb_key_edit.editingFinished.connect(
+            lambda: self.settings.setValue("tmdb_token_override", self.tmdb_key_edit.text().strip()))
+        key_row.addWidget(self.tmdb_key_edit)
+        kl.addLayout(key_row)
+        kl.addWidget(self._helper_text(
+            "Leave empty to use the built-in key. A free key is available from themoviedb.org."))
+        lay.addWidget(kin)
 
         cache, cl = self._card("Image cache")
         row = QHBoxLayout()
@@ -404,7 +471,7 @@ class SettingsDialog(QDialog):
 
         backup, bl = self._card("Backups")
         bl.addWidget(self._body_text(
-            "Miroku keeps the latest 5 backup snapshots in your local backup "
+            "Raikō keeps the latest 5 backup snapshots in your local backup "
             "folder."
         ))
         path = QLabel(str(BACKUP_DIR))
@@ -445,16 +512,15 @@ class SettingsDialog(QDialog):
     def _page_about(self) -> QWidget:
         page, lay = self._page()
         lay.addWidget(self._hero(
-            "About Miroku",
-            "A focused desktop tracker for currently airing and upcoming anime."
+            "About Raikō",
+            "One home for everything you watch: anime in Miroku, TV shows and movies in Kinema."
         ))
 
         about, al = self._card("")
         top = QHBoxLayout()
 
         resources = Path(__file__).parent.parent / "resources"
-        logo_path = resources / "miroku_lettermark_1024.png"
-        icon_path = logo_path if logo_path.exists() else resources / "miroku_lettermark_512.png"
+        icon_path = resources / "raiko_icon_256.png"
         if icon_path.exists():
             icon = QLabel()
             px = QPixmap(str(icon_path)).scaled(
@@ -466,7 +532,7 @@ class SettingsDialog(QDialog):
             top.addWidget(icon)
 
         copy = QVBoxLayout()
-        name = QLabel("Miroku")
+        name = QLabel("Raikō")
         name.setObjectName("settingsAboutName")
         copy.addWidget(name)
 
@@ -479,6 +545,9 @@ class SettingsDialog(QDialog):
 
         for text in [
             "Powered by the AniList GraphQL API for public anime data.",
+            "TV and movie data from TMDB. This product uses the TMDB API "
+            "but is not endorsed or certified by TMDB.",
+            "Where-to-watch availability provided by JustWatch.",
             "Built with Python and PyQt6.",
             "Your library database is stored locally on this machine.",
             "Cover art remains the property of its respective copyright holders.",
@@ -488,6 +557,11 @@ class SettingsDialog(QDialog):
         license_label = QLabel("MIT License")
         license_label.setObjectName("settingsPathText")
         al.addWidget(license_label)
+        replay = QPushButton("Replay the welcome tour")
+        replay.setObjectName("secondaryBtn")
+        replay.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        replay.clicked.connect(self._replay_tour)
+        al.addWidget(replay, alignment=Qt.AlignmentFlag.AlignLeft)
 
         lay.addWidget(about)
         lay.addStretch()
@@ -665,6 +739,15 @@ class SettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Backup Failed", str(exc))
     
+    def _replay_tour(self):
+        mw = self.parent()
+        while mw is not None and not hasattr(mw, "start_onboarding"):
+            mw = mw.parent()
+        self.accept()
+        if mw is not None:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(150, lambda: mw.start_onboarding(False))
+
     def _open_data_doctor(self):
         from ui.data_doctor import DataDoctorDialog
         dlg = DataDoctorDialog(self.db, self)

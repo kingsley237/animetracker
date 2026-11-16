@@ -64,7 +64,7 @@ def download_image(
         _active_downloads.add(url)
 
     try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "Miroku/2.2"})
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Raiko/3.0"})
         resp.raise_for_status()
 
         # Detect extension from content-type

@@ -15,7 +15,7 @@ Design principles (AniList / Crunchyroll / Plex pattern):
   - Progress bar flush at the very bottom edge of the card
   - All text has background:transparent so it never creates boxes
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
@@ -56,24 +56,18 @@ class _BorderOverlay(QWidget):
         selected = card.property("selected") == "true"
         hovered  = card.property("hovered") == "true"
 
+        media = (getattr(card, "_anime", None) or {}).get("media_type") or "anime"
+        lib = {"anime": "#8b7bff", "tv": "#38bdf8", "movie": "#fbbf24"}.get(media, "#8b7bff")
         if selected:
-            border_color, width = QColor("#b8a8ff"), 2.5
-        elif hovered:
-            border_color, width = QColor("#6b5fc4"), 2.0
+            border_color, width = QColor(lib), 2.5
         elif accent == "behind":
-            border_color, width = QColor("#f87171"), 2.0
-        elif accent == "airing":
-            border_color, width = QColor("#7c6af7"), 1.5
-        elif accent == "planned":
-            border_color, width = QColor("#9d8fff"), 1.5
-        elif accent == "completed":
-            border_color, width = QColor("#34d399"), 1.5
+            border_color, width = QColor("#f87171"), 2.0          # new episode waiting
         elif accent == "incomplete":
-            border_color, width = QColor("#fbbf24"), 2.0
-        elif accent == "dropped":
-            border_color, width = QColor("#6b2f3a"), 1.5
+            border_color, width = QColor(251, 191, 36, 200), 1.5
+        elif hovered:
+            border_color, width = QColor(255, 255, 255, 90), 1.2
         else:
-            border_color, width = QColor("#2a3048"), 1.0
+            border_color, width = QColor(255, 255, 255, 26), 1.0   # premium hairline
 
         radius = getattr(card, "CARD_RADIUS", 10)
         inset  = (width / 2.0) + 0.5
@@ -83,6 +77,8 @@ class _BorderOverlay(QWidget):
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if hovered and not selected:
+            p.fillPath(path, QColor(255, 255, 255, 12))           # gentle lift on hover
         pen = QPen(border_color, width)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
@@ -187,10 +183,11 @@ class AnimeCard(QFrame):
     CARD_WIDTH   = 185
     CARD_HEIGHT  = 275
     COVER_HEIGHT = 275   # same as card — full bleed
-    CARD_RADIUS  = 10
+    CARD_RADIUS  = 14
 
     clicked       = pyqtSignal(int)
     watch_toggled = pyqtSignal(int)
+    quick_watched = pyqtSignal(int, str)    # library id, what was marked (e.g. "Ep 7")
     new_season_clicked = pyqtSignal(int)
     def __init__(self, anime: Dict[str, Any], db: DatabaseManager,
                  parent=None):
@@ -388,6 +385,16 @@ class AnimeCard(QFrame):
         self._info_w.raise_()
 
         root.addWidget(self._cover_w)
+
+        # Hover quick action: mark the next episode watched
+        self._quick = None
+        self.quick_btn = QPushButton("✓", self)
+        self.quick_btn.setObjectName("cardQuickTick")
+        self.quick_btn.setFixedSize(34, 34)
+        self.quick_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.quick_btn.move(self.CARD_WIDTH - 44, 10)
+        self.quick_btn.clicked.connect(self._do_quick)
+        self.quick_btn.setVisible(False)
 
         # Border overlay — parented to _cover_w so it sits above the cover image
         self._border_overlay = _BorderOverlay(self._cover_w)
@@ -682,9 +689,77 @@ class AnimeCard(QFrame):
         else:
             self.progress_bar.setVisible(True)
 
-        # Top overlay: you requested it to be present on Watching cards only.
-        # (Planned cards do not have any top-right text; keep them clean.)
-        self._top_grad.setVisible(ws == "watching")
+        # ── Anime (Miroku): the Kinema card language ──────────────────
+        self._cd_prefix = ""
+        if (anime.get("media_type") or "anime") == "anime" and ws in ("watching", "planned", "completed"):
+            self._apply_anime(anime, ws, api_status, watched, aired, total, next_ep,
+                              is_ended, still_airing_behind, has_behind, is_incomplete_completion)
+
+        # ── Movies (Kinema): runtime/year, release + verdict, no episodes ──
+        if anime.get("media_type") == "movie":
+            self._next_ep_at = None
+            bits = []
+            if anime.get("duration"):
+                h, m = divmod(int(anime["duration"]), 60)
+                bits.append(f"{h}h {m:02d}m" if h else f"{m}m")
+            if anime.get("season_year"):
+                bits.append(str(anime["season_year"]))
+            if anime["id"] > 0:
+                seen = 1 + self.db.rewatch_count(anime["id"]) if ws == "completed" else 0
+                if seen > 1:
+                    bits.append(f"seen {seen}×")
+            self.ep_label.setText("  ·  ".join(bits))
+            self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
+            from core.kinema_sync import release_state
+            rs = release_state(anime)
+            def _d(ts):
+                d = datetime.fromtimestamp(ts)
+                return d.strftime("%b ") + str(d.day)
+            note, note_color = "", "#9da5c0"
+            if ws == "completed":
+                self._set_badge("badgeCompleted", "WATCHED")
+                mine = self.db.get_overall_rating(anime["id"]) if anime["id"] > 0 else None
+                if mine:
+                    note, note_color = f"★ {mine:.0f}/6 · your rating", "#fbbf24"
+                accent = "completed"
+            elif rs["state"] == "digital":
+                self._set_badge("badgeCompleted", "READY TO WATCH")
+                note, note_color = ("Out in HD since " + _d(rs["digital_ts"]) if rs["digital_ts"]
+                                    else "Out in HD"), "#34d399"
+                accent = "completed"
+            elif rs["state"] == "cinema":
+                self._set_badge("badgeUpcoming", "IN CINEMAS")
+                now = int(datetime.now().timestamp())
+                if rs["digital_ts"] and rs["digital_ts"] > now:
+                    days = max(1, round((rs["digital_ts"] - now) / 86400))
+                    note = f"HD {_d(rs['digital_ts'])} · in {days} day{'s' if days != 1 else ''}"
+                else:
+                    note = "HD date not announced yet"
+                note_color = "#fbbf24"
+                accent = "planned"
+            else:
+                self._set_badge("badgeUpcoming", "COMING SOON")
+                if rs["cinema_ts"]:
+                    note, note_color = f"In cinemas {_d(rs['cinema_ts'])}, {datetime.fromtimestamp(rs['cinema_ts']).year}", "#fbbf24"
+                accent = "planned"
+            self._static_note = note
+            self.countdown_label.setText(note)
+            self.countdown_label.setStyleSheet(
+                f"font-size:10px;font-weight:600;color:{note_color};background:transparent;")
+            for w in (self.progress_bar, self.behind_badge_lbl, self.score_badge_lbl,
+                      self.ep_cover_badge):
+                w.setVisible(False)
+            self.setProperty("cardAccent", accent)
+            self.update()
+            if hasattr(self, "_border_overlay"):
+                self._border_overlay.update()
+
+        # ── TV shows (Kinema): S·E progress, new episodes, next airing ────
+        if anime.get("media_type") == "tv":
+            self._apply_tv(anime, ws, api_status)
+
+        # Corner chips are folded into the text lines now (Kinema style)
+        self._top_grad.setVisible(False)
 
         # Reposition info overlay after text reflows
         self._info_w.adjustSize()
@@ -693,6 +768,160 @@ class AnimeCard(QFrame):
 
         self._refresh_overlay()
         self.refresh_links()
+        self._compute_quick(anime)
+
+    def _apply_anime(self, anime, ws, api_status, watched, aired, total, next_ep,
+                     is_ended, still_airing_behind, has_behind, incomplete):
+        """Same reading order as TV cards: badge, where you are, what's next.
+        Score, counts and 'behind' move from corner chips into the text."""
+        sc = anime.get("average_score")
+        star = f"  ·  ★ {sc / 10:.1f}" if sc else ""
+        for w in (self.behind_badge_lbl, self.score_badge_lbl, self.ep_cover_badge):
+            w.setVisible(False)
+        rewatch = ws == "completed" and anime["id"] > 0 and self.db.get_active_rewatch(anime["id"])
+        if ws == "watching":
+            denom = total or aired
+            reach = aired or total
+            left = max(0, (aired or 0) - watched) if aired else 0
+            if reach and watched < reach:
+                line = f"Next Ep {watched + 1}  ·  {watched}/{denom}"
+            elif denom:
+                line = f"Caught up  ·  {watched}/{denom}"
+            else:
+                line = f"{watched} watched"
+            self.ep_label.setText(line + star)
+            self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
+            if still_airing_behind:
+                self._set_badge("badgeAlert", "NEW EPISODE" if left == 1 else f"+{left} NEW")
+            elif has_behind:
+                self._set_badge("badgeWatching", f"{left} TO WATCH")
+            elif self._next_ep_at:
+                self._set_badge("badgeCompleted", "UP TO DATE")
+            elif is_ended:
+                self._set_badge("badgeCompleted", "FINISHED")
+            else:
+                self._set_badge("badgeWatching", "AIRING")
+            mins = left * (anime.get("duration") or 24)
+            h, m = divmod(mins, 60)
+            time_left = f"about {h}h {m:02d}m" if h else f"about {m}m"
+            if self._next_ep_at and left:
+                self._cd_prefix = f"{left} left  ·  next "
+            elif self._next_ep_at:
+                self._cd_prefix = f"Ep {next_ep} airs " if next_ep else "Next ep "
+            elif left:
+                self._static_note = f"{left} left  ·  {time_left}"
+                self.countdown_label.setText(self._static_note)
+                self.countdown_label.setStyleSheet(
+                    "font-size:10px;font-weight:600;color:#a594f9;background:transparent;")
+            colour = "#f87171" if still_airing_behind else "#8b7bff"
+        elif ws == "planned":
+            self.ep_label.setText(self.ep_label.text() + star)
+            if self._next_ep_at:
+                self._cd_prefix = (f"Ep {next_ep} airs " if next_ep and next_ep > 1 else "Premieres ")
+            colour = "#8b7bff"
+        else:
+            mine = self.db.get_overall_rating(anime["id"]) if anime["id"] > 0 else None
+            if mine and not rewatch and not incomplete:
+                self._static_note = f"★ {mine:.0f}/6  ·  your rating"
+                self.countdown_label.setText(self._static_note)
+                self.countdown_label.setStyleSheet(
+                    "font-size:10px;font-weight:600;color:#fbbf24;background:transparent;")
+            colour = "#fbbf24" if incomplete else "#34d399"
+            if rewatch:
+                colour = "#8b7bff"
+        self.progress_bar.setStyleSheet(
+            "QProgressBar{background:rgba(255,255,255,0.12);border:none;border-radius:0;}"
+            f"QProgressBar::chunk{{background:{colour};border-radius:0;}}")
+
+    def _apply_tv(self, anime: Dict[str, Any], ws: str, api_status: str):
+        self._next_ep_at = None
+        p = self.db.tv_progress(anime["id"]) if anime["id"] > 0 else {
+            "total": 0, "aired": 0, "watched": 0, "unwatched_aired": 0,
+            "next": None, "last": None, "upcoming": None}
+        code = lambda e: f"S{e['season_number']:02d}E{e['episode_number']:02d}"
+        today = datetime.now().strftime("%Y-%m-%d")
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        ended = api_status in ("FINISHED", "CANCELLED")
+        n_left = p["unwatched_aired"]
+
+        # line 1: where you are
+        if ws == "watching" and p["next"]:
+            ep = f"Next {code(p['next'])}"
+        elif ws == "watching" and p["watched"]:
+            ep = "Caught up"
+        elif ws == "completed":
+            ep = f"{p['watched']} episodes watched"
+        else:
+            ep = f"{p['total']} episodes" if p["total"] else "No episodes listed yet"
+        if p["aired"] and ws in ("watching", "dropped"):
+            ep += f"  ·  {p['watched']}/{p['aired']}"
+        self.ep_label.setText(ep)
+        self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
+
+        # badge
+        fresh = ws == "watching" and n_left and p["next"] and any(
+            not e.get("watched") and e.get("air_date") and week_ago <= e["air_date"] <= today
+            for e in self.db.get_tv_episodes(anime["id"], (p["last"] or p["next"])["season_number"]))
+        if ws == "completed":
+            self._set_badge("badgeCompleted", "COMPLETED"); accent = "completed"
+        elif ws == "dropped":
+            self._set_badge("badgeDropped", "DROPPED"); accent = "dropped"
+        elif ws == "planned":
+            if api_status == "NOT_YET_RELEASED" or not p["aired"]:
+                self._set_badge("badgeUpcoming", "COMING SOON")
+            elif ended:
+                self._set_badge("badgeCompleted", "ENDED")
+            else:
+                self._set_badge("badgeWatching", "AIRING")
+            accent = "planned"
+        elif fresh:
+            self._set_badge("badgeAlert", f"+{n_left} NEW" if n_left > 1 else "NEW EPISODE")
+            accent = "behind"
+        elif n_left:
+            self._set_badge("badgeWatching", f"{n_left} TO WATCH"); accent = "airing"
+        elif p["upcoming"]:
+            self._set_badge("badgeCompleted", "UP TO DATE"); accent = "airing"
+        else:
+            self._set_badge("badgeWatching", "BETWEEN SEASONS" if not ended else "ENDED")
+            accent = "airing"
+
+        # line 2: next airing / show state
+        note, color = "", "#9da5c0"
+        up = p["upcoming"]
+        if up and ws != "dropped":
+            d = datetime.strptime(up["air_date"], "%Y-%m-%d")
+            days = (d.date() - datetime.now().date()).days
+            when = "today" if days == 0 else ("tomorrow" if days == 1 else f"in {days} days")
+            label = ("Season " + str(up["season_number"]) + " premieres"
+                     if up["episode_number"] == 1 else code(up))
+            note, color = f"{label} {d.strftime('%b ')}{d.day} · {when}", "#38bdf8"
+        elif ws == "watching" and n_left:
+            mins = n_left * (anime.get("duration") or 45)
+            h, m = divmod(mins, 60)
+            note = f"{n_left} left · about {h}h {m:02d}m" if h else f"{n_left} left · about {m}m"
+        elif ended:
+            note = "Show ended" if api_status == "FINISHED" else "Cancelled"
+        elif p["total"]:
+            note = "Next season not dated yet"
+        self._static_note = note
+        self.countdown_label.setText(note)
+        self.countdown_label.setStyleSheet(
+            f"font-size:10px;font-weight:600;color:{color};background:transparent;")
+
+        for w in (self.behind_badge_lbl, self.score_badge_lbl, self.ep_cover_badge):
+            w.setVisible(False)
+        denom = p["aired"] or p["total"] or 1
+        self.progress_bar.setMaximum(denom)
+        self.progress_bar.setValue(min(p["watched"], denom))
+        self.progress_bar.setVisible(ws in ("watching", "completed", "dropped") and p["watched"] > 0)
+        pc = {"completed": "#34d399", "dropped": "#b5485a"}.get(ws, "#38bdf8")
+        self.progress_bar.setStyleSheet(
+            "QProgressBar{background:rgba(255,255,255,0.12);border:none;border-radius:0;}"
+            f"QProgressBar::chunk{{background:{pc};border-radius:0;}}")
+        self.setProperty("cardAccent", accent)
+        self.update()
+        if hasattr(self, "_border_overlay"):
+            self._border_overlay.update()
 
     def refresh_links(self):
         has_links = self.anime_id > 0 and self.db.has_anime_links(self.anime_id)
@@ -712,77 +941,26 @@ class AnimeCard(QFrame):
         menu.links_changed.connect(self.refresh_links)
         menu.exec(self.mapToGlobal(self.rect().center()))
 
+    _PILLS = {
+        # object name: (text colour, tint)
+        "badgeWatching":   ("#e2ddff", "rgba(139,123,255,0.30)"),
+        "badgeAlert":      ("#ffe1e1", "rgba(248,113,113,0.42)"),
+        "badgeCompleted":  ("#d2fbe7", "rgba(52,211,153,0.30)"),
+        "badgeDropped":    ("#f5c2ca", "rgba(181,72,90,0.40)"),
+        "badgeIncomplete": ("#fff1c2", "rgba(251,191,36,0.34)"),
+        "badgePlanned":    ("#f1efff", "rgba(157,143,255,0.26)"),
+        "badgeUpcoming":   ("#fff1c2", "rgba(251,191,36,0.30)"),
+    }
+
     def _set_badge(self, obj_name: str, text: str):
         self.status_badge.setObjectName(obj_name)
         self.status_badge.setText(text)
-        # High-contrast pills so status is readable on any cover art
-        if obj_name == "badgeWatching":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#d7d2ff;"
-                "border:1px solid #7c6af7;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeAlert":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fecaca;"
-                "border:1px solid #f87171;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeCompleted":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#bbf7d0;"
-                "border:1px solid #34d399;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeDropped":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(30,10,14,0.94);"
-                "color:#f0a3ad;"
-                "border:1px solid #b5485a;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:800;"
-                "padding:2px 8px;letter-spacing:0.8px;"
-            )
-        elif obj_name == "badgeIncomplete":
-            # Distinct from FINISHED (green) and AIRING alert (red) — this
-            # means the user marked it complete but hasn't watched everything.
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fde68a;"
-                "border:1px solid #fbbf24;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgePlanned":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#f4f2ff;"
-                "border:1px solid #9d8fff;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        elif obj_name == "badgeUpcoming":
-            self.status_badge.setStyleSheet(
-                "background-color:rgba(6,8,16,0.94);"
-                "color:#fde68a;"
-                "border:1px solid #fbbf24;"
-                "border-radius:4px;"
-                "font-size:9px;font-weight:700;"
-                "padding:2px 8px;letter-spacing:0.6px;"
-            )
-        else:
-            self.status_badge.setStyleSheet("")
+        fg, tint = self._PILLS.get(obj_name, ("#e8eaf2", "rgba(255,255,255,0.12)"))
+        # Glass pill: dark base for contrast on any art, tinted by state.
+        self.status_badge.setStyleSheet(
+            f"background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {tint},stop:1 rgba(8,9,14,0.86));"
+            f"color:{fg};border:1px solid rgba(255,255,255,0.10);border-radius:9px;"
+            "font-size:9px;font-weight:800;padding:2px 9px;letter-spacing:0.8px;")
         self.status_badge.style().unpolish(self.status_badge)
         self.status_badge.style().polish(self.status_badge)
         self.status_badge.adjustSize()
@@ -800,6 +978,9 @@ class AnimeCard(QFrame):
         next_ep = self._anime.get("next_episode_num") if self._anime else None
         text, hint = _format_countdown(secs, next_ep)
         color      = _COUNTDOWN_COLORS.get(hint, "#9da5c0")
+        prefix = getattr(self, "_cd_prefix", "")
+        if prefix and secs > 0:
+            text = f"{prefix}in {text}"
         self.countdown_label.setText(text)
         self.countdown_label.setStyleSheet(
             f"font-size:10px;font-weight:600;color:{color};"
@@ -816,7 +997,50 @@ class AnimeCard(QFrame):
         if hasattr(self, "_border_overlay"):
             self._border_overlay.update()
 
+    def _compute_quick(self, anime: Dict[str, Any]):
+        """What one click marks: the next aired episode of something you're watching."""
+        self._quick = None
+        if anime.get("id", 0) <= 0 or anime.get("watch_status") != "watching":
+            return
+        media = anime.get("media_type") or "anime"
+        if media == "tv":
+            nxt = self.db.tv_progress(anime["id"])["next"]
+            if nxt:
+                self._quick = ("tv", nxt["season_number"], nxt["episode_number"])
+        elif media == "anime":
+            total = anime.get("total_episodes") or 0
+            n_next = anime.get("next_episode_num")
+            ended = (anime.get("status") or "").upper() in ("FINISHED", "CANCELLED")
+            aired = total if (total and (ended or not n_next)) else (n_next - 1 if n_next and n_next > 1 else 0)
+            watched = {e["episode_num"] for e in self.db.get_episodes(anime["id"]) if e.get("watched")}
+            n = next((k for k in range(1, aired + 1) if k not in watched), None)
+            if n:
+                self._quick = ("anime", n)
+        if self._quick:
+            label = (f"S{self._quick[1]:02d}E{self._quick[2]:02d}" if self._quick[0] == "tv"
+                     else f"Episode {self._quick[1] + (anime.get('episode_offset') or 0)}")
+            self.quick_btn.setToolTip(f"Mark {label} watched")
+
+    def _do_quick(self):
+        q = self._quick
+        if not q:
+            return
+        if q[0] == "tv":
+            self.db.set_tv_episode_watched(self.anime_id, q[1], q[2], True)
+            what = f"S{q[1]:02d}E{q[2]:02d}"
+        else:
+            self.db.set_episode_watched(self.anime_id, q[1], True)
+            what = f"Episode {q[1] + (self._anime.get('episode_offset') or 0)}"
+        fresh = self.db.get_anime_by_id(self.anime_id)
+        if fresh:
+            self.update_data(fresh)
+        self.quick_btn.setVisible(bool(self._quick) and self.underMouse())
+        self.quick_watched.emit(self.anime_id, what)
+
     def enterEvent(self, event):
+        if self._quick and not self._overlay_mode:
+            self.quick_btn.setVisible(True)
+            self.quick_btn.raise_()
         if getattr(self, "_cover_faded", None) is not None:
             self.cover_label.setPixmap(self._cover_color)   # colour comes back on hover
         self.setProperty("hovered", "true")
@@ -826,6 +1050,7 @@ class AnimeCard(QFrame):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        self.quick_btn.setVisible(False)
         if getattr(self, "_cover_faded", None) is not None:
             self.cover_label.setPixmap(self._cover_faded)
         self.setProperty("hovered", "false")

@@ -46,6 +46,15 @@ PLATFORM_CHOICES = [
 ]
 
 
+# One click fills the Label (and the platform when it's obvious)
+LABEL_PRESETS = [
+    ("Watch here", None), ("Episodes", None), ("Official site", None),
+    ("Telegram channel", "telegram"), ("Crunchyroll", "crunchyroll"), ("Netflix", "netflix"),
+    ("Prime Video", "prime"), ("Disney+", "disney"), ("Hulu", "hulu"), ("YouTube", "youtube"),
+    ("Fansub", None), ("Subtitles", None), ("Manga", None), ("Discussion", None),
+]
+
+
 class LinkOpenMenu(QMenu):
     """Popover menu to open saved links with browser override."""
 
@@ -122,8 +131,20 @@ class LinkEditDialog(QDialog):
         form.setSpacing(10)
 
         self.label_edit = QLineEdit()
-        self.label_edit.setPlaceholderText("e.g. Official channel, Episodes, Fansub")
+        self.label_edit.setPlaceholderText("Pick one below or type your own")
         form.addRow("Label", self.label_edit)
+        from ui.layout_helpers import FlowHost, FlowLayout
+        chips = FlowHost()
+        flow = FlowLayout(chips, h_spacing=6, v_spacing=6)
+        self._preset_btns = []
+        for text, platform in LABEL_PRESETS:
+            b = QPushButton(text)
+            b.setObjectName("linkPreset")
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _=False, t=text, pf=platform: self._use_preset(t, pf))
+            flow.addWidget(b)
+            self._preset_btns.append(b)
+        form.addRow("", chips)
 
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://t.me/channel or crunchyroll.com/…")
@@ -159,6 +180,28 @@ class LinkEditDialog(QDialog):
             idx = self.platform_combo.findData(platform)
             if idx >= 0:
                 self.platform_combo.setCurrentIndex(idx)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # once the chips know their real height, drop any leftover space
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._fit_height)
+
+    def _fit_height(self):
+        try:
+            self.layout().activate()
+            self.resize(self.width(), self.layout().heightForWidth(self.width())
+                        if self.layout().hasHeightForWidth() else self.sizeHint().height())
+        except RuntimeError:
+            pass
+
+    def _use_preset(self, text: str, platform: Optional[str]):
+        self.label_edit.setText(text)
+        if platform:
+            idx = self.platform_combo.findData(platform)
+            if idx >= 0:
+                self.platform_combo.setCurrentIndex(idx)
+        self.url_edit.setFocus()
 
     def _save(self):
         label = self.label_edit.text().strip()

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 
-DB_VERSION = 4
+DB_VERSION = 5
 # Legacy data directory name (kept so existing installs keep their library).
 APP_DIR = Path.home() / ".animetracker"
 DB_PATH = APP_DIR / "anime.db"
@@ -72,6 +72,11 @@ class DatabaseManager:
             self._migrate_v3(conn)
         if current < 4:
             self._migrate_v4(conn)
+        if current < 5:
+            if current >= 1:
+                # Existing library: take a consistent safety copy first.
+                self._backup_before_upgrade(conn, "v5")
+            self._migrate_v5(conn)
 
         if current == 0:
             conn.execute("INSERT INTO schema_version VALUES (?)", (DB_VERSION,))
@@ -96,6 +101,12 @@ class DatabaseManager:
             "ALTER TABLE anime ADD COLUMN videos TEXT DEFAULT '[]'",
             "ALTER TABLE anime ADD COLUMN videos_synced_at INTEGER",
             "ALTER TABLE anime ADD COLUMN sequel_info TEXT",
+            # Kinema movies: release timeline in the user's country
+            "ALTER TABLE anime ADD COLUMN cinema_date TEXT",
+            "ALTER TABLE anime ADD COLUMN digital_date TEXT",
+            "ALTER TABLE anime ADD COLUMN physical_date TEXT",
+            "ALTER TABLE anime ADD COLUMN digital_available INTEGER DEFAULT 0",
+            "ALTER TABLE tv_seasons ADD COLUMN rating REAL",
             # Completed-list housekeeping
             "ALTER TABLE anime ADD COLUMN completed_at INTEGER",
             "ALTER TABLE anime ADD COLUMN archived INTEGER DEFAULT 0",
@@ -106,6 +117,7 @@ class DatabaseManager:
             except Exception:
                 pass   # column already exists
         self._ensure_rewatch_table(conn)
+        self._migrate_v6(conn)          # Hall of Fame-only titles -> Completed (once)
         # Backfill when existing Completed anime were finished: best signal
         # is the last episode the user marked, then when it was added.
         conn.execute(
@@ -288,6 +300,99 @@ class DatabaseManager:
                 ON anime_links(anime_id, sort_order);
         """)
 
+    def _backup_before_upgrade(self, conn: sqlite3.Connection, tag: str) -> Optional[Path]:
+        """Copy the database before a schema upgrade, using SQLite's backup
+        API (consistent even with uncommitted WAL pages). Stored next to the
+        database being upgraded and named so routine backup pruning keeps it."""
+        try:
+            dest_dir = Path(self.db_path).parent / "backups"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = dest_dir / f"anime_pre_{tag}_{ts}.db"
+            target = sqlite3.connect(str(dest))
+            with target:
+                conn.backup(target)
+            target.close()
+            return dest
+        except Exception:
+            return None
+
+    def _migrate_v6(self, conn: sqlite3.Connection, backup: bool = True):
+        # Idempotent: only acts while hof_only rows remain.
+        """Hall of Fame retired: titles that lived ONLY there (finished
+        favourites that couldn't join the library back then) become normal
+        Completed titles with every episode watched. Rankings stay in the
+        hall_of_fame table untouched."""
+        try:
+            rows = conn.execute(
+                "SELECT id, total_episodes, COALESCE(completed_at, date_added) AS ts "
+                "FROM anime WHERE hof_only=1").fetchall()
+        except sqlite3.OperationalError:
+            return                          # very old library: no hof_only column
+        if not rows:
+            return
+        if backup:
+            conn.commit()     # the backup waits forever on our own open transaction
+            self._backup_before_upgrade(conn, "hof")
+        for r in rows:
+            aid, total, ts = r[0], r[1] or 0, r[2]
+            for n in range(1, int(total) + 1):
+                conn.execute(
+                    "INSERT INTO episodes (anime_id, episode_num, watched, watched_at) VALUES (?,?,1,?) "
+                    "ON CONFLICT(anime_id, episode_num) DO UPDATE SET watched=1, "
+                    "watched_at=COALESCE(episodes.watched_at, excluded.watched_at)",
+                    (aid, n, ts))
+            conn.execute("UPDATE anime SET hof_only=0, watch_status='completed', "
+                         "completed_at=COALESCE(completed_at, date_added) WHERE id=?", (aid,))
+        conn.commit()
+
+    def _migrate_v5(self, conn: sqlite3.Connection):
+        """Raikō: one library for anime, TV shows and movies.
+        Add-only - existing rows become media_type 'anime' and are untouched."""
+        for col_sql in [
+            "ALTER TABLE anime ADD COLUMN media_type TEXT DEFAULT 'anime'",
+            "ALTER TABLE anime ADD COLUMN tmdb_id INTEGER",
+            "ALTER TABLE anime ADD COLUMN imdb_id TEXT",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass
+        conn.executescript("""
+            UPDATE anime SET media_type='anime' WHERE media_type IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_anime_media ON anime(media_type);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_tmdb
+                ON anime(media_type, tmdb_id) WHERE tmdb_id IS NOT NULL;
+
+            -- TV: a show holds its seasons; episodes are (season, episode).
+            CREATE TABLE IF NOT EXISTS tv_seasons (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id      INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                season_number INTEGER NOT NULL,
+                name          TEXT,
+                episode_count INTEGER,
+                air_date      TEXT,
+                poster_url    TEXT,
+                overview      TEXT,
+                UNIQUE(anime_id, season_number)
+            );
+            CREATE TABLE IF NOT EXISTS tv_episodes (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                anime_id       INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
+                season_number  INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                name           TEXT,
+                air_date       TEXT,
+                runtime        INTEGER,
+                still_url      TEXT,
+                watched        INTEGER DEFAULT 0,
+                watched_at     INTEGER,
+                rating         REAL,
+                UNIQUE(anime_id, season_number, episode_number)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tv_episodes_anime ON tv_episodes(anime_id, season_number);
+        """)
+
     # ─── Anime CRUD ───────────────────────────────────────────────────────────
 
     def add_anime(self, data: Dict[str, Any]) -> int:
@@ -297,7 +402,7 @@ class DatabaseManager:
         data.setdefault("last_updated", now)
         if data.get("watch_status") == "completed":
             data.setdefault("completed_at", now)
-        for key in ("genres", "studios", "characters"):
+        for key in ("genres", "studios", "characters", "videos"):
             if key in data and isinstance(data[key], list):
                 data[key] = json.dumps(data[key])
 
@@ -315,6 +420,7 @@ class DatabaseManager:
         watch_status: Optional[str] = None,
         sort_by: str = "release_date",
         archived: Optional[bool] = None,
+        media_type: Optional[str] = "anime",
     ) -> List[Dict]:
         """`archived`: None = everything, False = hide archived, True = only
         archived. Background scans keep the default so archived shows still
@@ -325,7 +431,14 @@ class DatabaseManager:
             "score":        "average_score DESC, romaji_title ASC",
             "date_added":   "date_added DESC",
             "completed_at": "COALESCE(completed_at, 0) DESC, romaji_title ASC",
+            # Movies: best first; unreleased films (no real score yet) follow,
+            # ordered by how anticipated they are.
+            "top_rated":    "CASE WHEN status='NOT_YET_RELEASED' THEN 1 ELSE 0 END, "
+                            "COALESCE(average_score,0) DESC, COALESCE(popularity,0) DESC",
+            "popularity":   "COALESCE(popularity,0) DESC, romaji_title ASC",
+            "newest":       "COALESCE(start_ts, 0) DESC, romaji_title ASC",
             "rating":       "romaji_title ASC",
+            "recent":       "COALESCE(last_watched_at, 0) DESC, date_added DESC",
         }.get(sort_by, "COALESCE(next_episode_at, 99999999999) ASC, romaji_title ASC")
         conn = self._get_conn()
         if watch_status:
@@ -336,6 +449,11 @@ class DatabaseManager:
             params = ()
         if archived is not None:
             where += " AND COALESCE(archived,0)=" + ("1" if archived else "0")
+        if media_type:
+            # Default 'anime' keeps every existing screen and scan anime-only
+            # even once TV shows and movies share this table.
+            where += " AND COALESCE(media_type,'anime')=?"
+            params = tuple(params) + (media_type,)
         rows = conn.execute(
             f"SELECT * FROM anime {where} ORDER BY {ORDER}", params
         ).fetchall()
@@ -427,6 +545,208 @@ class DatabaseManager:
 
     # ─── Completed housekeeping (archive) ─────────────────────────────────────
 
+    # ─── Kinema: TV shows & movies (TMDB) ────────────────────────────────────
+
+    _ROW_COLUMNS = None
+
+    def _anime_columns(self) -> set:
+        if self._ROW_COLUMNS is None:
+            self._ROW_COLUMNS = {r[1] for r in self._get_conn().execute(
+                "PRAGMA table_info(anime)").fetchall()}
+        return self._ROW_COLUMNS
+
+    def get_title_by_tmdb(self, media_type: str, tmdb_id: int) -> Optional[Dict]:
+        row = self._get_conn().execute(
+            "SELECT * FROM anime WHERE media_type=? AND tmdb_id=?", (media_type, tmdb_id)
+        ).fetchone()
+        return self._hydrate_anime(dict(row)) if row else None
+
+    def save_tmdb_title(self, row: Dict[str, Any], watch_status: Optional[str] = None) -> int:
+        """Insert or update a TV show / movie from a provider row (keys that
+        start with '_' are provider extras and are not stored as columns)."""
+        cols = self._anime_columns()
+        data = {k: v for k, v in row.items() if not k.startswith("_") and k in cols}
+        existing = self.get_title_by_tmdb(row["media_type"], row["tmdb_id"])
+        if existing:
+            # Never wipe what we have with a sparser response.
+            data = {k: v for k, v in data.items() if v not in (None, "", [], {})}
+            if watch_status:
+                data["watch_status"] = watch_status
+            self.update_anime(existing["id"], data)
+            return existing["id"]
+        data["watch_status"] = watch_status or "planned"
+        return self.add_anime(data)
+
+    def search_titles(self, query: str, media_type: str) -> List[Dict]:
+        q = f"%{(query or '').strip()}%"
+        rows = self._get_conn().execute(
+            "SELECT * FROM anime WHERE media_type=? AND hof_only=0 AND "
+            "(romaji_title LIKE ? OR english_title LIKE ? OR native_title LIKE ?) "
+            "ORDER BY romaji_title", (media_type, q, q, q)).fetchall()
+        return [self._hydrate_anime(dict(r)) for r in rows]
+
+    # ─── Kinema: TV seasons & episodes ────────────────────────────────────────
+
+    def save_tv_seasons(self, anime_id: int, seasons: List[Dict]):
+        conn = self._get_conn()
+        for s in seasons or []:
+            conn.execute(
+                """INSERT INTO tv_seasons (anime_id, season_number, name, episode_count,
+                       air_date, poster_url, overview)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(anime_id, season_number) DO UPDATE SET
+                       name=excluded.name, episode_count=excluded.episode_count,
+                       air_date=COALESCE(excluded.air_date, tv_seasons.air_date),
+                       poster_url=COALESCE(NULLIF(excluded.poster_url,''), tv_seasons.poster_url),
+                       overview=COALESCE(NULLIF(excluded.overview,''), tv_seasons.overview)""",
+                (anime_id, s["season_number"], s.get("name"), s.get("episode_count"),
+                 s.get("air_date"), s.get("poster_url") or "", s.get("overview") or ""))
+        conn.commit()
+
+    def save_tv_episodes(self, anime_id: int, episodes: List[Dict]):
+        """Upsert episode metadata; never touches watched / watched_at / rating."""
+        conn = self._get_conn()
+        for e in episodes or []:
+            if not e.get("episode_number"):
+                continue
+            conn.execute(
+                """INSERT INTO tv_episodes (anime_id, season_number, episode_number, name,
+                       air_date, runtime, still_url)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(anime_id, season_number, episode_number) DO UPDATE SET
+                       name=COALESCE(NULLIF(excluded.name,''), tv_episodes.name),
+                       air_date=COALESCE(excluded.air_date, tv_episodes.air_date),
+                       runtime=COALESCE(excluded.runtime, tv_episodes.runtime),
+                       still_url=COALESCE(NULLIF(excluded.still_url,''), tv_episodes.still_url)""",
+                (anime_id, e["season_number"], e["episode_number"], e.get("name") or "",
+                 e.get("air_date"), e.get("runtime"), e.get("still_url") or ""))
+        conn.commit()
+
+    def get_tv_seasons(self, anime_id: int) -> List[Dict]:
+        rows = self._get_conn().execute(
+            "SELECT * FROM tv_seasons WHERE anime_id=? AND season_number>0 ORDER BY season_number",
+            (anime_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tv_episodes(self, anime_id: int, season: Optional[int] = None) -> List[Dict]:
+        sql = "SELECT * FROM tv_episodes WHERE anime_id=? AND season_number>0"
+        args: List[Any] = [anime_id]
+        if season is not None:
+            sql += " AND season_number=?"
+            args.append(season)
+        rows = self._get_conn().execute(
+            sql + " ORDER BY season_number, episode_number", args).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_tv_episode_watched(self, anime_id: int, season: int, episode: int, watched: bool):
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        conn.execute(
+            "UPDATE tv_episodes SET watched=?, watched_at=? "
+            "WHERE anime_id=? AND season_number=? AND episode_number=?",
+            (1 if watched else 0, now if watched else None, anime_id, season, episode))
+        if watched:
+            conn.execute("UPDATE anime SET last_watched_at=? WHERE id=?", (now, anime_id))
+        conn.commit()
+
+    def set_tv_watched_through(self, anime_id: int, season: int, episode: int):
+        """Mark every aired episode up to and including SxxEyy as watched."""
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        today = datetime.now().strftime("%Y-%m-%d")
+        conn.execute(
+            "UPDATE tv_episodes SET watched=1, watched_at=COALESCE(watched_at, ?) "
+            "WHERE anime_id=? AND season_number>0 AND watched=0 AND "
+            "(air_date IS NULL OR air_date<=?) AND "
+            "(season_number<? OR (season_number=? AND episode_number<=?))",
+            (now, anime_id, today, season, season, episode))
+        conn.execute("UPDATE anime SET last_watched_at=? WHERE id=?", (now, anime_id))
+        conn.commit()
+
+    def set_tv_season_watched(self, anime_id: int, season: int, watched: bool = True):
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        today = datetime.now().strftime("%Y-%m-%d")
+        if watched:
+            conn.execute(
+                "UPDATE tv_episodes SET watched=1, watched_at=COALESCE(watched_at, ?) "
+                "WHERE anime_id=? AND season_number=? AND (air_date IS NULL OR air_date<=?)",
+                (now, anime_id, season, today))
+        else:
+            conn.execute("UPDATE tv_episodes SET watched=0, watched_at=NULL "
+                         "WHERE anime_id=? AND season_number=?", (anime_id, season))
+        conn.commit()
+
+    def set_tv_episode_rating(self, anime_id: int, season: int, episode: int,
+                              score: Optional[float]):
+        self._get_conn().execute(
+            "UPDATE tv_episodes SET rating=? WHERE anime_id=? AND season_number=? AND episode_number=?",
+            (score, anime_id, season, episode))
+        self._get_conn().commit()
+
+    def set_tv_season_rating(self, anime_id: int, season: int, score: Optional[float]):
+        self._get_conn().execute(
+            "UPDATE tv_seasons SET rating=? WHERE anime_id=? AND season_number=?",
+            (score, anime_id, season))
+        self._get_conn().commit()
+
+    def tv_progress(self, anime_id: int) -> Dict[str, Any]:
+        """Where you are in a show: counts, the next episode to watch and
+        the next one to air. 'Aired' uses air dates (today counts)."""
+        eps = self.get_tv_episodes(anime_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        aired = [e for e in eps if e.get("air_date") and e["air_date"] <= today]
+        watched = [e for e in eps if e.get("watched")]
+        last = watched[-1] if watched else None
+        # next to watch: first aired episode after the last one you watched
+        nxt = None
+        for e in aired:
+            if not e.get("watched") and (not last or (e["season_number"], e["episode_number"]) >
+                                         (last["season_number"], last["episode_number"])):
+                nxt = e
+                break
+        if nxt is None:
+            nxt = next((e for e in aired if not e.get("watched")), None)
+        upcoming = next((e for e in eps if e.get("air_date") and e["air_date"] > today), None)
+        unwatched_aired = sum(1 for e in aired if not e.get("watched"))
+        return {"total": len(eps), "aired": len(aired), "watched": len(watched),
+                "unwatched_aired": unwatched_aired, "next": nxt, "last": last,
+                "upcoming": upcoming,
+                "minutes": sum((e.get("runtime") or 0) for e in watched)}
+
+    def get_tv_stats(self) -> Dict[str, int]:
+        conn = self._get_conn()
+        one = lambda sql, *a: (conn.execute(sql, a).fetchone() or [0])[0] or 0
+        count = lambda ws: one("SELECT COUNT(*) FROM anime WHERE media_type='tv' AND "
+                               "watch_status=? AND hof_only=0", ws)
+        return {
+            "watching": count("watching"), "planned": count("planned"),
+            "completed": count("completed"),
+            "episodes": one("SELECT COUNT(*) FROM tv_episodes e JOIN anime a ON a.id=e.anime_id "
+                            "WHERE a.media_type='tv' AND e.watched=1"),
+        }
+
+    def get_movie_stats(self) -> Dict[str, int]:
+        conn = self._get_conn()
+        one = lambda sql, *a: (conn.execute(sql, a).fetchone() or [0])[0] or 0
+        year_start = int(datetime(datetime.now().year, 1, 1).timestamp())
+        watched_minutes = one(
+            "SELECT SUM(COALESCE(duration,0)) FROM anime WHERE media_type='movie' "
+            "AND watch_status='completed' AND hof_only=0")
+        rewatch_minutes = one(
+            "SELECT SUM(COALESCE(a.duration,0)) FROM rewatches r JOIN anime a ON a.id=r.anime_id "
+            "WHERE a.media_type='movie' AND r.finished_at IS NOT NULL")
+        return {
+            "watchlist": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                             "AND watch_status='planned' AND hof_only=0"),
+            "watched": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                           "AND watch_status='completed' AND hof_only=0"),
+            "hours": int(round((watched_minutes + rewatch_minutes) / 60)),
+            "this_year": one("SELECT COUNT(*) FROM anime WHERE media_type='movie' "
+                             "AND watch_status='completed' AND hof_only=0 AND completed_at>=?",
+                             year_start),
+        }
+
     def set_archived(self, anime_ids: List[int], archived: bool) -> int:
         """Archive/unarchive Completed anime. Archived shows leave the
         everyday Completed view but stay in stats, search and scans."""
@@ -444,10 +764,11 @@ class DatabaseManager:
         conn.commit()
         return cur.rowcount
 
-    def count_archived(self) -> int:
+    def count_archived(self, media_type: str = "anime") -> int:
         row = self._get_conn().execute(
             "SELECT COUNT(*) FROM anime WHERE watch_status='completed' "
-            "AND COALESCE(archived,0)=1 AND hof_only=0"
+            "AND COALESCE(archived,0)=1 AND hof_only=0 AND COALESCE(media_type,'anime')=?",
+            (media_type,)
         ).fetchone()
         return int(row[0]) if row else 0
 
@@ -540,7 +861,7 @@ class DatabaseManager:
         rows = conn.execute(
             """SELECT anime.* FROM anime
                JOIN anime_fts ON anime.id = anime_fts.rowid
-               WHERE anime_fts MATCH ? AND anime.hof_only=0
+               WHERE anime_fts MATCH ? AND anime.hof_only=0 AND COALESCE(anime.media_type,'anime')='anime'
                ORDER BY rank""",
             (query + "*",),
         ).fetchall()
@@ -680,7 +1001,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, COUNT(e.id) as cnt
             FROM anime a JOIN episodes e ON a.id=e.anime_id
-            WHERE e.watched=1 AND a.hof_only=0
+            WHERE e.watched=1 AND a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id ORDER BY cnt DESC LIMIT 1
         """).fetchone()
         if row: result["most_watched"] = dict(row)
@@ -689,7 +1010,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, AVG(r.score) as avg_sc
             FROM anime a JOIN ratings r ON a.id=r.anime_id
-            WHERE a.hof_only=0
+            WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id HAVING COUNT(r.id) >= 1
             ORDER BY avg_sc DESC LIMIT 1
         """).fetchone()
@@ -699,7 +1020,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT a.id, a.romaji_title, a.english_title, AVG(r.score) as avg_sc
             FROM anime a JOIN ratings r ON a.id=r.anime_id
-            WHERE a.hof_only=0
+            WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'
             GROUP BY a.id HAVING COUNT(r.id) >= 1
             ORDER BY avg_sc ASC LIMIT 1
         """).fetchone()
@@ -708,7 +1029,7 @@ class DatabaseManager:
         # Most recently added
         row = conn.execute("""
             SELECT id, romaji_title, english_title, date_added
-            FROM anime WHERE hof_only=0
+            FROM anime WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime'
             ORDER BY date_added DESC LIMIT 1
         """).fetchone()
         if row: result["most_recent"] = dict(row)
@@ -717,7 +1038,7 @@ class DatabaseManager:
         row = conn.execute("""
             SELECT id, romaji_title, english_title, next_episode_at
             FROM anime WHERE watch_status='planned' AND next_episode_at IS NOT NULL
-            AND hof_only=0
+            AND hof_only=0 AND COALESCE(media_type,'anime')='anime'
             ORDER BY next_episode_at DESC LIMIT 1
         """).fetchone()
         if row: result["longest_wait"] = dict(row)
@@ -730,30 +1051,30 @@ class DatabaseManager:
         conn = self._get_conn()
         # All counts exclude hof_only entries
         total = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         watching = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='watching' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='watching' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         completed = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='completed' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='completed' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         planned = conn.execute(
-            "SELECT COUNT(*) FROM anime WHERE watch_status='planned' AND hof_only=0"
+            "SELECT COUNT(*) FROM anime WHERE watch_status='planned' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchone()[0]
         dropped = conn.execute("SELECT COUNT(*) FROM dropped_anime").fetchone()[0]
         total_watched = conn.execute(
             """SELECT COUNT(*) FROM episodes e
                JOIN anime a ON e.anime_id = a.id
-               WHERE e.watched=1 AND a.hof_only=0"""
+               WHERE e.watched=1 AND a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'"""
         ).fetchone()[0]
         avg_score = conn.execute(
             """SELECT AVG(r.score) FROM ratings r
                JOIN anime a ON r.anime_id = a.id
-               WHERE a.hof_only=0"""
+               WHERE a.hof_only=0 AND COALESCE(a.media_type,'anime')='anime'"""
         ).fetchone()[0]
         genre_counts = conn.execute(
-            "SELECT genres FROM anime WHERE genres != '[]' AND hof_only=0"
+            "SELECT genres FROM anime WHERE genres != '[]' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchall()
 
         genre_map: Dict[str, int] = {}
@@ -768,7 +1089,7 @@ class DatabaseManager:
         top_genres = sorted(genre_map.items(), key=lambda x: x[1], reverse=True)[:8]
 
         studio_counts = conn.execute(
-            "SELECT studios FROM anime WHERE studios != '[]' AND hof_only=0"
+            "SELECT studios FROM anime WHERE studios != '[]' AND hof_only=0 AND COALESCE(media_type,'anime')='anime'"
         ).fetchall()
 
         studio_map: Dict[str, int] = {}
@@ -799,7 +1120,7 @@ class DatabaseManager:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT season_year FROM anime "
-            "WHERE hof_only=0 AND season_year IS NOT NULL"
+            "WHERE hof_only=0 AND COALESCE(media_type,'anime')='anime' AND season_year IS NOT NULL"
         ).fetchall()
         counts: Dict[int, int] = {}
         for r in rows:
@@ -1076,6 +1397,29 @@ class DatabaseManager:
                 item["payload"] = {}
             result.append(item)
         return result
+
+    # Alerts that only make sense for anime (episodes, airing, sequels).
+    ANIME_ONLY_ALERTS = ("incomplete_completion", "auto_completed", "auto_planned",
+                         "planned_ended", "planned_started", "episode_aired",
+                         "upcoming_episodes", "new_season")
+
+    def retire_misplaced_alerts(self) -> int:
+        """Withdraw anime-only alerts attached to movies / TV shows (e.g.
+        created by an older Miroku build that didn't know about them)."""
+        conn = self._get_conn()
+        q = ",".join("?" * len(self.ANIME_ONLY_ALERTS))
+        cur = conn.execute(
+            f"UPDATE notifications SET state='dismissed', dismissed_at=? "
+            f"WHERE state='active' AND kind IN ({q}) AND anime_id IN "
+            f"(SELECT id FROM anime WHERE COALESCE(media_type,'anime') != 'anime')",
+            (int(datetime.now().timestamp()), *self.ANIME_ONLY_ALERTS))
+        # First-sync "Trailer available" alerts (older builds) were never news.
+        cur2 = conn.execute(
+            "UPDATE notifications SET state='dismissed', dismissed_at=? "
+            "WHERE state='active' AND kind='upcoming_trailer' AND title='Trailer available'",
+            (int(datetime.now().timestamp()),))
+        conn.commit()
+        return cur.rowcount + cur2.rowcount
 
     def dismiss_notification(self, notification_id: int):
         conn = self._get_conn()

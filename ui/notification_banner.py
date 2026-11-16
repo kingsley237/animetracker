@@ -17,6 +17,7 @@ class NotificationBanner(QFrame):
     remind_later = pyqtSignal(int)
     dismissed = pyqtSignal(int)
     play_trailer = pyqtSignal(str, str, str)   # trailer id, site, title
+    open_doctor = pyqtSignal()
 
     _ACCENTS = {
         "episode_aired": ("#fbbf24", "#201804"),
@@ -25,10 +26,19 @@ class NotificationBanner(QFrame):
         "upcoming_date": ("#a594f9", "#15102c"),
         "upcoming_trailer": ("#38bdf8", "#071826"),
         "upcoming_episodes": ("#a594f9", "#15102c"),
+        "movie_theaters": ("#fbbf24", "#201804"),
+        "movie_streaming": ("#34d399", "#071f17"),
+        "movie_digital": ("#34d399", "#071f17"),
+        "tv_new_episodes": ("#38bdf8", "#04172a"),
+        "tv_new_season": ("#38bdf8", "#04172a"),
+        "tv_premiere_date": ("#7dd3fc", "#04172a"),
+        "movie_digital_date": ("#fbbf24", "#201804"),
         "new_season": ("#f87171", "#240909"),
         "auto_completed": ("#34d399", "#071f17"),
         "auto_planned": ("#9da5c0", "#151821"),
         "incomplete_completion": ("#fbbf24", "#201804"),
+        "data_health": ("#f472b6", "#2a0a1c"),
+        "app_error": ("#f87171", "#240909"),
     }
 
     def __init__(self, parent=None):
@@ -165,6 +175,11 @@ class NotificationBanner(QFrame):
         kind = item.get("kind")
         actions = []
 
+        if kind in ("data_health", "app_error"):
+            actions.append(("🩺  Open Data Doctor", lambda: self._doctor(nid), True))
+            actions.append(("Later", lambda: self._remind(nid), False))
+            actions.append(("Dismiss", lambda: self._dismiss(nid), False))
+            return actions
         if kind == "episode_aired":
             episode = int(payload.get("episode") or 0)
             actions.append(("Mark Watched", lambda: self._mark_watched(aid, episode), True))
@@ -190,11 +205,25 @@ class NotificationBanner(QFrame):
             "upcoming_date": "RELEASE DATE",
             "upcoming_trailer": "NEW TRAILER",
             "upcoming_episodes": "EPISODES",
+            "movie_theaters": "IN THEATERS",
+            "movie_streaming": "NOW STREAMING",
+            "movie_digital": "OUT IN HD",
+            "tv_new_episodes": "NEW EPISODE",
+            "tv_new_season": "NEW SEASON",
+            "tv_premiere_date": "PREMIERE DATE",
+            "movie_digital_date": "HD DATE",
             "new_season": "NEW SEASON",
             "auto_completed": "COMPLETED",
             "auto_planned": "MOVED TO PLANNED",
             "incomplete_completion": "UNFINISHED",
-        }.get(kind, "MIROKU")
+            "data_health": "DATA DOCTOR",
+            "app_error": "SOMETHING WENT WRONG",
+        }.get(kind, "RAIKŌ")
+
+    def _doctor(self, nid: int):
+        self.dismissed.emit(nid)
+        self.open_doctor.emit()
+        self._dismiss_current()
 
     def _open(self, anime_id: int):
         self.open_anime.emit(anime_id)

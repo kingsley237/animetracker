@@ -72,3 +72,7 @@ temp_interactive_push.bat
 branch_structure.json
 
 .pytest_cache/
+
+# Local API credentials (never commit)
+secrets.local.json
+core/_embedded_secrets.py

@@ -695,7 +695,7 @@ class NewSeasonSpotlight(QFrame):
         show_trailer(seq["trailer_id"], seq["trailer_site"], seq.get("title") or "", self.window())
 
     def _open_details(self, seq: Dict):
-        from ui.discover_page import open_media_info
+        from ui.anime_info import open_media_info
         open_media_info(media_from_snapshot(seq), self.window())
 
 

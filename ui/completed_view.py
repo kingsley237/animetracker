@@ -5,7 +5,7 @@ The Completed list only ever grows. Like a watch diary (Letterboxd /
 AniList / MAL style), it's shown as a timeline of when you finished things:
 "Finished this month", "Earlier in 2026", "2025", ... Each group folds away
 (older years start folded) and can be archived in one click. Archived shows
-leave the everyday view but stay in stats, search, Hall of Fame and the
+leave the everyday view but stay in search and the
 sequel checks; the Archived toggle brings them back.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def finished_ts(anime: Dict) -> int:
 
 
 def group_completed(anime_list: List[Dict], now: Optional[datetime] = None,
-                    rewatching: Optional[set] = None
+                    rewatching: Optional[set] = None, verb: str = "Finished"
                     ) -> List[Tuple[str, str, List[Dict]]]:
     """[(key, label, members)] newest first. Keys are stable so fold state
     can be remembered: 'rewatching', 'month', 'year', or a year like '2025'."""
@@ -44,7 +44,7 @@ def group_completed(anime_list: List[Dict], now: Optional[datetime] = None,
         ts = finished_ts(a)
         dt = datetime.fromtimestamp(ts) if ts else None
         if dt and dt.year == now.year and dt.month == now.month:
-            key, label = "month", f"Finished this month · {_MONTHS[now.month - 1]}"
+            key, label = "month", f"{verb} this month · {_MONTHS[now.month - 1]}"
         elif dt and dt.year == now.year:
             key, label = "year", f"Earlier in {now.year}"
         elif dt:
@@ -107,7 +107,8 @@ class CompletedToolbar(QWidget):
     """'Completed · N shown'  ...  [Archived (N)] toggle."""
     archived_toggled = pyqtSignal()
 
-    def __init__(self, shown: int, archived: int, showing_archived: bool, parent=None):
+    def __init__(self, shown: int, archived: int, showing_archived: bool, parent=None,
+                 media: str = "anime"):
         super().__init__(parent)
         self.setObjectName("completedToolbar")
         lay = QHBoxLayout(self)
@@ -115,9 +116,11 @@ class CompletedToolbar(QWidget):
         lay.setSpacing(10)
         if showing_archived:
             text = f"Archive  ·  {shown} {'title' if shown == 1 else 'titles'} filed away"
-            hint = "Still counted in your stats, search and Hall of Fame."
+            hint = "Still findable in search."
         else:
-            text = f"Your completed timeline  ·  {shown} {'title' if shown == 1 else 'titles'}"
+            text = (f"Your movie diary  ·  {shown} {'film' if shown == 1 else 'films'}"
+                    if media == "movie" else
+                    f"Your completed timeline  ·  {shown} {'title' if shown == 1 else 'titles'}")
             hint = "Fold a year or archive it to keep this list short."
         t = QLabel(text)
         t.setObjectName("completedToolbarTitle")

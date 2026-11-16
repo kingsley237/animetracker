@@ -61,9 +61,7 @@ class SplashScreen(QSplashScreen):
         p.drawRoundedRect(1, 1, self.W - 2, self.H - 2, 16, 16)
 
         resources = Path(__file__).parent.parent / "resources"
-        wordmark = self._load_pixmap(resources / "miroku_wordmark_1600x600.png")
-        if wordmark.isNull():
-            wordmark = self._load_pixmap(resources / "miroku_wordmark.png")
+        wordmark = self._load_pixmap(resources / "raiko_wordmark_1600x600.png")
 
         text_y = 86
         if not wordmark.isNull():
@@ -83,7 +81,7 @@ class SplashScreen(QSplashScreen):
                 self.W,
                 44,
                 Qt.AlignmentFlag.AlignHCenter,
-                "MIROKU",
+                "RAIKŌ",
             )
             text_y += 50
 
@@ -98,7 +96,7 @@ class SplashScreen(QSplashScreen):
             self.W,
             22,
             Qt.AlignmentFlag.AlignHCenter,
-            "YOUR ANIME UNIVERSE",
+            "EVERYTHING YOU WATCH, IN ONE LIGHT",
         )
 
         p.setPen(QPen(QColor("#1a1d28"), 1))
@@ -139,9 +137,9 @@ class SplashScreen(QSplashScreen):
 
         fill_w = int((self.W - 2) * max(0, min(pct, 100)) / 100)
         grad = QLinearGradient(0, 0, self.W, 0)
-        grad.setColorAt(0.0, QColor("#7c6af7"))
-        grad.setColorAt(0.5, QColor("#a78bfa"))
-        grad.setColorAt(1.0, QColor("#34d399"))
+        grad.setColorAt(0.0, QColor("#8b7bff"))
+        grad.setColorAt(0.5, QColor("#38bdf8"))
+        grad.setColorAt(1.0, QColor("#fbbf24"))
         p.setBrush(grad)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(1, self.H - 6, fill_w, 5, 2, 2)

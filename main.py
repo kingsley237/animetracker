@@ -28,17 +28,42 @@ def _build_app_icon() -> QIcon:
     resources = ROOT / "resources"
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
-        path = resources / f"miroku_lettermark_{size}.png"
+        path = resources / f"raiko_icon_{size}.png"
         if path.exists():
             icon.addFile(str(path))
     if icon.isNull():
-        ico = resources / "miroku_app_icon.ico"
+        ico = resources / "raiko_app_icon.ico"
         if ico.exists():
             icon = QIcon(str(ico))
     return icon
 
 
+def _install_crash_guard():
+    """PyQt aborts the whole app when a Python error escapes a Qt callback.
+    Log it to ~/.animetracker/error.log instead and keep running."""
+    import traceback
+    from datetime import datetime as _dt
+    log_path = Path.home() / ".animetracker" / "error.log"
+
+    def hook(exc_type, exc, tb):
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            # keep the log small: trim to the last ~200 KB
+            if log_path.exists() and log_path.stat().st_size > 400_000:
+                log_path.write_text(log_path.read_text(encoding="utf-8", errors="ignore")[-200_000:],
+                                    encoding="utf-8")
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n[{_dt.now():%Y-%m-%d %H:%M:%S}] "
+                        + "".join(traceback.format_exception(exc_type, exc, tb)))
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def main():
+    _install_crash_guard()
     try:
         from core.updater import APP_VERSION
     except Exception:
@@ -49,7 +74,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Miroku")
-    app.setApplicationDisplayName("Miroku")
+    app.setApplicationDisplayName("Raikō")
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("Miroku")
 
@@ -69,7 +94,7 @@ def main():
         splash.setWindowIcon(app_icon)
     splash.show()
     app.processEvents()
-    splash.set_status("Starting Miroku…", progress=10)
+    splash.set_status("Starting Raikō…", progress=10)
 
     # Stage 1 — Theme
     splash.set_status("Loading theme…", progress=25)
