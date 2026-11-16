@@ -46,6 +46,33 @@ NAV_SECTIONS = [
 _FILTER_PAGES = {"library"}
 
 
+_ERROR_WINDOW = None
+
+
+def _watch_app_errors(window):
+    """Chain onto sys.excepthook (main.py's crash guard logs the error);
+    then let the current window raise an 'Open Data Doctor' alert."""
+    import sys
+    import weakref
+    global _ERROR_WINDOW
+    first = _ERROR_WINDOW is None
+    _ERROR_WINDOW = weakref.ref(window)
+    if not first:
+        return
+    previous = sys.excepthook
+
+    def hook(t, v, tb):
+        previous(t, v, tb)
+        w = _ERROR_WINDOW() if _ERROR_WINDOW else None
+        if w is not None:
+            try:
+                QTimer.singleShot(0, w._on_app_error)
+            except Exception:
+                pass
+
+    sys.excepthook = hook
+
+
 def _build_app_icon() -> QIcon:
     resources = Path(__file__).parent.parent / "resources"
     icon = QIcon()
@@ -224,6 +251,8 @@ class MainWindow(QMainWindow):
         self.notification_banner.remind_later.connect(self._remind_notification_later)
         self.notification_banner.dismissed.connect(self._dismiss_notification)
         self.notification_banner.play_trailer.connect(self._play_trailer)
+        self.notification_banner.open_doctor.connect(self.open_data_doctor)
+        _watch_app_errors(self)
         from ui.new_season_spotlight import NewSeasonSpotlight
         self.new_season_spotlight = NewSeasonSpotlight(central)
         self.new_season_spotlight.dismissed.connect(self._dismiss_new_season)
@@ -1674,6 +1703,12 @@ class MainWindow(QMainWindow):
         self._meta_timer.start(3 * 3600 * 1000)
         QTimer.singleShot(12000, self._sync_metadata)
 
+        # Data Doctor: quick health check shortly after start, then every 6h
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._health_check)
+        self._health_timer.start(6 * 3600 * 1000)
+        QTimer.singleShot(25000, self._health_check)
+
         # Kinema: movies (release dates, streaming availability) every 6h
         self._movie_timer = QTimer(self)
         self._movie_timer.timeout.connect(self._sync_movies)
@@ -1873,6 +1908,75 @@ class MainWindow(QMainWindow):
         self.db.remind_notification_later(notification_id, hours=24)
         from ui.toast import Toast
         Toast.show(self, "Reminder moved to tomorrow.", kind="info")
+
+    # ── Data Doctor: background health check + error alerts ──────────────────
+
+    def open_data_doctor(self):
+        """Open Data Doctor; it starts diagnosing right away."""
+        from ui.data_doctor import DataDoctorDialog
+        dlg = DataDoctorDialog(self.db, self)
+        dlg.data_changed.connect(self._after_doctor_fix)
+        dlg.exec()
+
+    def _after_doctor_fix(self):
+        self._load_library()
+        self._update_stats_strip()
+
+    def _health_check(self):
+        """Quick, offline scan; problems that need you raise ONE alert with
+        an Open Data Doctor button (not repeated for the same problems)."""
+        from core.data_health import Scanner
+
+        def work():
+            return Scanner(self.db).scan(quick=True)
+
+        w = Worker(work)
+        w.signals.result.connect(self._on_health)
+        run_worker(w)
+
+    def _on_health(self, issues):
+        from PyQt6 import sip
+        if sip.isdeleted(self):
+            return
+        import hashlib
+        from core.data_health import attention_needed
+        need = attention_needed(issues or [])
+        if not need:
+            return
+        key = hashlib.sha1(",".join(sorted(i.issue_id for i in need)).encode()).hexdigest()[:12]
+        n = len(need)
+        names = "; ".join(dict.fromkeys(i.title for i in need[:3]))
+        self.db.upsert_notification({
+            "fingerprint": f"data-health:{key}", "kind": "data_health",
+            "anime_id": None, "anilist_id": None,
+            "title": f"Data Doctor found {n} thing{'s' if n != 1 else ''} to fix",
+            "message": f"{names}. Open Data Doctor to review and fix in one click.",
+            "payload": {"issues": [i.issue_id for i in need]}})
+        self._show_alerts_of("data_health")
+
+    def _on_app_error(self):
+        """An error escaped somewhere in the app (caught and logged by the
+        crash guard). At most one alert every 10 minutes."""
+        import time as _t
+        from PyQt6 import sip
+        if sip.isdeleted(self) or _t.time() - getattr(self, "_last_error_alert", 0) < 600:
+            return
+        self._last_error_alert = _t.time()
+        self.db.upsert_notification({
+            "fingerprint": f"app-error:{int(_t.time())}", "kind": "app_error",
+            "anime_id": None, "anilist_id": None,
+            "title": "Something went wrong",
+            "message": "Raikō caught an unexpected error and kept running. Data Doctor can check "
+                       "your library and show what happened.",
+            "payload": {}})
+        self._show_alerts_of("app_error")
+
+    def _show_alerts_of(self, kind: str):
+        notes = self.db.get_due_notifications(limit=1, kinds=[kind])
+        if notes:
+            self.notification_banner.show_notifications(notes)
+            if self.detail_panel.isVisible():
+                self.notification_banner.pause_for_detail()
 
     def _dismiss_notification(self, notification_id: int):
         self.db.dismiss_notification(notification_id)

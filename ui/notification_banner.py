@@ -17,6 +17,7 @@ class NotificationBanner(QFrame):
     remind_later = pyqtSignal(int)
     dismissed = pyqtSignal(int)
     play_trailer = pyqtSignal(str, str, str)   # trailer id, site, title
+    open_doctor = pyqtSignal()
 
     _ACCENTS = {
         "episode_aired": ("#fbbf24", "#201804"),
@@ -36,6 +37,8 @@ class NotificationBanner(QFrame):
         "auto_completed": ("#34d399", "#071f17"),
         "auto_planned": ("#9da5c0", "#151821"),
         "incomplete_completion": ("#fbbf24", "#201804"),
+        "data_health": ("#f472b6", "#2a0a1c"),
+        "app_error": ("#f87171", "#240909"),
     }
 
     def __init__(self, parent=None):
@@ -172,6 +175,11 @@ class NotificationBanner(QFrame):
         kind = item.get("kind")
         actions = []
 
+        if kind in ("data_health", "app_error"):
+            actions.append(("🩺  Open Data Doctor", lambda: self._doctor(nid), True))
+            actions.append(("Later", lambda: self._remind(nid), False))
+            actions.append(("Dismiss", lambda: self._dismiss(nid), False))
+            return actions
         if kind == "episode_aired":
             episode = int(payload.get("episode") or 0)
             actions.append(("Mark Watched", lambda: self._mark_watched(aid, episode), True))
@@ -208,7 +216,14 @@ class NotificationBanner(QFrame):
             "auto_completed": "COMPLETED",
             "auto_planned": "MOVED TO PLANNED",
             "incomplete_completion": "UNFINISHED",
-        }.get(kind, "MIROKU")
+            "data_health": "DATA DOCTOR",
+            "app_error": "SOMETHING WENT WRONG",
+        }.get(kind, "RAIKŌ")
+
+    def _doctor(self, nid: int):
+        self.dismissed.emit(nid)
+        self.open_doctor.emit()
+        self._dismiss_current()
 
     def _open(self, anime_id: int):
         self.open_anime.emit(anime_id)

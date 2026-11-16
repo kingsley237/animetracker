@@ -64,7 +64,7 @@ meantime, it doesn't understand movies).
 - [ ] Discover: Movies | TV shows switch. TV lists: For you, Airing this week, New shows coming, Trending, Top rated,
       Popular (no talk/news/reality; anime stays in Miroku).
 
-## Miroku in the Kinema style (requested 2026-11-16) 🔨
+## Miroku in the Kinema style (requested 2026-11-16) ✅
 - [ ] Calendar, Miroku Stream, Hall of Fame and Statistics removed everywhere (data kept in the library file).
 - [ ] Anime cards read like TV cards: badge, "Next Ep 5 · 4/12", next airing or time left, progress bar —
       all existing card info kept.
@@ -75,7 +75,12 @@ meantime, it doesn't understand movies).
       (backup `anime_pre_hof_*.db` taken first; rankings kept in the file).
 - [ ] Miroku Discover and **Add anime** (Ctrl+N) use the Kinema browser: For you, This season, Next season,
       Trending, Top rated, Most popular; Plan to Watch / I'm watching it (aired) / I've finished it (finished airing).
-- [ ] Data Doctor covers anime, movies and TV; problems anywhere raise a notification that opens Data Doctor directly.
+- [ ] Data Doctor (Settings, or straight from an alert) checks anime, movies, TV, the library file and
+      app errors; each issue names its library; pick fixes and apply.
+- [ ] A problem found by the background check (25 s after start, then every 6 h) shows ONE pink
+      "DATA DOCTOR" alert with **Open Data Doctor**; the same problems never alert twice.
+- [ ] Any unexpected error shows "Something went wrong" with **Open Data Doctor** (max once per 10 min);
+      the app keeps running and Data Doctor lists the error until you mark it reviewed.
 
 ## One app (phase 4) 🕒
 - [ ] Up Next home across anime, TV and movies; unified search; stats & Hall of Fame across types.
