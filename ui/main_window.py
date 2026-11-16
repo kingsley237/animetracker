@@ -78,11 +78,11 @@ def _build_app_icon() -> QIcon:
     resources = Path(__file__).parent.parent / "resources"
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
-        path = resources / f"miroku_lettermark_{size}.png"
+        path = resources / f"raiko_icon_{size}.png"
         if path.exists():
             icon.addFile(str(path))
     if icon.isNull():
-        ico = resources / "miroku_app_icon.ico"
+        ico = resources / "raiko_app_icon.ico"
         if ico.exists():
             icon = QIcon(str(ico))
     return icon
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         self._search_timer    = QTimer(self)
         self._notification_timer = QTimer(self)
 
-        self.setWindowTitle("Miroku")
+        self.setWindowTitle("Raikō")
         self.setMinimumSize(1100, 700)
 
         # Window icon
@@ -291,8 +291,7 @@ class MainWindow(QMainWindow):
         ll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         resources = Path(__file__).parent.parent / "resources"
-        lettermark_path = resources / "miroku_lettermark_512.png"
-        icon_path = lettermark_path if lettermark_path.exists() else resources / "miroku_lettermark_256.png"
+        icon_path = resources / "raiko_glyph_256.png"
         if icon_path.exists():
             icon_lbl = QLabel()
             px = QPixmap(str(icon_path)).scaled(
@@ -305,7 +304,11 @@ class MainWindow(QMainWindow):
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        sub = QLabel("Anime progress tracker")
+        name = QLabel("Raikō")
+        name.setObjectName("appLogoName")
+        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ll.addWidget(name, alignment=Qt.AlignmentFlag.AlignHCenter)
+        sub = QLabel("Anime · TV · Movies")
         sub.setObjectName("appLogoSub")
         sub.setWordWrap(False)
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -323,8 +326,15 @@ class MainWindow(QMainWindow):
                 hl.setContentsMargins(14, 2, 8, 2)
                 hl.setSpacing(8)
                 dot = QLabel()
-                dot.setFixedSize(8, 8)
-                dot.setStyleSheet(f"background:{color};border-radius:4px;")
+                dot.setFixedSize(16, 16)
+                mark = resources / f"{section.lower()}_mark_64.png"
+                if mark.exists():
+                    dot.setPixmap(QPixmap(str(mark)).scaled(
+                        16, 16, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation))
+                else:
+                    dot.setFixedSize(8, 8)
+                    dot.setStyleSheet(f"background:{color};border-radius:4px;")
                 hl.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
                 name = QLabel(section)
                 name.setObjectName("sidebarBrandName")

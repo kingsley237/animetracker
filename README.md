@@ -1,3 +1,25 @@
+<p align="center"><img src="resources/raiko_wordmark_1600x600.png" width="520" alt="Raikō"></p>
+
+# Raikō
+
+**Everything you watch, in one light.** A premium desktop tracker for Windows with two libraries:
+
+- **Miroku** — anime, powered by AniList: episodes, airing countdowns, ratings, sequels and new-season alerts.
+- **Kinema** — TV shows and movies, powered by TMDB: seasons and episodes, release and "out in HD" dates,
+  where to watch (JustWatch), trailers.
+
+Raikō (来光) is the light of the first sunrise seen from a summit. The mark is three arcs: Miroku indigo,
+Kinema amber and TV sky, closing around a point of light.
+
+**Highlights:** a Home page with Continue watching, a weekly schedule and movies ready to watch · Ctrl+K search
+across everything · Discover with recommendations for anime, TV and movies · detail panels with one-click
+progress · alerts for new episodes, seasons, trailers and HD releases · Data Doctor for library health.
+
+Your library stays on your machine (`~/.animetracker`). This product uses the TMDB API but is not endorsed or
+certified by TMDB. MIT License.
+
+---
+
 # Changelog
 
 All notable changes to AnimeTracker are documented here.  

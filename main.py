@@ -28,11 +28,11 @@ def _build_app_icon() -> QIcon:
     resources = ROOT / "resources"
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 96, 128, 180, 192, 256, 512, 1024):
-        path = resources / f"miroku_lettermark_{size}.png"
+        path = resources / f"raiko_icon_{size}.png"
         if path.exists():
             icon.addFile(str(path))
     if icon.isNull():
-        ico = resources / "miroku_app_icon.ico"
+        ico = resources / "raiko_app_icon.ico"
         if ico.exists():
             icon = QIcon(str(ico))
     return icon
@@ -74,7 +74,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Miroku")
-    app.setApplicationDisplayName("Miroku")
+    app.setApplicationDisplayName("Raikō")
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("Miroku")
 
@@ -94,7 +94,7 @@ def main():
         splash.setWindowIcon(app_icon)
     splash.show()
     app.processEvents()
-    splash.set_status("Starting Miroku…", progress=10)
+    splash.set_status("Starting Raikō…", progress=10)
 
     # Stage 1 — Theme
     splash.set_status("Loading theme…", progress=25)

@@ -1947,3 +1947,6 @@ QWidget#homeDayColToday { background: #13122a; border-color: #3b3470; }
 QLabel#homeDayTitle { color: #eef0f7; font-size: 12px; font-weight: 800; background: transparent; }
 QLabel#homeDaySub { color: #6b7391; font-size: 10px; background: transparent; }
 QLabel#homeDayEmpty { color: #3d4359; font-size: 11px; background: transparent; }
+
+/* Raikō sidebar brand */
+QLabel#appLogoName { color: #f4f5fa; font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }

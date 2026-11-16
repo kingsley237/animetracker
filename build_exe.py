@@ -1,11 +1,11 @@
 """
-Miroku — Executable Builder
+Raikō — Executable Builder
 =====================================
 Produces a standalone executable using PyInstaller.
 
-Windows  →  dist/Miroku/Miroku.exe   (inside a folder)
-macOS    →  dist/Miroku/Miroku
-Linux    →  dist/Miroku/Miroku
+Windows  →  dist/Raiko/Raiko.exe   (inside a folder)
+macOS    →  dist/Raiko/Raiko
+Linux    →  dist/Raiko/Raiko
 
 WHY --onedir INSTEAD OF --onefile
 ----------------------------------
@@ -15,7 +15,7 @@ then Windows Defender scans every extracted file. Cold-start time: 15-45 s.
 --onedir writes the files once at install time. Subsequent launches read
 directly from disk without extraction. Cold-start time: 2-4 s.
 
-To distribute: zip the dist/Miroku/ folder, or use an installer like NSIS/Inno.
+To distribute: zip the dist/Raiko/ folder, or use an installer like NSIS/Inno.
 
 Usage:
     python build_exe.py
@@ -35,8 +35,8 @@ from pathlib import Path
 ROOT   = Path(__file__).parent.resolve()
 DIST   = ROOT / "dist"
 BUILD  = ROOT / "build"
-ICON_W = ROOT / "resources" / "miroku_app_icon.ico"
-ICON_M = ROOT / "resources" / "miroku_lettermark_256.png"
+ICON_W = ROOT / "resources" / "raiko_app_icon.ico"
+ICON_M = ROOT / "resources" / "raiko_icon_256.png"
 
 
 def get_version() -> str:
@@ -115,6 +115,18 @@ def remove_embedded_secrets():
             pass
 
 
+def ensure_brand_assets():
+    """Brand PNGs are generated from the SVG masters (PNGs aren't committed)."""
+    res = ROOT / "resources"
+    needed = [res / "raiko_icon_256.png", res / "raiko_glyph_256.png",
+              res / "miroku_mark_64.png", res / "kinema_mark_64.png",
+              res / "raiko_wordmark_1600x600.png"]
+    if all(p.exists() for p in needed):
+        return
+    print("Generating Raikō brand assets…")
+    subprocess.run([sys.executable, str(res / "generate_brand.py")], check=True, cwd=str(ROOT))
+
+
 def build(version: str):
     is_win = sys.platform == "win32"
     icon   = str(ICON_W) if is_win else str(ICON_M)
@@ -130,7 +142,7 @@ def build(version: str):
         # onedir reads directly from disk — 10x faster startup on Windows.
         "--onedir",
         "--windowed",
-        "--name=Miroku",
+        "--name=Raiko",
         f"--icon={icon}",
 
         # ── Resources ─────────────────────────────────────────────────────
@@ -176,17 +188,17 @@ def build(version: str):
         str(ROOT / "main.py"),
     ]
 
-    print(f"\nBuilding Miroku v{version} (onedir — fast startup)…")
+    print(f"\nBuilding Raiko v{version} (onedir — fast startup)…")
     print("This takes 2-5 minutes on first run.\n")
     subprocess.check_call(cmd, cwd=str(ROOT))
 
 
 def zip_for_distribution(version: str):
-    """Zip the dist/Miroku folder for GitHub release attachment."""
-    exe_dir = DIST / "Miroku"
+    """Zip the dist/Raiko folder for GitHub release attachment."""
+    exe_dir = DIST / "Raiko"
     if not exe_dir.exists():
         return
-    zip_path = DIST / f"Miroku-v{version}-Windows.zip"
+    zip_path = DIST / f"Raiko-v{version}-Windows.zip"
     print(f"\nZipping {exe_dir.name}/ -> {zip_path.name}...")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in exe_dir.rglob("*"):
@@ -196,16 +208,16 @@ def zip_for_distribution(version: str):
     return zip_path
 
 
-INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Programs" / "Miroku"
+INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Programs" / "Raiko"
 
 
-def _miroku_running() -> bool:
+def _app_running() -> bool:
     try:
         out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq Miroku.exe", "/NH"],
+            ["tasklist", "/FI", "IMAGENAME eq Raiko.exe", "/NH"],
             capture_output=True, text=True, timeout=15,
         ).stdout
-        return "Miroku.exe" in out
+        return "Raiko.exe" in out
     except Exception:
         return False
 
@@ -214,7 +226,9 @@ def _update_desktop_shortcut(exe: Path) -> None:
     """Create/repair the Desktop shortcut so it points at the installed exe."""
     ps = (
         "$d=[Environment]::GetFolderPath('Desktop');"
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Miroku.lnk'));"
+        # Raikō replaces the old Raiko shortcut
+        "$o=(Join-Path $d 'Raiko.lnk'); if (Test-Path $o) { Remove-Item $o -Force };"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Raikō.lnk'));"
         f"$s.TargetPath='{exe}';"
         f"$s.WorkingDirectory='{exe.parent}';"
         f"$s.IconLocation='{exe},0';"
@@ -225,7 +239,7 @@ def _update_desktop_shortcut(exe: Path) -> None:
 
 
 def install_locally(version: str) -> None:
-    """Install the fresh build to %LOCALAPPDATA%\\Programs\\Miroku.
+    """Install the fresh build to %LOCALAPPDATA%\\Programs\\Raiko.
 
     The Desktop shortcut points there, NOT at dist/, because clean()
     wipes dist/ at the start of every build. The new build is staged
@@ -234,17 +248,17 @@ def install_locally(version: str) -> None:
     """
     if sys.platform != "win32":
         return
-    src = DIST / "Miroku"
-    if not (src / "Miroku.exe").exists():
-        print("\nWARN  Skipping install - no exe in dist/Miroku.")
+    src = DIST / "Raiko"
+    if not (src / "Raiko.exe").exists():
+        print("\nWARN  Skipping install - no exe in dist/Raiko.")
         return
-    if _miroku_running():
-        print("\nWARN  Miroku is running - close it and re-run the build to install.")
+    if _app_running():
+        print("\nWARN  Raiko is running - close it and re-run the build to install.")
         print(f"      (The new build is still in {src})")
         return
 
-    staging = INSTALL_DIR.with_name("Miroku.new")
-    backup = INSTALL_DIR.with_name("Miroku.old")
+    staging = INSTALL_DIR.with_name("Raiko.new")
+    backup = INSTALL_DIR.with_name("Raiko.old")
     print(f"\nInstalling v{version} -> {INSTALL_DIR} ...")
     for d in (staging, backup):
         if d.exists():
@@ -261,22 +275,22 @@ def install_locally(version: str) -> None:
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
 
-    _update_desktop_shortcut(INSTALL_DIR / "Miroku.exe")
-    print(f"  OK  Installed. Desktop shortcut -> {INSTALL_DIR / 'Miroku.exe'}")
+    _update_desktop_shortcut(INSTALL_DIR / "Raiko.exe")
+    print(f"  OK  Installed. Desktop shortcut -> {INSTALL_DIR / 'Raiko.exe'}")
 
 
 def report(version: str):
-    exe_name = "Miroku.exe" if sys.platform == "win32" else "Miroku"
-    exe      = DIST / "Miroku" / exe_name
+    exe_name = "Raiko.exe" if sys.platform == "win32" else "Raiko"
+    exe      = DIST / "Raiko" / exe_name
 
     if exe.exists():
         size_mb = sum(
-            f.stat().st_size for f in (DIST / "Miroku").rglob("*") if f.is_file()
+            f.stat().st_size for f in (DIST / "Raiko").rglob("*") if f.is_file()
         ) / (1024 * 1024)
 
         print(f"\n{'='*52}")
         print(f"  OK  Build complete!")
-        print(f"  DIR {DIST / 'Miroku'}")
+        print(f"  DIR {DIST / 'Raiko'}")
         print(f"  EXE {exe}")
         print(f"  MB  {size_mb:.0f} MB (total folder)")
         print(f"  VER v{version}")
@@ -285,8 +299,8 @@ def report(version: str):
         print(f"  Before (--onefile): 15-45 s cold start (full extraction every run)")
         print(f"  After  (--onedir):   2-4 s cold start  (reads from disk directly)")
         print(f"\nNext steps:")
-        print(f"  1. Test: double-click dist\\Miroku\\Miroku.exe")
-        print(f"  2. Distribute: zip the dist\\Miroku\\ folder")
+        print(f"  1. Test: double-click dist\\Raiko\\Raiko.exe")
+        print(f"  2. Distribute: zip the dist\\Raiko\\ folder")
         print(f"     OR run: python build_exe.py --zip  (auto-zips after build)")
         print(f"  3. On GitHub -> Releases -> attach the .zip file")
     else:
@@ -298,8 +312,9 @@ if __name__ == "__main__":
     do_install = "--no-install" not in sys.argv
     do_tests   = "--skip-tests" not in sys.argv
     version = get_version()
-    print(f"\nMiroku v{version} — Build Script")
+    print(f"\nRaiko v{version} — Build Script")
     print("=" * 52)
+    ensure_brand_assets()
     if do_tests and not run_tests():
         sys.exit(1)
     ensure_pyinstaller()

@@ -87,7 +87,7 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(18, 22, 18, 18)
         lay.setSpacing(8)
 
-        brand = QLabel("Miroku")
+        brand = QLabel("Raikō")
         brand.setObjectName("settingsNavBrand")
         lay.addWidget(brand)
 
@@ -471,7 +471,7 @@ class SettingsDialog(QDialog):
 
         backup, bl = self._card("Backups")
         bl.addWidget(self._body_text(
-            "Miroku keeps the latest 5 backup snapshots in your local backup "
+            "Raikō keeps the latest 5 backup snapshots in your local backup "
             "folder."
         ))
         path = QLabel(str(BACKUP_DIR))
@@ -512,16 +512,15 @@ class SettingsDialog(QDialog):
     def _page_about(self) -> QWidget:
         page, lay = self._page()
         lay.addWidget(self._hero(
-            "About Miroku",
-            "A focused desktop tracker for currently airing and upcoming anime."
+            "About Raikō",
+            "One home for everything you watch: anime in Miroku, TV shows and movies in Kinema."
         ))
 
         about, al = self._card("")
         top = QHBoxLayout()
 
         resources = Path(__file__).parent.parent / "resources"
-        logo_path = resources / "miroku_lettermark_1024.png"
-        icon_path = logo_path if logo_path.exists() else resources / "miroku_lettermark_512.png"
+        icon_path = resources / "raiko_icon_256.png"
         if icon_path.exists():
             icon = QLabel()
             px = QPixmap(str(icon_path)).scaled(
@@ -533,7 +532,7 @@ class SettingsDialog(QDialog):
             top.addWidget(icon)
 
         copy = QVBoxLayout()
-        name = QLabel("Miroku")
+        name = QLabel("Raikō")
         name.setObjectName("settingsAboutName")
         copy.addWidget(name)
 

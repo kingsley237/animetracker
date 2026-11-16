@@ -400,7 +400,7 @@ class AniListAuth(QObject):
 
                         b"background:#0f1118;color:#e8e8f0;text-align:center;"
 
-                        b"padding:48px'><h2>Miroku</h2><p>Login successful. "
+                        b"padding:48px'><h2>Raik&#333;</h2><p>Login successful. "
 
                         b"You can close this tab and return to the app.</p></body></html>"
 
