@@ -223,19 +223,28 @@ def _app_running() -> bool:
 
 
 def _update_desktop_shortcut(exe: Path) -> None:
-    """Create/repair the Desktop shortcut so it points at the installed exe."""
+    """Create/repair the "Raikō" Desktop shortcut (pointing at the installed
+    exe) and remove the old Miroku one. Shortcut names are handled in Python:
+    non-ASCII names get mangled when passed through a PowerShell command line."""
+    desk = Path(subprocess.run(
+        ["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
+        capture_output=True, text=True, timeout=30).stdout.strip())
+    tmp_link = desk / "Raiko.lnk"
     ps = (
-        "$d=[Environment]::GetFolderPath('Desktop');"
-        # Raikō replaces the old Raiko shortcut
-        "$o=(Join-Path $d 'Raiko.lnk'); if (Test-Path $o) { Remove-Item $o -Force };"
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Raikō.lnk'));"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + str(tmp_link) + "');"
         f"$s.TargetPath='{exe}';"
         f"$s.WorkingDirectory='{exe.parent}';"
         f"$s.IconLocation='{exe},0';"
         "$s.Save()"
     )
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                   check=True, timeout=30)
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, timeout=30)
+    final = desk / "Raikō.lnk"
+    if final.exists():
+        final.unlink()
+    tmp_link.rename(final)
+    old = desk / "Miroku.lnk"
+    if old.exists():
+        old.unlink()
 
 
 def install_locally(version: str) -> None:
