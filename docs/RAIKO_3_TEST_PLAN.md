@@ -129,7 +129,7 @@ meantime, it doesn't understand movies).
       → GitHub release with docs/RELEASE_NOTES_v3.0.0.md → installs to Programs\Raiko + "Raikō" Desktop shortcut.
 
 ## After 3.0 🕒
-- [ ] Release addressing all risks (anime side included).
+- [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).
 
 ---
