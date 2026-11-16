@@ -255,7 +255,9 @@ class OnboardingOverlay(QWidget):
         self._card.set_content(self._current + 1, len(self._steps), title, desc,
                                is_last=self._current == len(self._steps) - 1,
                                first=self._current == 0)
-        QTimer.singleShot(60, lambda t=target: self._spot(t))
+        # re-measure as the page settles (a library that just loaded, images…)
+        for ms in (60, 450, 1200):
+            QTimer.singleShot(ms, lambda t=target: self._spot(t))
 
     def _spot(self, target: str):
         from PyQt6 import sip
