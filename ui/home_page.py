@@ -335,90 +335,6 @@ class _Rail(QScrollArea):
         self.row.insertWidget(self.row.count() - 1, w)
 
 
-class _ContinueCard(QWidget, _Img):
-    """Art on top (16:9), text underneath - clean, nothing over the picture
-    except the library tag and a hover Watched button."""
-    open = pyqtSignal(int)
-    watched = pyqtSignal(dict)
-    W, IMG = 264, 148
-
-    def __init__(self, item: Dict, parent=None):
-        super().__init__(parent)
-        self.item = item
-        self._hover = False
-        self.setFixedSize(self.W, self.IMG + 66)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.btn = QPushButton("✓", self)
-        self.btn.setObjectName("cardTick")
-        self.btn.setFixedSize(34, 34)
-        self.btn.setToolTip(f"Mark {item['label'].split(' · ')[0]} watched")
-        self.btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.btn.move(self.W - 44, self.IMG - 44)
-        self.btn.clicked.connect(lambda: self.watched.emit(self.item))
-        self.btn.setVisible(False)
-        self._can_mark = not item.get("caught_up")
-        self._load_img(_img_url(item["row"], wide=True))
-
-    def enterEvent(self, e):
-        self._hover = True
-        self.btn.setVisible(self._can_mark)
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hover = False
-        self.btn.setVisible(False)
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.open.emit(self.item["id"])
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        tag, color = LIB[self.item["media"]]
-        img = QRectF(0, 0, self.W, self.IMG)
-        path = QPainterPath()
-        path.addRoundedRect(img, 12, 12)
-        p.save()
-        p.setClipPath(path)
-        self._draw_cover(p, img, 0.3)
-        if self._hover:
-            p.fillRect(img, QColor(0, 0, 0, 60))
-        # progress along the bottom of the art
-        p.setPen(Qt.PenStyle.NoPen)
-        p.fillRect(QRectF(0, self.IMG - 4, self.W, 4), QColor(0, 0, 0, 150))
-        p.fillRect(QRectF(0, self.IMG - 4, self.W * max(0.03, min(1, self.item["progress"])), 4), QColor(color))
-        p.restore()
-        p.setPen(QColor(255, 255, 255, 30) if not self._hover else QColor(color))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(path)
-        x = 10
-        x += _tag(p, x, 10, tag, color, QColor(8, 9, 14, 215)) + 6
-        if self.item.get("new"):
-            _tag(p, x, 10, "NEW", "#0b0d12", QColor("#f87171"))
-        elif self.item.get("caught_up"):
-            _tag(p, x, 10, "CAUGHT UP", "#062016", QColor("#34d399"))
-        f = QFont(self.font())
-        f.setPointSizeF(10)
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(QColor("#eef0f7"))
-        p.drawText(QRectF(2, self.IMG + 8, self.W - 4, 20), Qt.AlignmentFlag.AlignLeft,
-                   p.fontMetrics().elidedText(self.item["title"], Qt.TextElideMode.ElideRight, self.W - 4))
-        f.setPointSizeF(8.5)
-        p.setFont(f)
-        p.setPen(QColor(color))
-        p.drawText(QRectF(2, self.IMG + 29, self.W - 4, 16), Qt.AlignmentFlag.AlignLeft,
-                   p.fontMetrics().elidedText(self.item["label"], Qt.TextElideMode.ElideRight, self.W - 4))
-        f.setBold(False)
-        p.setFont(f)
-        p.setPen(QColor("#7f87a3"))
-        p.drawText(QRectF(2, self.IMG + 47, self.W - 4, 16), Qt.AlignmentFlag.AlignLeft, self.item["sub"])
-        p.end()
-
-
 # ── this week ─────────────────────────────────────────────────────────────────
 
 class _MiniItem(QWidget, _Img):
@@ -569,70 +485,6 @@ class _PosterCard(QWidget, _Img):
         p.end()
 
 
-class _PickCard(QWidget, _Img):
-    """A recommendation: outlined FOR YOU tag so it never looks like your library."""
-    open = pyqtSignal(dict)
-    W, H = 132, 198
-
-    def __init__(self, hit: Dict, parent=None):
-        super().__init__(parent)
-        self.hit = hit
-        self._hover = False
-        self.setFixedSize(self.W, self.H + 42)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setToolTip(hit.get("reason") or hit.get("title") or "")
-        self._load_img(hit.get("poster_url") or "")
-
-    def enterEvent(self, e):
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hover = False
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.open.emit(self.hit)
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        tag, color = LIB[self.hit["media_type"]]
-        r = QRectF(0, 0, self.W, self.H)
-        path = QPainterPath()
-        path.addRoundedRect(r, 10, 10)
-        p.save()
-        p.setClipPath(path)
-        self._draw_cover(p, r)
-        p.restore()
-        p.setPen(QPen(QColor(color) if self._hover else QColor(255, 255, 255, 30), 1.2))
-        p.drawPath(path)
-        f = QFont(self.font())
-        f.setPointSizeF(7)
-        f.setBold(True)
-        p.setFont(f)
-        w = p.fontMetrics().horizontalAdvance("FOR YOU") + 16
-        p.setBrush(QColor(8, 9, 14, 215))
-        p.setPen(QPen(QColor(color), 1.3))
-        p.drawRoundedRect(QRectF(8, 8, w, 20), 6, 6)
-        p.setPen(QColor(color))
-        p.drawText(QRectF(8, 8, w, 20), Qt.AlignmentFlag.AlignCenter, "FOR YOU")
-        f.setPointSizeF(8.5)
-        p.setFont(f)
-        p.setPen(QColor("#e8eaf2"))
-        p.drawText(QRectF(0, self.H + 5, self.W, 18), Qt.AlignmentFlag.AlignLeft,
-                   p.fontMetrics().elidedText(self.hit.get("title") or "", Qt.TextElideMode.ElideRight, self.W))
-        f.setBold(False)
-        p.setFont(f)
-        p.setPen(QColor(color))
-        p.drawText(QRectF(0, self.H + 23, self.W, 16), Qt.AlignmentFlag.AlignLeft,
-                   {"anime": "Anime", "tv": "TV show", "movie": "Movie"}[self.hit["media_type"]]
-                   + (f"  ·  ★ {self.hit['score'] / 10:.1f}" if self.hit.get("score") else ""))
-        p.end()
-
-
 class _SearchRow(QWidget, _Img):
     open = pyqtSignal(int)
 
@@ -771,14 +623,6 @@ class HomePage(QWidget):
         self.hero_empty.setWordWrap(True)
         sl.addWidget(self.hero_empty)
 
-        self.cw_head = self._head("Continue watching", sl)
-        self.cw_rail = _Rail(_ContinueCard.IMG + 70)
-        sl.addWidget(self.cw_rail)
-        self.caught_up = QLabel()
-        self.caught_up.setObjectName("homeCaughtUp")
-        self.caught_up.setWordWrap(True)
-        sl.addWidget(self.caught_up)
-
         self.wk_head = self._head("This week", sl)
         self.week = QHBoxLayout()
         self.week.setSpacing(10)
@@ -788,13 +632,6 @@ class HomePage(QWidget):
         self.rd_rail = _Rail(_PosterCard.H + 50)
         sl.addWidget(self.rd_rail)
 
-        self.pk_head = self._head("Picked for you", sl)
-        self.pk_sub = QLabel("Recommendations from what you've watched and saved. Not in your library yet.")
-        self.pk_sub.setObjectName("homeEmpty")
-        sl.addWidget(self.pk_sub)
-        sl.addSpacing(10)
-        self.pk_rail = _Rail(_PickCard.H + 50)
-        sl.addWidget(self.pk_rail)
         sl.addStretch()
         self.lay.addWidget(self.sections)
         self.lay.addStretch()
@@ -836,7 +673,7 @@ class HomePage(QWidget):
         def work():
             from core import up_next as un
             return (un.continue_watching(self.db), un.coming_up(self.db), un.ready_to_watch(self.db),
-                    un.watching_rail(self.db), un.library_updates(self.db))
+                    un.library_updates(self.db))
 
         w = Worker(work)
         w.signals.result.connect(self._render)
@@ -870,7 +707,7 @@ class HomePage(QWidget):
         from PyQt6 import sip
         if sip.isdeleted(self):
             return
-        cw, up, ready, rail, updates = data
+        cw, up, ready, updates = data
         self._data = data
         # spotlight: never empty - a new episode, else what airs next from what
         # you watch, else something from your Plan to Watch / Watchlist
@@ -887,26 +724,6 @@ class HomePage(QWidget):
                                 (len(ready), "movies in HD", "#fbbf24")):
             self.stats.addWidget(_Stat(str(v), label, color))
         self.stats.addStretch()
-
-        # continue rail: everything you're watching (episodes waiting first)
-        self.cw_rail.clear()
-        rest = rail
-        for item in rest:
-            c = _ContinueCard(item)
-            c.open.connect(self.open_title.emit)
-            c.watched.connect(self._mark)
-            self.cw_rail.add(c)
-        self.cw_head.setVisible(True)
-        self.cw_rail.setVisible(bool(rest))
-        self.caught_up.setVisible(not cw)
-        if not cw:
-            nxt = next((u for u in up if u["row"].get("watch_status") == "watching"), None)
-            when = ""
-            if nxt:
-                secs = int(nxt["when"] - datetime.now().timestamp())
-                d, h = secs // 86400, (secs % 86400) // 3600
-                when = f" The next episode lands in {d}d {h}h." if d else f" The next episode lands in {h}h."
-            self.caught_up.setText(f"✓  You're all caught up.{when}")
 
         # this week: 7 day columns + Later
         self._clear(self.week)
@@ -967,14 +784,6 @@ class HomePage(QWidget):
 
     def _render_picks(self):
         self._render_spotlight(keep=True)
-        self.pk_rail.clear()
-        hits = getattr(self, "_picks", [])
-        for h in hits[:18]:
-            c = _PickCard(h)
-            c.open.connect(self.open_pick.emit)
-            self.pk_rail.add(c)
-        for w in (self.pk_head, self.pk_sub, self.pk_rail):
-            w.setVisible(bool(hits))
 
     @staticmethod
     def _blurb(text: str) -> str:

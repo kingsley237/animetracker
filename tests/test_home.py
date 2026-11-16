@@ -72,7 +72,7 @@ def test_home_page_and_ctrl_k(qapp, db, monkeypatch):
     first = home.hero.slides[0]
     assert first["badge"] == "NEW EPISODE" and first["kind"] == "update"
     assert home.hero.item["id"] == ids["anime_new"]       # spotlight: the new episode
-    assert home.cw_rail.row.count() == 4                  # anime, TV, caught-up anime + stretch
+    assert not hasattr(home, "cw_rail") and not hasattr(home, "pk_rail")   # sections removed
     assert home.week.count() == 8                         # 7 days + Later
     assert home.hero.btn1.text().startswith("✓  Watched")
     home.hero._run(1)                                     # one-click Watched
@@ -140,7 +140,6 @@ def test_home_spotlight_when_caught_up(qapp, db, monkeypatch):
     assert sl["badge"] == "NEXT TO AIR" and sl["item"]["id"] == aid
     assert page.hero.badge.text() == "NEXT TO AIR" and page.hero.btn1.text() == "See the episodes"
     assert not page.hero.btn2.isVisible()
-    assert "caught up" in page.caught_up.text() and page.caught_up.isVisible()
     page.close()
 
 
@@ -165,5 +164,4 @@ def test_spotlight_tells_library_news_from_picks(qapp, db, monkeypatch):
     assert page.hero.btn1.text() == "Preview && add"
     page.hero._run(1)
     assert opened == [99]
-    assert page.pk_rail.row.count() == 2 and page.pk_rail.isVisible()
     page.close()

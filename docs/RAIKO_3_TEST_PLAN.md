@@ -98,10 +98,8 @@ meantime, it doesn't understand movies).
       NEW EPISODE (✓ Watched), OUT IN HD, IN CINEMAS, NEW SEASON, NEW TRAILER (▶ Play), NEXT TO AIR (countdown).
       Picks have an OUTLINED "FOR YOU" badge + "Because you watched…" and open in Discover ("Preview & add").
       Dots: filled = your library, rings = picked for you.
-- [ ] **Continue watching** always shows everything you're watching: NEW first (hover ✓), then CAUGHT UP with the
-      next air time.
-- [ ] **This week** unchanged; **Ready to watch** when a Watchlist movie is out in HD; **Picked for you** posters
-      (anime / movies / TV, FOR YOU tag) at the bottom.
+- [ ] Below the spotlight: stat chips, then **This week**; **Ready to watch** only when a Watchlist movie is out in
+      HD. (Continue watching and Picked for you rows removed: the spotlight already covers them.)
 - [ ] Preview safely on a copy: `.venv\Scripts\python.exe tools\preview_home.py` (add `--fresh` to fake new
       episodes, `--tour` for the welcome + tour).
 - [ ] **Search everything** (Ctrl+K from anywhere): your anime, shows and movies grouped by library; Enter opens the
