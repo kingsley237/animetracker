@@ -377,6 +377,7 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
 
         cfg_btn = QPushButton("SET   Settings")
+        self._settings_btn = cfg_btn
         cfg_btn.setObjectName("navBtn")
         cfg_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         cfg_btn.clicked.connect(self._open_settings)
@@ -1909,21 +1910,37 @@ class MainWindow(QMainWindow):
     # ── Onboarding ─────────────────────────────────────────────────────────────
 
     def _maybe_show_onboarding(self):
-        # ── Toggle for testing: set True to always show tutorial ──────────────
-        FORCE_ONBOARDING = False
-        # ─────────────────────────────────────────────────────────────────────
+        """Raikō welcome + tour, once. People upgrading from Miroku (who have a
+        library or saw the old tour) get the 'Miroku is now Raikō' welcome."""
         from core.app_settings import app_settings
-        settings    = app_settings()
-        seen        = settings.value("onboarding_seen", False, type=bool)
-        total_anime = len(self.db.get_all_anime())
-        # First ever use = never seen the tour AND library is completely empty
-        is_first_use = (not seen) and (total_anime == 0)
-        if FORCE_ONBOARDING or is_first_use:
-            from ui.onboarding import OnboardingOverlay
-            overlay = OnboardingOverlay(self, self.centralWidget())
-            overlay.finished.connect(
-                lambda: settings.setValue("onboarding_seen", True)
-            )
+        settings = app_settings()
+        if settings.value("onboarding_v3_seen", False, type=bool):
+            return
+        upgrading = settings.value("onboarding_seen", False, type=bool) or any(
+            self.db.get_all_anime(media_type=m) for m in ("anime", "tv", "movie"))
+        self.start_onboarding(upgrading)
+
+    def start_onboarding(self, upgrading: bool = False):
+        from core.app_settings import app_settings
+        from ui.onboarding import OnboardingOverlay, WelcomeOverlay
+        settings = app_settings()
+
+        def mark_seen():
+            settings.setValue("onboarding_v3_seen", True)
+            settings.setValue("onboarding_seen", True)
+
+        def tour():
+            mark_seen()
+            if self.current_page != "home":
+                self._navigate("home")
+            ov = OnboardingOverlay(self, self.centralWidget())
+            ov.finished.connect(lambda: self._navigate("home"))
+            self._tour = ov
+
+        welcome = WelcomeOverlay(self.centralWidget(), upgrading)
+        welcome.tour.connect(tour)
+        welcome.done.connect(mark_seen)
+        self._welcome = welcome
 
     # ── Update check ───────────────────────────────────────────────────────────
 

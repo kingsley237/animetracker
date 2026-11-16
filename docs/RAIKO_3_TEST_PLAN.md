@@ -104,12 +104,17 @@ meantime, it doesn't understand movies).
 - [ ] Opening any title from Home lands in its own library with the panel open.
 - (Statistics / Hall of Fame across types: dropped, as you retired those screens; Home's summary line covers counts.)
 
-## Rebrand to Raikō (phase 5) 🕒
-- [ ] New logo system (Raikō + Miroku + Kinema marks), icons/.ico, splash, sidebar, About, window titles,
-      install folder/shortcut/exe/zip names, README, release naming.
-- [ ] **Premium card redesign** for anime, TV and movies — every piece of information each card shows
-      today stays (better represented, never removed). See "Card information inventory" below.
-- [ ] **New onboarding** for first-time users covering Miroku + Kinema.
+## Rebrand to Raikō (phase 5) ✅
+- [ ] **Logo (Aperture)**: three arcs (Miroku indigo, Kinema amber, TV sky) around a point of light — taskbar,
+      title bar, sidebar (mark + "Raikō"), Miroku / Kinema marks in the sidebar headers, splash, Settings → About.
+- [ ] Window title, splash ("Starting Raikō…", "Everything you watch, in one light"), About copy say Raikō.
+- [ ] Build (only when you say ship): Raiko.exe in Programs\Raiko, Raiko-vX-Windows.zip, Desktop shortcut "Raikō"
+      replaces the old "Miroku" shortcut; your settings and library carry over untouched.
+- [ ] **Premium cards**: hairline borders, red ring only for a new episode, library colour when selected, glass
+      status pills, gentle hover lift; hover ✓ marks the next episode watched (anime & TV). All info still there.
+- [ ] **Onboarding**: on first start of 3.0 you see "Miroku is now Raikō" (new users: "Welcome to Raikō") with
+      Home / Miroku / Kinema tiles and your country; "Take the 1-minute tour" walks 7 steps across the real pages
+      (Back / Next / Skip). Settings → About → "Replay the welcome tour".
 
 ## Polish & release (phase 6) 🕒
 - [ ] Visual pass, performance, full tests, upgrade check on a copy of your real library, v3.0.0.

@@ -83,3 +83,38 @@ def test_home_page_and_ctrl_k(qapp, db, monkeypatch):
     pump(50)
     import core.anilist_auth as auth
     auth._auth_instance = None
+
+
+def test_onboarding_welcome_and_tour(qapp, db, monkeypatch):
+    from core.app_settings import app_settings
+    from ui.main_window import MainWindow
+    for name in ("_check_connection", "_check_anilist_status", "_check_tmdb_status", "_check_for_updates",
+                 "_setup_anilist_session", "_scan_sequels", "_maybe_show_onboarding",
+                 "_sync_metadata", "_refresh_upcoming", "_refresh_airing", "_scan_notifications",
+                 "_sync_movies", "_refresh_open_anime"):
+        monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
+    _library(db, monkeypatch)
+    win = MainWindow(db)
+    win.setGeometry(0, 0, 1600, 1000)
+    win.show()
+    win._navigate("home")
+    win.start_onboarding(upgrading=True)
+    heads = [l.text() for l in win._welcome.findChildren(type(win.page_title)) if l.objectName() == "welcomeHead"]
+    assert heads == ["Miroku is now Raikō"]
+    win._welcome.country.setCurrentIndex(win._welcome.country.findData("CM"))
+    win._welcome._close(True)                                   # take the tour
+    assert app_settings().value("tmdb_region") == "CM"
+    assert app_settings().value("onboarding_v3_seen", False, type=bool)
+    tour = win._tour
+    for i in range(len(tour._steps)):
+        assert tour._current == i
+        pump(120)
+        assert not tour._spotlight.isNull(), tour._steps[i][1]  # every step finds its target
+        tour._next()
+    pump(50)
+    assert win.current_page == "home"
+    win.close()
+    win.deleteLater()
+    pump(50)
+    import core.anilist_auth as auth
+    auth._auth_instance = None

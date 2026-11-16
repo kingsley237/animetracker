@@ -557,6 +557,11 @@ class SettingsDialog(QDialog):
         license_label = QLabel("MIT License")
         license_label.setObjectName("settingsPathText")
         al.addWidget(license_label)
+        replay = QPushButton("Replay the welcome tour")
+        replay.setObjectName("secondaryBtn")
+        replay.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        replay.clicked.connect(self._replay_tour)
+        al.addWidget(replay, alignment=Qt.AlignmentFlag.AlignLeft)
 
         lay.addWidget(about)
         lay.addStretch()
@@ -734,6 +739,15 @@ class SettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Backup Failed", str(exc))
     
+    def _replay_tour(self):
+        mw = self.parent()
+        while mw is not None and not hasattr(mw, "start_onboarding"):
+            mw = mw.parent()
+        self.accept()
+        if mw is not None:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(150, lambda: mw.start_onboarding(False))
+
     def _open_data_doctor(self):
         from ui.data_doctor import DataDoctorDialog
         dlg = DataDoctorDialog(self.db, self)

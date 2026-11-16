@@ -1957,3 +1957,32 @@ QPushButton#cardQuickTick {
     border-radius: 17px; font-size: 15px; font-weight: 900; padding: 0;
 }
 QPushButton#cardQuickTick:hover { background: #34d399; color: #062016; border-color: #34d399; }
+
+/* ── Raikō onboarding ────────────────────────────────────────────────────── */
+QWidget#welcomeCard { background: #0f1119; border: 1px solid #262a3d; border-radius: 22px; }
+QLabel#welcomeHead { color: #f4f5fa; font-size: 24px; font-weight: 800; background: transparent; }
+QLabel#welcomeSub { color: #a8aec6; font-size: 13px; background: transparent; }
+QWidget#welcomeTile { background: #141724; border: 1px solid #22263a; border-radius: 14px; }
+QPushButton#welcomeGo {
+    background: #8b7bff; color: #0b0d12; border: none; border-radius: 12px;
+    padding: 0 22px; font-size: 13px; font-weight: 800;
+}
+QPushButton#welcomeGo:hover { background: #a294ff; }
+QPushButton#welcomeSkip { background: transparent; color: #7f87a3; border: none; font-size: 12px; padding: 0 8px; }
+QPushButton#welcomeSkip:hover { color: #e2e4ec; }
+QWidget#tourCard { background: #12142a; border: 1px solid #3b3470; border-radius: 16px; }
+QLabel#tourCounter { color: #8b7bff; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; background: transparent; }
+QLabel#tourDots { color: #4a4f7a; font-size: 9px; letter-spacing: 2px; background: transparent; }
+QLabel#tourTitle { color: #f4f5fa; font-size: 16px; font-weight: 800; background: transparent; }
+QLabel#tourDesc { color: #a8aec6; font-size: 12px; background: transparent; }
+QPushButton#tourNext {
+    background: #8b7bff; color: #0b0d12; border: none; border-radius: 9px;
+    padding: 7px 18px; font-size: 12px; font-weight: 800;
+}
+QPushButton#tourNext:hover { background: #a294ff; }
+QPushButton#tourBack {
+    background: transparent; color: #c7cbe0; border: 1px solid #2f3450; border-radius: 9px;
+    padding: 7px 14px; font-size: 12px;
+}
+QPushButton#tourSkip { background: transparent; color: #6b7391; border: none; font-size: 11px; }
+QPushButton#tourSkip:hover { color: #c7cbe0; }
