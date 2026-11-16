@@ -184,15 +184,19 @@ class MetadataSync:
         ident = old.get("anilist_id") or old["id"]
         base = {"anime_id": old["id"], "anilist_id": old.get("anilist_id")}
 
-        # Trailer: notify when it's new to us (first sync included - a
-        # trailer for something you're waiting on is always worth a look;
-        # the fingerprint stops repeats).
-        if new.get("trailer_id") and (first_sync or "trailer_id" in updates):
+        # The first sync of a title is a quiet baseline: you just added (or
+        # opened) it and can see its trailer and date right there. Only
+        # genuinely new data after that raises an alert.
+        if first_sync:
+            return
+
+        # Trailer: a new or changed trailer.
+        if new.get("trailer_id") and "trailer_id" in updates:
             self.db.upsert_notification({
                 **base,
                 "fingerprint": f"upcoming-trailer:{ident}:{new['trailer_id']}",
                 "kind": "upcoming_trailer",
-                "title": "New trailer is out" if not first_sync else "Trailer available",
+                "title": "New trailer is out",
                 "message": f"{title} has a trailer. Watch it right here.",
                 "payload": {"trailer_id": new["trailer_id"],
                             "trailer_site": new.get("trailer_site"),
@@ -201,7 +205,7 @@ class MetadataSync:
 
         # Release date: only once AniList has an exact day.
         if new.get("start_exact") and new.get("start_ts") and not new.get("next_episode_at") and (
-                first_sync or "start_ts" in updates or "start_exact" in updates):
+                "start_ts" in updates or "start_exact" in updates):
             when = datetime.fromtimestamp(new["start_ts"])
             if when.timestamp() > datetime.now().timestamp() - 86400:
                 label = when.strftime("%b ") + f"{when.day}, {when.year}"

@@ -160,6 +160,123 @@ class _PosterTile(QWidget):
         p.end()
 
 
+class _TrailerThumb(QWidget):
+    """16:9 thumbnail of the official trailer with a play button."""
+    play = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(168)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._pix: Optional[QPixmap] = None
+        self._title = ""
+        self._hover = False
+        self._url = ""
+
+    def load(self, url: str, title: str):
+        self._title = title
+        self._pix = None
+        self._url = url
+        self.update()
+        if url:
+            w = ImageWorker(url, url)
+            w.signals.result.connect(self._on_img)
+            run_worker(w, PRIORITY_INTERACTIVE)
+
+    def _on_img(self, result):
+        try:
+            key, _s, path = result
+            if path and key == self._url:
+                self._pix = QPixmap(str(path))
+                self.update()
+        except RuntimeError:
+            pass
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.play.emit()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        r = QRectF(0, 0, self.width(), self.height())
+        path = QPainterPath()
+        path.addRoundedRect(r, 10, 10)
+        p.setClipPath(path)
+        if self._pix and not self._pix.isNull():
+            sc = self._pix.scaled(self.width(), self.height(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                  Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(0, 0, sc, (sc.width() - self.width()) // 2, (sc.height() - self.height()) // 2,
+                         self.width(), self.height())
+        else:
+            p.fillRect(r, QColor("#151827"))
+        p.fillRect(r, QColor(0, 0, 0, 70 if self._hover else 110))
+        c = r.center()
+        rad = 26 if self._hover else 24
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 235))
+        p.drawEllipse(c, rad, rad)
+        tri = QPainterPath()
+        tri.moveTo(c.x() - 7, c.y() - 11)
+        tri.lineTo(c.x() - 7, c.y() + 11)
+        tri.lineTo(c.x() + 12, c.y())
+        tri.closeSubpath()
+        p.setBrush(QColor("#0b0d12"))
+        p.drawPath(tri)
+        f = QFont(self.font())
+        f.setPointSizeF(8.5)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#f0f1f6"))
+        p.drawText(r.adjusted(12, 0, -12, -10), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(self._title, Qt.TextElideMode.ElideRight, self.width() - 24))
+        p.end()
+
+
+class _SkeletonTile(QWidget):
+    """Placeholder poster with a moving shimmer while a list loads."""
+    W, H = _PosterTile.W, _PosterTile.H
+
+    def __init__(self, phase: float, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.W, self.H + 44)
+        self._t = phase
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._step)
+        self._timer.start(40)
+
+    def _step(self):
+        self._t = (self._t + 0.025) % 1.6
+        self.update()
+
+    def paintEvent(self, _):
+        from PyQt6.QtGui import QLinearGradient
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        base, hi = QColor("#151826"), QColor("#232842")
+        x = (self._t - 0.3) * self.W * 1.6
+        g = QLinearGradient(x, 0, x + self.W * 0.6, self.H)
+        g.setColorAt(0, base)
+        g.setColorAt(0.5, hi)
+        g.setColorAt(1, base)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(g)
+        p.drawRoundedRect(QRectF(1, 1, self.W - 2, self.H - 2), 9, 9)
+        p.setBrush(base)
+        p.drawRoundedRect(QRectF(0, self.H + 8, self.W * 0.8, 10), 4, 4)
+        p.drawRoundedRect(QRectF(0, self.H + 26, self.W * 0.45, 9), 4, 4)
+        p.end()
+
+
 class MovieBrowser(QWidget):
     added = pyqtSignal(int, str)        # library id, title
     kind_changed = pyqtSignal(str)      # "movie" | "tv"
@@ -293,6 +410,13 @@ class MovieBrowser(QWidget):
         self.p_backdrop.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.p_backdrop.setStyleSheet("background:#151827;")
         pv.addWidget(self.p_backdrop)
+        from ui.layout_helpers import FitWidthScroll as _Scroll
+        self.p_scroll = _Scroll()
+        info = QWidget()
+        info_l = QVBoxLayout(info)
+        info_l.setContentsMargins(20, 6, 20, 6)
+        info_l.setSpacing(8)
+        self.p_scroll.setWidget(info)
         body = QVBoxLayout()
         body.setContentsMargins(20, 6, 20, 0)
         body.setSpacing(8)
@@ -310,9 +434,26 @@ class MovieBrowser(QWidget):
         self.p_overview.setWordWrap(True)
         self.p_overview.setAlignment(Qt.AlignmentFlag.AlignTop)
         for w in (self.p_reason, self.p_title, self.p_meta, self.p_overview):
-            body.addWidget(w)
+            info_l.addWidget(w)
         self.p_reason.setVisible(False)
-        body.addStretch()
+        # the official trailer (one) and the cast / characters
+        self.p_trailer_lbl = QLabel("OFFICIAL TRAILER")
+        self.p_trailer_lbl.setObjectName("plannedFactKey")
+        self.p_trailer = _TrailerThumb()
+        self.p_trailer.play.connect(self._play_trailer)
+        self.p_cast_lbl = QLabel("CAST")
+        self.p_cast_lbl.setObjectName("plannedFactKey")
+        self.p_cast_host = QWidget()
+        from PyQt6.QtWidgets import QGridLayout
+        self.p_cast = QGridLayout(self.p_cast_host)
+        self.p_cast.setContentsMargins(0, 0, 0, 0)
+        self.p_cast.setHorizontalSpacing(4)
+        self.p_cast.setVerticalSpacing(8)
+        for w in (self.p_trailer_lbl, self.p_trailer, self.p_cast_lbl, self.p_cast_host):
+            info_l.addWidget(w)
+            w.setVisible(False)
+        info_l.addStretch()
+        pv.addWidget(self.p_scroll, 1)
         self.btn_watchlist = QPushButton("＋  Add to Watchlist")
         self.btn_watchlist.setObjectName("primaryBtn")
         self.btn_watching = QPushButton("▶  I'm watching it")
@@ -330,7 +471,7 @@ class MovieBrowser(QWidget):
         self.p_note.setObjectName("plannedReleaseHint")
         self.p_note.setWordWrap(True)
         body.addWidget(self.p_note)
-        pv.addLayout(body, 1)
+        pv.addLayout(body)
         root.addWidget(self.preview)
         self._apply_kind()
 
@@ -422,9 +563,9 @@ class MovieBrowser(QWidget):
         if ck in self._cache:
             self._show(self._cache[ck], self._next_token())
             return
-        self.status.setText(({"tv": "Finding shows for you…", "anime": "Finding anime for you…"}
+        self._show_loading(({"tv": "Finding shows for you…", "anime": "Finding anime for you…"}
                              .get(kind, "Finding films for you…"))
-                            if key == "for_you" else "Loading…")
+                            if key == "for_you" else f"Loading {dict(sources(kind)).get(key, '')}…")
         tok = self._next_token()
 
         def work():
@@ -456,7 +597,7 @@ class MovieBrowser(QWidget):
             b.style().unpolish(b)
             b.style().polish(b)
         self.section.setText(f"RESULTS FOR “{q.upper()}”")
-        self.status.setText("Searching…")
+        self._show_loading(f"Searching for “{q}”…")
         tok = self._next_token()
         kind = self.kind
 
@@ -477,6 +618,16 @@ class MovieBrowser(QWidget):
         w = Worker(work)
         w.signals.result.connect(lambda hits, t=tok: self._show(hits, t))
         run_worker(w, PRIORITY_INTERACTIVE)
+
+    def _show_loading(self, text: str):
+        """Immediate feedback: the old list goes, shimmering placeholders and
+        a status line take its place until the new list arrives."""
+        self.grid.clear()
+        self._tiles = []
+        for i in range(12):
+            self.grid.addWidget(_SkeletonTile(i * 0.12))
+        self.status.setText(text)
+        self.scroll.verticalScrollBar().setValue(0)
 
     def _next_token(self) -> int:
         self._token += 1
@@ -521,6 +672,7 @@ class MovieBrowser(QWidget):
             t.set_selected(t.hit is hit)
         self.p_reason.setText(hit.get("reason") or "")
         self.p_reason.setVisible(bool(hit.get("reason")))
+        self._clear_extras()
         self.p_title.setText(hit.get("title") or "")
         self.p_meta.setText(" · ".join(x for x in (str(hit.get("year") or ""),
                                                   f"★ {hit['score'] / 10:.1f}" if hit.get("score") else "") if x))
@@ -555,8 +707,14 @@ class MovieBrowser(QWidget):
                 row = media_to_row(m)
                 row.update({"media_type": "anime", "anilist_id": int(pid), "_media": m})
                 return row
-            from core.providers import get_provider
-            return get_provider(kind).details(pid)
+            from core import tmdb
+            from core.providers import movie_row, tv_row
+            d = tmdb.tv_details(pid) if kind == "tv" else tmdb.movie_details(pid)
+            if not d:
+                return None
+            row = tv_row(d) if kind == "tv" else movie_row(d)
+            row["_main_trailer"] = tmdb.main_trailer(d)
+            return row
 
         w2 = Worker(work)
         w2.signals.result.connect(lambda row, pid=pid: self._on_details(row, pid))
@@ -566,6 +724,7 @@ class MovieBrowser(QWidget):
         if self._gone() or not row or not self._selected or self._selected["provider_id"] != pid:
             return
         self._selected["_row"] = row
+        self._show_extras(row)
         if row.get("media_type") == "tv":
             return self._on_tv_details(row)
         if row.get("media_type") == "anime":
@@ -596,6 +755,83 @@ class MovieBrowser(QWidget):
         else:
             self.p_note.setText("Out in HD: ready to watch.")
 
+    # ── trailer + cast ────────────────────────────────────────────────────────
+
+    def _clear_extras(self):
+        self._trailer = None
+        for w in (self.p_trailer_lbl, self.p_trailer, self.p_cast_lbl, self.p_cast_host):
+            w.setVisible(False)
+        while self.p_cast.count():
+            it = self.p_cast.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._avatars = {}
+        self.p_scroll.verticalScrollBar().setValue(0)
+
+    def _show_extras(self, row: Dict):
+        if row.get("media_type") == "anime":
+            t = ({"id": row["trailer_id"], "site": row.get("trailer_site") or "youtube",
+                  "title": "Official Trailer",
+                  "thumb": row.get("trailer_thumb") or (
+                      f"https://i.ytimg.com/vi/{row['trailer_id']}/hqdefault.jpg"
+                      if (row.get("trailer_site") or "youtube") == "youtube" else "")}
+                 if row.get("trailer_id") else None)
+            self.p_cast_lbl.setText("CHARACTERS")
+        else:
+            t = row.get("_main_trailer")
+            self.p_cast_lbl.setText("CAST")
+        self._trailer = t
+        if t:
+            self.p_trailer.load(t.get("thumb") or "", t.get("title") or "Official Trailer")
+        self.p_trailer_lbl.setVisible(bool(t))
+        self.p_trailer.setVisible(bool(t))
+        people = (row.get("characters") or [])[:6]
+        from ui.planned_details import _Avatar
+        for i, c in enumerate(people):
+            cell = QWidget()
+            cl = QVBoxLayout(cell)
+            cl.setContentsMargins(0, 0, 0, 0)
+            cl.setSpacing(2)
+            av = _Avatar(48)
+            cl.addWidget(av, alignment=Qt.AlignmentFlag.AlignHCenter)
+            for text, obj in ((c.get("name") or "", "plannedCharName"), (c.get("role") or "", "plannedCharRole")):
+                l = QLabel(text)
+                l.setObjectName(obj)
+                l.setWordWrap(True)
+                l.setFixedWidth(88)
+                l.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+                cl.addWidget(l, alignment=Qt.AlignmentFlag.AlignHCenter)
+            self.p_cast.addWidget(cell, i // 3, i % 3, alignment=Qt.AlignmentFlag.AlignTop)
+            if c.get("image"):
+                self._avatars[c["image"]] = av
+                w = ImageWorker(c["image"], ("cast", self._token, c["image"]))
+                w.signals.result.connect(self._on_avatar)
+                run_worker(w)
+        self.p_cast_lbl.setVisible(bool(people))
+        self.p_cast_host.setVisible(bool(people))
+
+    def _on_avatar(self, result):
+        try:
+            (_k, tok, url), _s, path = result
+        except Exception:
+            return
+        if self._gone() or tok != self._token:
+            return
+        av = self._avatars.get(url)
+        if path and av is not None:
+            try:
+                av.set_pixmap(QPixmap(str(path)))
+            except RuntimeError:
+                pass
+
+    def _play_trailer(self):
+        t = getattr(self, "_trailer", None)
+        if not t:
+            return
+        from ui.trailer_player import show_trailer
+        show_trailer(t["id"], t.get("site") or "youtube",
+                     (self._selected or {}).get("title") or t.get("title") or "", self.window())
+
     def _on_tv_details(self, row: Dict):
         seasons = row.get("_seasons") or []
         today = datetime.now().strftime("%Y-%m-%d")
@@ -611,8 +847,24 @@ class MovieBrowser(QWidget):
             bits.append(f"★ {row['average_score'] / 10:.1f}")
         self.p_meta.setText("  ·  ".join(b for b in bits if b))
         existing = getattr(self, "_existing", None)
+        ended = row.get("status") in ("FINISHED", "CANCELLED")
+        started = [s for s in seasons if s.get("air_date") and s["air_date"] <= today]
+        self._tv_current = started[-1]["season_number"] if started else None
+        if ended:
+            self.btn_watched.setText("✓  I've finished it")
+            self.btn_watched.setToolTip("Marks every episode watched")
+            can_done = aired
+        else:
+            # Running show: you can't have finished it - but you may be up to
+            # date on the earlier seasons and want to follow the current one.
+            self.btn_watched.setText("✓  Seen earlier seasons")
+            cur = self._tv_current
+            self.btn_watched.setToolTip(
+                f"Marks Seasons 1–{cur - 1} watched and follows Season {cur}" if cur and cur > 1
+                else "Only one season so far")
+            can_done = bool(cur and cur > 1)
         self.btn_watching.setEnabled(aired and not existing)
-        self.btn_watched.setEnabled(aired and not existing)
+        self.btn_watched.setEnabled(can_done and not existing)
         if existing:
             return
         nxt = next((s for s in seasons if s.get("air_date") and s["air_date"] > today), None)
@@ -721,6 +973,7 @@ class MovieBrowser(QWidget):
             return row
 
         def done(row):
+            nonlocal watch_status
             if self._gone():
                 return
             if not row:
@@ -732,12 +985,23 @@ class MovieBrowser(QWidget):
                 lib_id = _save_anime(self.db, row["_media"], watch_status)
             elif kind == "tv":
                 from core.kinema_sync import save_tv_full
-                lib_id = save_tv_full(self.db, row, row.get("_episodes") or [], watch_status)
-                if watch_status == "completed":
-                    last = max(((e["season_number"], e["episode_number"])
-                                for e in row.get("_episodes") or []), default=None)
-                    if last:
-                        self.db.set_tv_watched_through(lib_id, *last)
+                ended = row.get("status") in ("FINISHED", "CANCELLED")
+                earlier = watch_status == "completed" and not ended
+                lib_id = save_tv_full(self.db, row, row.get("_episodes") or [],
+                                      "watching" if earlier else watch_status)
+                eps = row.get("_episodes") or []
+                if earlier:
+                    cur = getattr(self, "_tv_current", None) or 1
+                    last = max(((e["season_number"], e["episode_number"]) for e in eps
+                                if e["season_number"] < cur), default=None)
+                elif watch_status == "completed":
+                    last = max(((e["season_number"], e["episode_number"]) for e in eps), default=None)
+                else:
+                    last = None
+                if last:
+                    self.db.set_tv_watched_through(lib_id, *last)
+                if earlier:
+                    watch_status = "watching"
             else:
                 lib_id = self.db.save_tmdb_title(row, watch_status)
             self._existing = self.db.get_anime_by_id(lib_id)
@@ -768,8 +1032,9 @@ def _save_anime(db, media: Dict, watch_status: str) -> int:
     extra = {k: v for k, v in media_to_row(media).items()
              if k in db._anime_columns() and v not in (None, "", [], {})
              and k not in ("watch_status",)}
-    if extra:
-        db.update_anime(lib_id, extra)
+    import time as _t
+    extra["meta_synced_at"] = int(_t.time())      # baseline: nothing here is "new"
+    db.update_anime(lib_id, extra)
     if watch_status == "completed" and media.get("episodes"):
         for n in range(1, int(media["episodes"]) + 1):
             db.set_episode_watched(lib_id, n, True)

@@ -236,3 +236,47 @@ def test_tv_panel_unaired_episode_locked(tv_window):
     assert [r.tick.isEnabled() for r in rows] == [True, True, True, False]
     assert rows[2].objectName() == "tvEpRowNext"
     assert "S01E04 airs" in sec.next_air.text()
+
+
+def test_running_show_mark_completed_hidden_and_opens_next_season(tv_window, tv_fake):
+    """Dexter-style: S1 fully watched, S2 airing. The panel opens on S2,
+    'Mark completed' isn't offered, and marking S1 doesn't touch S2."""
+    from tests.test_tv import add_show
+    win, _ids = tv_window
+    sid = add_show(win.db, tv_fake, 20, {1: [_date(-400), _date(-393)],
+                                         2: [_date(-3), _date(4), _date(11)]})
+    win.db.update_anime(sid, {"status": "RELEASING"})
+    win.db.set_tv_season_watched(sid, 1, True)
+    win._navigate("tv")
+    assert wait_until(lambda: sid in win._cards)
+    win._on_card_clicked(sid)
+    sec = win.detail_panel.tv_section
+    assert sec._season == 2 and sec.season_title.text() == "Season 2"
+    labels = [sec.actions.itemAt(i).widget().text() for i in range(sec.actions.count())]
+    assert "Mark completed" not in labels
+    p = win.db.tv_progress(sid)
+    assert p["watched"] == 2 and (p["next"]["season_number"], p["next"]["episode_number"]) == (2, 1)
+    assert win._cards[sid].status_badge.text() in ("NEW EPISODE", "1 TO WATCH")
+
+
+def test_add_running_show_seen_earlier_seasons(qapp, db, tv_fake, monkeypatch):
+    from core import kinema_discover as kd
+    from ui.kinema_add_dialog import MovieAddDialog
+    tv_fake["put"](21, {1: [_date(-400)], 2: [_date(-300)], 3: [_date(-5), _date(2)]})
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None, kind="tv": kd._hits(
+        [{"id": 21, "name": "Show 21", "first_air_date": "2022-01-01"}], "tv"))
+    monkeypatch.setattr(kd, "genres", lambda kind="tv": [])
+    dlg = MovieAddDialog(db, kind="tv")
+    assert wait_until(lambda: len(dlg._tiles) == 1)
+    dlg._select(dlg._tiles[0].hit)
+    b = dlg.browser
+    assert wait_until(lambda: b.btn_watched.isEnabled())
+    assert b.btn_watched.text().endswith("Seen earlier seasons")
+    got = []
+    dlg.added.connect(lambda lid, t: got.append(lid))
+    dlg._add("completed")
+    assert wait_until(lambda: bool(got))
+    row = db.get_anime_by_id(got[0])
+    p = db.tv_progress(got[0])
+    assert row["watch_status"] == "watching" and p["watched"] == 2
+    assert (p["next"]["season_number"], p["next"]["episode_number"]) == (3, 1)

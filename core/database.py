@@ -1413,8 +1413,13 @@ class DatabaseManager:
             f"WHERE state='active' AND kind IN ({q}) AND anime_id IN "
             f"(SELECT id FROM anime WHERE COALESCE(media_type,'anime') != 'anime')",
             (int(datetime.now().timestamp()), *self.ANIME_ONLY_ALERTS))
+        # First-sync "Trailer available" alerts (older builds) were never news.
+        cur2 = conn.execute(
+            "UPDATE notifications SET state='dismissed', dismissed_at=? "
+            "WHERE state='active' AND kind='upcoming_trailer' AND title='Trailer available'",
+            (int(datetime.now().timestamp()),))
         conn.commit()
-        return cur.rowcount
+        return cur.rowcount + cur2.rowcount
 
     def dismiss_notification(self, notification_id: int):
         conn = self._get_conn()

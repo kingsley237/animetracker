@@ -202,3 +202,18 @@ def test_completed_grouping_and_fold_defaults():
     assert [a["id"] for a in groups[1][2]] == [4, 1]        # newest first
     assert not default_collapsed("month") and default_collapsed("2025")
     assert not default_collapsed("rewatching")
+
+
+def test_existing_trailer_is_not_news_on_first_sync(db, anilist):
+    """Opening a Plan to Watch anime refreshes it; the trailer it already
+    had must not pop up as 'Trailer available'."""
+    from core.metadata_sync import MetadataSync
+    add_anime(db, "Has trailer", "planned", anilist_id=31, status="NOT_YET_RELEASED",
+              trailer_id="OLD", trailer_site="youtube")
+    anilist["meta"][31] = media(31, trailer={"id": "OLD", "site": "youtube"},
+                                startDate={"year": 2027, "month": 1, "day": 9})
+    assert not MetadataSync(db).sync()["notifications"]
+    assert not db.get_active_notifications("upcoming_trailer")
+    anilist["meta"][31] = media(31, trailer={"id": "NEW", "site": "youtube"},
+                                startDate={"year": 2027, "month": 1, "day": 9})
+    assert [n["title"] for n in MetadataSync(db).sync()["notifications"]] == ["New trailer is out"]

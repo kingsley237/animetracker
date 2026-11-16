@@ -241,6 +241,33 @@ def videos(details: Dict) -> List[Dict]:
     return out
 
 
+def main_trailer(details: Dict) -> Optional[Dict]:
+    """THE official trailer, not teasers, spots, clips or 'Trailer 2'.
+    Official YouTube 'Trailer' videos first; among them a plain
+    'Official Trailer' beats numbered/final/teaser-ish names; ties go to the
+    most recent. Falls back to any trailer, then a teaser."""
+    import re
+    vids = [v for v in ((details or {}).get("videos") or {}).get("results") or []
+            if (v.get("site") or "").lower() == "youtube" and v.get("key")]
+    if not vids:
+        return None
+
+    def rank(v):
+        name = (v.get("name") or "").lower()
+        typ = {"Trailer": 0, "Teaser": 2}.get(v.get("type"), 5)
+        plain = 0 if re.fullmatch(r"(official )?(main )?trailer( \[.*\]| \(.*\))?", name) else (
+            1 if "official trailer" in name and not re.search(r"\b(2|3|4|ii|final|teaser|spot|tv)\b", name)
+            else 2)
+        return (typ, 0 if v.get("official") else 1, plain, "".join(chr(255 - ord(c)) for c in
+                                                                  (v.get("published_at") or "")))
+
+    best = sorted(vids, key=rank)[0]
+    if best.get("type") not in ("Trailer", "Teaser"):
+        return None
+    return {"id": best["key"], "site": "youtube", "title": best.get("name") or "Official Trailer",
+            "thumb": f"https://i.ytimg.com/vi/{best['key']}/hqdefault.jpg"}
+
+
 def us_release_dates(details: Dict, country: Optional[str] = None) -> Dict[str, str]:
     """Movie release dates for a country by type: theatrical / digital / physical."""
     country = (country or region()).upper()

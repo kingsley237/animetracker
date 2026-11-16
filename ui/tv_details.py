@@ -399,7 +399,8 @@ class TVSection(QWidget):
                 self._add_action(f"✓  Watched {code(nxt['season_number'], nxt['episode_number'])}",
                                  "primaryBtn", lambda: self._toggle(nxt["season_number"],
                                                                      nxt["episode_number"], True))
-            self._add_action("Mark completed", "secondaryBtn", self._finish_all)
+            if api in ("FINISHED", "CANCELLED"):
+                self._add_action("Mark completed", "secondaryBtn", self._finish_all)
             self._add_action("Drop", "dangerBtn", lambda: self._set_status("dropped"))
         elif ws == "completed":
             self._add_action("Back to Watching", "secondaryBtn", lambda: self._set_status("watching"))
@@ -442,10 +443,9 @@ class TVSection(QWidget):
         if not seasons:
             return
         p = self._p
-        if self._season is None or self._season not in {s["season_number"] for s in seasons}:
-            pick = p["next"] or p["last"]
-            self._season = pick["season_number"] if pick else seasons[0]["season_number"]
         all_eps = self.db.get_tv_episodes(r["id"])
+        if self._season is None or self._season not in {s["season_number"] for s in seasons}:
+            self._season = self._current_season(seasons, all_eps, p)
         for s in seasons:
             n = s["season_number"]
             eps = [e for e in all_eps if e["season_number"] == n]
@@ -460,6 +460,21 @@ class TVSection(QWidget):
             b.clicked.connect(lambda _=False, n=n: self._pick_season(n))
             self.tabs.addWidget(b)
         self._render_episodes(seasons, all_eps)
+
+    @staticmethod
+    def _current_season(seasons: List[Dict], eps: List[Dict], p: Dict) -> int:
+        """The season you're on: the one with your next episode; when you've
+        finished a season, the one after it (even if it hasn't aired yet)."""
+        nums = [s["season_number"] for s in seasons]
+        if p["next"]:
+            return p["next"]["season_number"]
+        if p["last"]:
+            n = p["last"]["season_number"]
+            done = all(e.get("watched") for e in eps
+                       if e["season_number"] == n and e.get("air_date") and e["air_date"] <= _today())
+            later = [x for x in nums if x > n]
+            return later[0] if done and later else n
+        return nums[0]
 
     def _pick_season(self, n: int):
         self._season = n
@@ -484,7 +499,7 @@ class TVSection(QWidget):
         self.season_stars.set_value(s.get("rating"))
         self.season_stars.setVisible(bool(aired))
         all_done = bool(aired) and all(e.get("watched") for e in aired)
-        self.season_btn.setText("Unmark all" if all_done else "✓  Mark all")
+        self.season_btn.setText(f"Unmark S{n}" if all_done else f"✓  Mark S{n} watched")
         self.season_btn.setToolTip("Unmark this season" if all_done else "Mark every aired episode of this season watched")
         self.season_btn.setVisible(bool(aired))
         self._clear(self.eps)
@@ -530,6 +545,11 @@ class TVSection(QWidget):
                if e.get("air_date") and e["air_date"] <= _today()]
         all_done = bool(eps) and all(e.get("watched") for e in eps)
         self.db.set_tv_season_watched(self._row["id"], n, not all_done)
+        if not all_done:
+            later = [s["season_number"] for s in self.db.get_tv_seasons(self._row["id"])
+                     if s["season_number"] > n]
+            if later:
+                self._season = later[0]
         self._after_progress()
 
     def _finish_all(self):
