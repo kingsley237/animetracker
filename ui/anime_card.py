@@ -15,7 +15,7 @@ Design principles (AniList / Crunchyroll / Plex pattern):
   - Progress bar flush at the very bottom edge of the card
   - All text has background:transparent so it never creates boxes
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 from PyQt6.QtWidgets import (
@@ -741,6 +741,10 @@ class AnimeCard(QFrame):
             if hasattr(self, "_border_overlay"):
                 self._border_overlay.update()
 
+        # ── TV shows (Kinema): S·E progress, new episodes, next airing ────
+        if anime.get("media_type") == "tv":
+            self._apply_tv(anime, ws, api_status)
+
         # Top overlay: you requested it to be present on Watching cards only.
         # (Planned cards do not have any top-right text; keep them clean.)
         self._top_grad.setVisible(ws == "watching")
@@ -752,6 +756,96 @@ class AnimeCard(QFrame):
 
         self._refresh_overlay()
         self.refresh_links()
+
+    def _apply_tv(self, anime: Dict[str, Any], ws: str, api_status: str):
+        self._next_ep_at = None
+        p = self.db.tv_progress(anime["id"]) if anime["id"] > 0 else {
+            "total": 0, "aired": 0, "watched": 0, "unwatched_aired": 0,
+            "next": None, "last": None, "upcoming": None}
+        code = lambda e: f"S{e['season_number']:02d}E{e['episode_number']:02d}"
+        today = datetime.now().strftime("%Y-%m-%d")
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        ended = api_status in ("FINISHED", "CANCELLED")
+        n_left = p["unwatched_aired"]
+
+        # line 1: where you are
+        if ws == "watching" and p["next"]:
+            ep = f"Next {code(p['next'])}"
+        elif ws == "watching" and p["watched"]:
+            ep = "Caught up"
+        elif ws == "completed":
+            ep = f"{p['watched']} episodes watched"
+        else:
+            ep = f"{p['total']} episodes" if p["total"] else "No episodes listed yet"
+        if p["aired"] and ws in ("watching", "dropped"):
+            ep += f"  ·  {p['watched']}/{p['aired']}"
+        self.ep_label.setText(ep)
+        self.ep_label.setStyleSheet("font-size:10px;color:#c0c4d6;background:transparent;")
+
+        # badge
+        fresh = ws == "watching" and n_left and p["next"] and any(
+            not e.get("watched") and e.get("air_date") and week_ago <= e["air_date"] <= today
+            for e in self.db.get_tv_episodes(anime["id"], (p["last"] or p["next"])["season_number"]))
+        if ws == "completed":
+            self._set_badge("badgeCompleted", "COMPLETED"); accent = "completed"
+        elif ws == "dropped":
+            self._set_badge("badgeDropped", "DROPPED"); accent = "dropped"
+        elif ws == "planned":
+            if api_status == "NOT_YET_RELEASED" or not p["aired"]:
+                self._set_badge("badgeUpcoming", "COMING SOON")
+            elif ended:
+                self._set_badge("badgeCompleted", "ENDED")
+            else:
+                self._set_badge("badgeWatching", "AIRING")
+            accent = "planned"
+        elif fresh:
+            self._set_badge("badgeAlert", f"+{n_left} NEW" if n_left > 1 else "NEW EPISODE")
+            accent = "behind"
+        elif n_left:
+            self._set_badge("badgeWatching", f"{n_left} TO WATCH"); accent = "airing"
+        elif p["upcoming"]:
+            self._set_badge("badgeCompleted", "UP TO DATE"); accent = "airing"
+        else:
+            self._set_badge("badgeWatching", "BETWEEN SEASONS" if not ended else "ENDED")
+            accent = "airing"
+
+        # line 2: next airing / show state
+        note, color = "", "#9da5c0"
+        up = p["upcoming"]
+        if up and ws != "dropped":
+            d = datetime.strptime(up["air_date"], "%Y-%m-%d")
+            days = (d.date() - datetime.now().date()).days
+            when = "today" if days == 0 else ("tomorrow" if days == 1 else f"in {days} days")
+            label = ("Season " + str(up["season_number"]) + " premieres"
+                     if up["episode_number"] == 1 else code(up))
+            note, color = f"{label} {d.strftime('%b ')}{d.day} · {when}", "#38bdf8"
+        elif ws == "watching" and n_left:
+            mins = n_left * (anime.get("duration") or 45)
+            h, m = divmod(mins, 60)
+            note = f"{n_left} left · about {h}h {m:02d}m" if h else f"{n_left} left · about {m}m"
+        elif ended:
+            note = "Show ended" if api_status == "FINISHED" else "Cancelled"
+        elif p["total"]:
+            note = "Next season not dated yet"
+        self._static_note = note
+        self.countdown_label.setText(note)
+        self.countdown_label.setStyleSheet(
+            f"font-size:10px;font-weight:600;color:{color};background:transparent;")
+
+        for w in (self.behind_badge_lbl, self.score_badge_lbl, self.ep_cover_badge):
+            w.setVisible(False)
+        denom = p["aired"] or p["total"] or 1
+        self.progress_bar.setMaximum(denom)
+        self.progress_bar.setValue(min(p["watched"], denom))
+        self.progress_bar.setVisible(ws in ("watching", "completed", "dropped") and p["watched"] > 0)
+        pc = {"completed": "#34d399", "dropped": "#b5485a"}.get(ws, "#38bdf8")
+        self.progress_bar.setStyleSheet(
+            "QProgressBar{background:rgba(255,255,255,0.12);border:none;border-radius:0;}"
+            f"QProgressBar::chunk{{background:{pc};border-radius:0;}}")
+        self.setProperty("cardAccent", accent)
+        self.update()
+        if hasattr(self, "_border_overlay"):
+            self._border_overlay.update()
 
     def refresh_links(self):
         has_links = self.anime_id > 0 and self.db.has_anime_links(self.anime_id)

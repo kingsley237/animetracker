@@ -18,6 +18,16 @@ from core.database import DatabaseManager
 
 MOVIE_ALERT_KINDS = ["movie_digital", "movie_theaters", "movie_digital_date",
                      "upcoming_date", "upcoming_trailer"]
+TV_ALERT_KINDS = ["tv_new_episodes", "tv_new_season", "tv_premiere_date", "upcoming_trailer"]
+
+
+def _episodes_from(n: int, page: Optional[Dict]) -> List[Dict]:
+    from core import tmdb
+    return [{"season_number": n, "episode_number": e.get("episode_number"),
+             "name": e.get("name") or "", "air_date": e.get("air_date"),
+             "runtime": e.get("runtime"),
+             "still_url": tmdb.image_url(e.get("still_path"), "w300")}
+            for e in (page or {}).get("episodes") or []]
 
 
 def _norm(v):
@@ -65,6 +75,30 @@ def alert_mode() -> str:
     return v if v in ("digital", "cinema", "both", "off") else "digital"
 
 
+def fetch_tv_full(tmdb_id: int, seasons: Optional[List[int]] = None):
+    """(row, episodes) for a show: details plus the episodes of every season
+    (or just `seasons`), fetched in parallel. None when offline."""
+    from core import tmdb
+    from core.providers import tv_row
+    d = tmdb.tv_details(tmdb_id)
+    if not d:
+        return None, []
+    row = tv_row(d)
+    nums = seasons if seasons is not None else [s["season_number"] for s in row["_seasons"]]
+    pages = tmdb.get_many([(f"/tv/{int(tmdb_id)}/season/{n}", None) for n in nums])
+    episodes = []
+    for n, page in zip(nums, pages):
+        episodes += _episodes_from(n, page)
+    return row, episodes
+
+
+def save_tv_full(db, row: Dict, episodes: List[Dict], watch_status: Optional[str] = None) -> int:
+    lib_id = db.save_tmdb_title(row, watch_status)
+    db.save_tv_seasons(lib_id, row.get("_seasons") or [])
+    db.save_tv_episodes(lib_id, episodes)
+    return lib_id
+
+
 class KinemaSync:
     def __init__(self, db: DatabaseManager):
         self.db = db
@@ -107,6 +141,135 @@ class KinemaSync:
 
         result["notifications"] = self.db.get_due_notifications(limit=6, kinds=MOVIE_ALERT_KINDS)
         return result
+
+    # ── TV shows ──────────────────────────────────────────────────────────────
+
+    def sync_tv(self, only_ids: Optional[List[int]] = None) -> Dict:
+        """Refresh shows from TMDB: details, the seasons that can still change
+        (the latest one, the next one, any new or incomplete one) and their
+        episodes. Never touches what you watched or rated."""
+        from core import tmdb
+        from core.providers import tv_row
+
+        shows = self.db.get_all_anime(media_type="tv")
+        if only_ids is not None:
+            shows = [m for m in shows if m["id"] in only_ids]
+        shows = [m for m in shows if m.get("tmdb_id")]
+        result = {"changed": [], "art_changed": [], "notifications": []}
+        if not shows:
+            return result
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            details = list(pool.map(lambda m: tmdb.tv_details(m["tmdb_id"]), shows))
+
+        now = int(datetime.now().timestamp())
+        cols = self.db._anime_columns()
+        for old, d in zip(shows, details):
+            if not d:
+                continue
+            new = tv_row(d)
+            known_seasons = {s["season_number"]: s for s in self.db.get_tv_seasons(old["id"])}
+            known_eps = self.db.get_tv_episodes(old["id"])
+            have = {e["season_number"] for e in known_eps}
+            nums = [s["season_number"] for s in new["_seasons"]]
+            latest = max(nums) if nums else 0
+            want = sorted({n for n in nums if n not in have or n == latest
+                           or n == new.get("_next_season")
+                           or any(e["season_number"] == n and not e.get("air_date")
+                                  for e in known_eps)})
+            pages = tmdb.get_many([(f"/tv/{int(old['tmdb_id'])}/season/{n}", None) for n in want])
+            episodes = []
+            for n, page in zip(want, pages):
+                episodes += _episodes_from(n, page)
+
+            stored = {k: v for k, v in new.items() if not k.startswith("_") and k in cols}
+            updates = {k: v for k, v in stored.items()
+                       if _norm(v) != _norm(old.get(k)) and _norm(v) is not None}
+            if not new.get("next_episode_at") and old.get("next_episode_at"):
+                updates["next_episode_at"] = None      # stopped airing
+                updates["next_episode_num"] = None
+            first_sync = not old.get("meta_synced_at")
+            if "cover_url" in updates:
+                updates["cover_local"] = ""
+                result["art_changed"].append(old["id"])
+            elif "banner_url" in updates:
+                result["art_changed"].append(old["id"])
+            self.db.update_anime(old["id"], {**updates, "meta_synced_at": now})
+            self.db.save_tv_seasons(old["id"], new["_seasons"])
+            self.db.save_tv_episodes(old["id"], episodes)
+            if updates or episodes:
+                result["changed"].append(old["id"])
+            if not first_sync and old.get("watch_status") in ("watching", "planned", "completed"):
+                self._tv_alerts(old, new, updates, known_seasons, known_eps, episodes)
+
+        result["notifications"] = self.db.get_due_notifications(limit=6, kinds=TV_ALERT_KINDS)
+        return result
+
+    def _tv_alerts(self, old: Dict, new: Dict, updates: Dict, known_seasons: Dict,
+                   known_eps: List[Dict], fresh_eps: List[Dict]):
+        """New episodes (shows you watch), new season / premiere date (any
+        show you follow), new trailer (Watchlist / finished). The first sync
+        is a quiet baseline; fingerprints stop repeats."""
+        title = new.get("romaji_title") or old.get("romaji_title") or "Show"
+        tid = old.get("tmdb_id")
+        base = {"anime_id": old["id"], "anilist_id": None}
+        ws = old.get("watch_status")
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if ws == "watching":
+            before = {(e["season_number"], e["episode_number"]): e for e in known_eps}
+            landed = []
+            for e in fresh_eps:
+                if not e.get("air_date") or e["air_date"] > today:
+                    continue
+                prev = before.get((e["season_number"], e["episode_number"]))
+                if prev and prev.get("watched"):
+                    continue
+                if prev is None or not prev.get("air_date") or prev["air_date"] > today:
+                    landed.append(e)
+            if landed:
+                landed.sort(key=lambda e: (e["season_number"], e["episode_number"]))
+                last = landed[-1]
+                code = f"S{last['season_number']:02d}E{last['episode_number']:02d}"
+                if len(landed) == 1:
+                    name = f" \u201c{last['name']}\u201d" if last.get("name") else ""
+                    msg = f"{title} {code}{name} is out."
+                else:
+                    msg = f"{len(landed)} new episodes of {title} are out (up to {code})."
+                self.db.upsert_notification({
+                    **base, "fingerprint": f"tv-eps:{tid}:{code}",
+                    "kind": "tv_new_episodes",
+                    "title": "New episode" if len(landed) == 1 else "New episodes",
+                    "message": msg,
+                    "payload": {"tmdb_id": tid, "season": last["season_number"],
+                                "episode": last["episode_number"]}})
+
+        for s in new.get("_seasons") or []:
+            n = s["season_number"]
+            date = s.get("air_date")
+            future = bool(date and date > today)
+            if n not in known_seasons:
+                if known_seasons and n > max(known_seasons):
+                    when = f" It premieres {_label(_day_ts(date))}." if future else ""
+                    self.db.upsert_notification({
+                        **base, "fingerprint": f"tv-season:{tid}:{n}",
+                        "kind": "tv_new_season", "title": "New season",
+                        "message": f"{title} Season {n} is confirmed.{when}",
+                        "payload": {"tmdb_id": tid, "season": n, "date": date}})
+            elif future and not known_seasons[n].get("air_date"):
+                self.db.upsert_notification({
+                    **base, "fingerprint": f"tv-premiere:{tid}:{n}:{date}",
+                    "kind": "tv_premiere_date", "title": "Premiere date set",
+                    "message": f"{title} Season {n} premieres {_label(_day_ts(date))}.",
+                    "payload": {"tmdb_id": tid, "season": n, "date": date}})
+
+        if "trailer_id" in updates and new.get("trailer_id") and ws in ("planned", "completed"):
+            self.db.upsert_notification({
+                **base, "fingerprint": f"upcoming-trailer:tv-{tid}:{new['trailer_id']}",
+                "kind": "upcoming_trailer", "title": "New trailer is out",
+                "message": f"{title} has a new trailer. Watch it right here.",
+                "payload": {"trailer_id": new["trailer_id"], "trailer_site": "youtube",
+                            "anime_title": title}})
 
     def _movie_alerts(self, old: Dict, new: Dict, details: Dict, updates: Dict,
                       first_sync: bool, now: int):

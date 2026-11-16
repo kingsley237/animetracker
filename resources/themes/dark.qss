@@ -1794,3 +1794,66 @@ QLabel#sidebarBrandSub {
     font-size: 10px;
     font-weight: 600;
 }
+
+/* ── Kinema Discover: Movies | TV shows switch ─────────────────────────── */
+QPushButton#kindSwitch {
+    background: transparent;
+    color: #8c93ad;
+    border: 1px solid #262a3a;
+    border-radius: 15px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#kindSwitch:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#kindSwitch[active="true"] {
+    background: rgba(56, 189, 248, 0.12);
+    color: #e6f6ff;
+    border-color: #38bdf8;
+}
+
+/* ── Kinema TV: detail panel ───────────────────────────────────────────── */
+QLabel#tvStamp {
+    background: rgba(56, 189, 248, 0.12); color: #bae6fd;
+    border: 1px solid #38bdf8; border-radius: 5px;
+    padding: 3px 10px; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+}
+QLabel#tvStamp[ws="planned"]   { background: rgba(157,143,255,0.10); color: #d7d2ff; border-color: #9d8fff; }
+QLabel#tvStamp[ws="completed"] { background: rgba(52,211,153,0.10); color: #bbf7d0; border-color: #34d399; }
+QLabel#tvStamp[ws="dropped"]   { background: rgba(181,72,90,0.12); color: #f0a3ad; border-color: #b5485a; }
+QLabel#tvShowState { color: #8c93ad; font-size: 11px; font-weight: 600; padding-left: 6px; }
+QWidget#tvProgressTrack { background: #1c2030; border-radius: 3px; }
+QWidget#tvProgressFill  { background: #38bdf8; border-radius: 3px; }
+QLabel#tvNextAir { color: #7dd3fc; font-size: 12px; font-weight: 600; }
+
+QPushButton#tvSeasonTab {
+    background: #141724; color: #8c93ad; border: 1px solid #23273a;
+    border-radius: 13px; padding: 4px 12px; font-size: 11px; font-weight: 700;
+}
+QPushButton#tvSeasonTab:hover { color: #e2e4ec; border-color: #3a3f55; }
+QPushButton#tvSeasonTab[active="true"] {
+    background: rgba(56, 189, 248, 0.14); color: #e6f6ff; border-color: #38bdf8;
+}
+QLabel#tvSeasonTitle { color: #f0f1f6; font-size: 14px; font-weight: 700; }
+QPushButton#tvStar {
+    background: transparent; border: none; color: #3a3f55; font-size: 14px; padding: 0;
+}
+QPushButton#tvStar:hover { color: #fde68a; }
+QPushButton#tvStar[on="true"] { color: #fbbf24; }
+
+QWidget#tvEpRow, QWidget#tvEpRowNext { border-radius: 7px; background: transparent; }
+QWidget#tvEpRow:hover { background: #151827; }
+QWidget#tvEpRowNext { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); }
+QPushButton#tvEpTick {
+    background: transparent; border: 1.5px solid #3a3f55; border-radius: 12px;
+    color: #0b0d12; font-size: 12px; font-weight: 900; padding: 0;
+}
+QPushButton#tvEpTick:hover { border-color: #38bdf8; }
+QPushButton#tvEpTick[watched="true"] { background: #38bdf8; border-color: #38bdf8; }
+QPushButton#tvEpTick:disabled { border: 1.5px dashed #2a2e40; }
+QLabel#tvEpNum { color: #6b7391; font-size: 11px; font-weight: 700; }
+QLabel#tvEpName { color: #dfe2ec; font-size: 12px; }
+QLabel#tvEpNameDim { color: #6b7391; font-size: 12px; }
+QLabel#tvEpRating { color: #fbbf24; font-size: 11px; font-weight: 700; }
+QLabel#tvEpDate { color: #5c6482; font-size: 11px; }
+QLabel#tvEpAirs { color: #7dd3fc; font-size: 11px; font-weight: 600; }

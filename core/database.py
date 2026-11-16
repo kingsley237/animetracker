@@ -106,6 +106,7 @@ class DatabaseManager:
             "ALTER TABLE anime ADD COLUMN digital_date TEXT",
             "ALTER TABLE anime ADD COLUMN physical_date TEXT",
             "ALTER TABLE anime ADD COLUMN digital_available INTEGER DEFAULT 0",
+            "ALTER TABLE tv_seasons ADD COLUMN rating REAL",
             # Completed-list housekeeping
             "ALTER TABLE anime ADD COLUMN completed_at INTEGER",
             "ALTER TABLE anime ADD COLUMN archived INTEGER DEFAULT 0",
@@ -407,6 +408,7 @@ class DatabaseManager:
             "popularity":   "COALESCE(popularity,0) DESC, romaji_title ASC",
             "newest":       "COALESCE(start_ts, 0) DESC, romaji_title ASC",
             "rating":       "romaji_title ASC",
+            "recent":       "COALESCE(last_watched_at, 0) DESC, date_added DESC",
         }.get(sort_by, "COALESCE(next_episode_at, 99999999999) ASC, romaji_title ASC")
         conn = self._get_conn()
         if watch_status:
@@ -552,6 +554,147 @@ class DatabaseManager:
             "(romaji_title LIKE ? OR english_title LIKE ? OR native_title LIKE ?) "
             "ORDER BY romaji_title", (media_type, q, q, q)).fetchall()
         return [self._hydrate_anime(dict(r)) for r in rows]
+
+    # ─── Kinema: TV seasons & episodes ────────────────────────────────────────
+
+    def save_tv_seasons(self, anime_id: int, seasons: List[Dict]):
+        conn = self._get_conn()
+        for s in seasons or []:
+            conn.execute(
+                """INSERT INTO tv_seasons (anime_id, season_number, name, episode_count,
+                       air_date, poster_url, overview)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(anime_id, season_number) DO UPDATE SET
+                       name=excluded.name, episode_count=excluded.episode_count,
+                       air_date=COALESCE(excluded.air_date, tv_seasons.air_date),
+                       poster_url=COALESCE(NULLIF(excluded.poster_url,''), tv_seasons.poster_url),
+                       overview=COALESCE(NULLIF(excluded.overview,''), tv_seasons.overview)""",
+                (anime_id, s["season_number"], s.get("name"), s.get("episode_count"),
+                 s.get("air_date"), s.get("poster_url") or "", s.get("overview") or ""))
+        conn.commit()
+
+    def save_tv_episodes(self, anime_id: int, episodes: List[Dict]):
+        """Upsert episode metadata; never touches watched / watched_at / rating."""
+        conn = self._get_conn()
+        for e in episodes or []:
+            if not e.get("episode_number"):
+                continue
+            conn.execute(
+                """INSERT INTO tv_episodes (anime_id, season_number, episode_number, name,
+                       air_date, runtime, still_url)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(anime_id, season_number, episode_number) DO UPDATE SET
+                       name=COALESCE(NULLIF(excluded.name,''), tv_episodes.name),
+                       air_date=COALESCE(excluded.air_date, tv_episodes.air_date),
+                       runtime=COALESCE(excluded.runtime, tv_episodes.runtime),
+                       still_url=COALESCE(NULLIF(excluded.still_url,''), tv_episodes.still_url)""",
+                (anime_id, e["season_number"], e["episode_number"], e.get("name") or "",
+                 e.get("air_date"), e.get("runtime"), e.get("still_url") or ""))
+        conn.commit()
+
+    def get_tv_seasons(self, anime_id: int) -> List[Dict]:
+        rows = self._get_conn().execute(
+            "SELECT * FROM tv_seasons WHERE anime_id=? AND season_number>0 ORDER BY season_number",
+            (anime_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tv_episodes(self, anime_id: int, season: Optional[int] = None) -> List[Dict]:
+        sql = "SELECT * FROM tv_episodes WHERE anime_id=? AND season_number>0"
+        args: List[Any] = [anime_id]
+        if season is not None:
+            sql += " AND season_number=?"
+            args.append(season)
+        rows = self._get_conn().execute(
+            sql + " ORDER BY season_number, episode_number", args).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_tv_episode_watched(self, anime_id: int, season: int, episode: int, watched: bool):
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        conn.execute(
+            "UPDATE tv_episodes SET watched=?, watched_at=? "
+            "WHERE anime_id=? AND season_number=? AND episode_number=?",
+            (1 if watched else 0, now if watched else None, anime_id, season, episode))
+        if watched:
+            conn.execute("UPDATE anime SET last_watched_at=? WHERE id=?", (now, anime_id))
+        conn.commit()
+
+    def set_tv_watched_through(self, anime_id: int, season: int, episode: int):
+        """Mark every aired episode up to and including SxxEyy as watched."""
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        today = datetime.now().strftime("%Y-%m-%d")
+        conn.execute(
+            "UPDATE tv_episodes SET watched=1, watched_at=COALESCE(watched_at, ?) "
+            "WHERE anime_id=? AND season_number>0 AND watched=0 AND "
+            "(air_date IS NULL OR air_date<=?) AND "
+            "(season_number<? OR (season_number=? AND episode_number<=?))",
+            (now, anime_id, today, season, season, episode))
+        conn.execute("UPDATE anime SET last_watched_at=? WHERE id=?", (now, anime_id))
+        conn.commit()
+
+    def set_tv_season_watched(self, anime_id: int, season: int, watched: bool = True):
+        conn = self._get_conn()
+        now = int(datetime.now().timestamp())
+        today = datetime.now().strftime("%Y-%m-%d")
+        if watched:
+            conn.execute(
+                "UPDATE tv_episodes SET watched=1, watched_at=COALESCE(watched_at, ?) "
+                "WHERE anime_id=? AND season_number=? AND (air_date IS NULL OR air_date<=?)",
+                (now, anime_id, season, today))
+        else:
+            conn.execute("UPDATE tv_episodes SET watched=0, watched_at=NULL "
+                         "WHERE anime_id=? AND season_number=?", (anime_id, season))
+        conn.commit()
+
+    def set_tv_episode_rating(self, anime_id: int, season: int, episode: int,
+                              score: Optional[float]):
+        self._get_conn().execute(
+            "UPDATE tv_episodes SET rating=? WHERE anime_id=? AND season_number=? AND episode_number=?",
+            (score, anime_id, season, episode))
+        self._get_conn().commit()
+
+    def set_tv_season_rating(self, anime_id: int, season: int, score: Optional[float]):
+        self._get_conn().execute(
+            "UPDATE tv_seasons SET rating=? WHERE anime_id=? AND season_number=?",
+            (score, anime_id, season))
+        self._get_conn().commit()
+
+    def tv_progress(self, anime_id: int) -> Dict[str, Any]:
+        """Where you are in a show: counts, the next episode to watch and
+        the next one to air. 'Aired' uses air dates (today counts)."""
+        eps = self.get_tv_episodes(anime_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        aired = [e for e in eps if e.get("air_date") and e["air_date"] <= today]
+        watched = [e for e in eps if e.get("watched")]
+        last = watched[-1] if watched else None
+        # next to watch: first aired episode after the last one you watched
+        nxt = None
+        for e in aired:
+            if not e.get("watched") and (not last or (e["season_number"], e["episode_number"]) >
+                                         (last["season_number"], last["episode_number"])):
+                nxt = e
+                break
+        if nxt is None:
+            nxt = next((e for e in aired if not e.get("watched")), None)
+        upcoming = next((e for e in eps if e.get("air_date") and e["air_date"] > today), None)
+        unwatched_aired = sum(1 for e in aired if not e.get("watched"))
+        return {"total": len(eps), "aired": len(aired), "watched": len(watched),
+                "unwatched_aired": unwatched_aired, "next": nxt, "last": last,
+                "upcoming": upcoming,
+                "minutes": sum((e.get("runtime") or 0) for e in watched)}
+
+    def get_tv_stats(self) -> Dict[str, int]:
+        conn = self._get_conn()
+        one = lambda sql, *a: (conn.execute(sql, a).fetchone() or [0])[0] or 0
+        count = lambda ws: one("SELECT COUNT(*) FROM anime WHERE media_type='tv' AND "
+                               "watch_status=? AND hof_only=0", ws)
+        return {
+            "watching": count("watching"), "planned": count("planned"),
+            "completed": count("completed"),
+            "episodes": one("SELECT COUNT(*) FROM tv_episodes e JOIN anime a ON a.id=e.anime_id "
+                            "WHERE a.media_type='tv' AND e.watched=1"),
+        }
 
     def get_movie_stats(self) -> Dict[str, int]:
         conn = self._get_conn()

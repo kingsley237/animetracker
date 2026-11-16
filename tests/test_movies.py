@@ -262,9 +262,9 @@ def test_add_movie_dialog(qapp, db, tmdb_fake, monkeypatch):
     from core import kinema_discover as kd
     from ui.kinema_add_dialog import MovieAddDialog
     tmdb_fake["movies"][30] = fake_movie(30, title="New Film")
-    monkeypatch.setattr(kd, "load_source", lambda src, db=None: kd._hits([
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None, kind="movie": kd._hits([
         dict(tmdb_fake["movies"][30], media_type="movie")]))
-    monkeypatch.setattr(kd, "genres", lambda: [{"id": 18, "name": "Drama"}])
+    monkeypatch.setattr(kd, "genres", lambda kind="movie": [{"id": 18, "name": "Drama"}])
     dlg = MovieAddDialog(db)
     assert wait_until(lambda: len(dlg._tiles) == 1)
     got = []
@@ -305,10 +305,10 @@ def test_recommendations_weighting_exclusion_and_variety(db, tmdb_fake, monkeypa
 
 def test_recommendations_fallback_without_history(db, tmdb_fake, monkeypatch):
     from core import kinema_discover as kd
-    monkeypatch.setattr(kd, "load_source", lambda src, db=None: kd._hits([{"id": 9, "title": "Hot"}])
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None, kind="movie": kd._hits([{"id": 9, "title": "Hot"}])
                         if src == "trending" else [])
     out = kd.recommend(db)
-    assert [h["title"] for h in out] == ["Hot"] and "Rate a few films" in out[0]["reason"]
+    assert [h["title"] for h in out] == ["Hot"] and "rate a few films" in out[0]["reason"]
 
 
 def test_list_filter_and_sort():
@@ -326,15 +326,18 @@ def test_list_filter_and_sort():
 def test_sidebar_sections_and_kinema_discover(movie_window, monkeypatch):
     from core import kinema_discover as kd
     import ui.main_window as mw
-    monkeypatch.setattr(kd, "load_source", lambda src, db=None: [])
-    monkeypatch.setattr(kd, "genres", lambda: [])
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None, kind="movie": [])
+    monkeypatch.setattr(kd, "genres", lambda kind="movie": [])
     win, ids = movie_window
     assert [s for s, _ in mw.NAV_SECTIONS][:2] == ["Miroku", "Kinema"]
     miroku = [pid for _l, _t, pid in mw.NAV_SECTIONS[0][1]]
     assert miroku == ["library", "dropped", "discover", "calendar", "stream"]
+    assert [pid for _l, _t, pid in mw.NAV_SECTIONS[1][1]] == ["movies", "tv", "kinema_discover"]
     win._navigate("kinema_discover")
     assert win.stack.currentWidget() is win._kinema_discover
     assert win._add_btn.media() == "movie"
+    win._kinema_discover.set_kind("tv")          # Movies | TV shows switch
+    assert win._add_btn.media() == "tv"
     win._navigate("calendar")
     assert win._add_btn.media() == "anime"
 

@@ -211,6 +211,11 @@ class DetailPanel(QWidget):
         self.movie_section.open_hall_of_fame.connect(self.open_hall_of_fame.emit)
         self.movie_section.setVisible(False)
         self._lay.addWidget(self.movie_section)
+        from ui.tv_details import TVSection
+        self.tv_section = TVSection(self.db)
+        self.tv_section.changed.connect(self.movie_changed.emit)
+        self.tv_section.setVisible(False)
+        self._lay.addWidget(self.tv_section)
 
         # Genres
         self.genres_w = QWidget()
@@ -412,6 +417,16 @@ class DetailPanel(QWidget):
             if anime.get("start_date"):
                 meta_parts.append(anime["start_date"])
             meta_parts.append("Coming soon" if api_status == "NOT_YET_RELEASED" else "Movie")
+        elif anime.get("media_type") == "tv":
+            meta_parts = []
+            n_seasons = len(self.db.get_tv_seasons(anime["id"])) if anime.get("id", 0) > 0 else 0
+            if n_seasons:
+                meta_parts.append(f"{n_seasons} season{'s' if n_seasons != 1 else ''}")
+            if anime.get("season_year"):
+                meta_parts.append(str(anime["season_year"]))
+            meta_parts.append({"RELEASING": "Returning series", "FINISHED": "Ended",
+                               "CANCELLED": "Cancelled", "NOT_YET_RELEASED": "Coming soon"}
+                              .get(api_status, "TV"))
         else:
             if total and anime.get("watch_status") != "dropped":
                 meta_parts.append(f"{total} episodes total")
@@ -525,9 +540,25 @@ class DetailPanel(QWidget):
         episode tracker and rating, which mean nothing before you start."""
         ws = anime.get("watch_status")
         movie = anime.get("media_type") == "movie"
+        tv = anime.get("media_type") == "tv"
         self.movie_section.setVisible(movie)
-        self.status_btn.setVisible(not movie)
-        self.drop_btn.setVisible(not movie)
+        self.tv_section.setVisible(tv)
+        self.status_btn.setVisible(not (movie or tv))
+        self.drop_btn.setVisible(not (movie or tv))
+        if tv:
+            self.movie_section.stop()
+            self.archive_btn.setVisible(ws == "completed")
+            self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")
+            self._actions_card.setVisible(True)
+            self._links_card.setVisible(True)
+            for w in (self.planned_top, self.planned_bottom, self.completed_top,
+                      self.completed_bottom, self.dropped_section, self._rating_card,
+                      self._episodes_card, self.progress_info_lbl):
+                w.setVisible(False)
+            self.planned_top.stop()
+            self.tv_section.load(anime, keep_season=True)
+            return
+        self.tv_section.stop()
         if movie:
             self.archive_btn.setVisible(ws == "completed")
             self.archive_btn.setText("Unarchive" if anime.get("archived") else "Archive")

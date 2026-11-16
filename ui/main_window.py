@@ -40,6 +40,7 @@ NAV_SECTIONS = [
     ]),
     ("Kinema", [
         ("Movies", "MOV", "movies"),
+        ("TV shows", "TV", "tv"),
         ("Discover", "DISC", "kinema_discover"),
     ]),
     ("Personal", [
@@ -370,7 +371,8 @@ class MainWindow(QMainWindow):
         self.refresh_btn.setObjectName("secondaryBtn")
         self.refresh_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.refresh_btn.clicked.connect(
-            lambda: self._sync_movies(manual=True) if self._media == "movie" else self._refresh_airing())
+            lambda: self._sync_movies(manual=True) if self._media in ("movie", "tv")
+            else self._refresh_airing())
         hr.addWidget(self.refresh_btn)
         lay.addLayout(hr)
         lay.addSpacing(16)
@@ -448,6 +450,8 @@ class MainWindow(QMainWindow):
         "anime": [("All", "all"), ("Watching", "watching"), ("Completed", "completed"),
                   ("Planned", "planned"), ("Behind", "behind")],
         "movie": [("All", "all"), ("Watchlist", "planned"), ("Watched", "completed")],
+        "tv": [("All", "all"), ("Watching", "watching"), ("Watchlist", "planned"),
+               ("Completed", "completed"), ("Dropped", "dropped")],
     }
 
     def _build_filter_pills(self, media: str):
@@ -482,17 +486,25 @@ class MainWindow(QMainWindow):
         self._build_filter_pills(media)
         self._fill_sort_combo(media)
         movie = media == "movie"
+        tv = media == "tv"
         self._empty_icon.setText("🎬" if movie else "📺")
-        self._empty_title.setText("No movies yet" if movie else "Nothing here yet")
+        self._empty_title.setText("No movies yet" if movie else
+                                  "No TV shows yet" if tv else "Nothing here yet")
         self._empty_sub.setText(
             "Add films you want to see, or ones you've already watched." if movie else
+            "Add a show you're watching, want to start, or already finished." if tv else
             "Add a currently airing or upcoming anime to start tracking.")
         self._empty_add.set_media(media)
-        self.search_bar.setPlaceholderText("Search your movies…" if movie else "Search your library…")
-        self.refresh_btn.setText("↻  Refresh Movies" if movie else "↻  Refresh Airing")
-        self.anilist_user_menu.setVisible(not movie)
+        self.search_bar.setPlaceholderText("Search your movies…" if movie else
+                                           "Search your shows…" if tv else "Search your library…")
+        self.refresh_btn.setText(self._refresh_label())
+        self.anilist_user_menu.setVisible(media == "anime")
         self._add_btn.set_media(media)
         self._relabel_stats_strip()
+
+    def _refresh_label(self) -> str:
+        return {"movie": "↻  Refresh Movies", "tv": "↻  Refresh Shows"}.get(
+            self._media, "↻  Refresh Airing")
 
     def _build_stats_strip(self) -> QWidget:
         w = QWidget()
@@ -745,18 +757,21 @@ class MainWindow(QMainWindow):
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
-                page = MovieBrowser(self.db, heading="Discover movies", start_source="for_you")
+                start = "tv" if self._media == "tv" else "movie"
+                page = MovieBrowser(self.db, heading="Discover", start_source="for_you",
+                                    kind=start, kind_switch=True)
                 page.setObjectName("contentArea")
                 page.added.connect(self._on_discover_added)
+                page.kind_changed.connect(self._set_media)
                 self._kinema_discover = page
                 self.stack.removeWidget(self.stack.widget(6))
                 self.stack.insertWidget(6, page)
             self.stack.setCurrentIndex(6)
-            self._set_media("movie")
-        elif page_id == "movies":
+            self._set_media(self._kinema_discover.kind)
+        elif page_id in ("movies", "tv"):
             self.stack.setCurrentIndex(0)
-            self._set_media("movie")
-            self.page_title.setText("Movies")
+            self._set_media("movie" if page_id == "movies" else "tv")
+            self.page_title.setText("Movies" if page_id == "movies" else "TV shows")
             self.filter_row.setVisible(True)
             self.search_bar.setVisible(True)
             self._update_stats_strip()
@@ -841,16 +856,16 @@ class MainWindow(QMainWindow):
         media = self._media
 
         def fetch_data():
-            if media == "movie":
+            if media in ("movie", "tv"):
                 if search_q:
-                    return self.db.search_titles(search_q, "movie")
+                    return self.db.search_titles(search_q, media)
                 if watch_status == "completed":
                     return self.db.get_all_anime(watch_status="completed", sort_by="completed_at",
-                                                 archived=show_archived, media_type="movie")
+                                                 archived=show_archived, media_type=media)
                 if watch_status is None:
-                    return self.db.get_all_anime(sort_by=sort_by, archived=False, media_type="movie")
+                    return self.db.get_all_anime(sort_by=sort_by, archived=False, media_type=media)
                 return self.db.get_all_anime(watch_status=watch_status, sort_by=sort_by,
-                                             media_type="movie")
+                                             media_type=media)
             if search_q:
                 return self.db.search_anime(search_q)
             elif watch_status == "dropped":
@@ -908,7 +923,7 @@ class MainWindow(QMainWindow):
         self._clear_grid()
 
         has = bool(anime_list)
-        if (not has and current_filter == "completed" and current_page in ("library", "movies")
+        if (not has and current_filter == "completed" and current_page in ("library", "movies", "tv")
                 and not self._search_query and (self._show_archived or self.db.count_archived(self._media))):
             has = True   # keep the timeline (and its Archived toggle) visible
         self.empty_state.setVisible(not has)
@@ -917,16 +932,16 @@ class MainWindow(QMainWindow):
         if has:
             show_grouped = (
                 current_filter == "all"
-                and current_page in ("library", "movies")
+                and current_page in ("library", "movies", "tv")
                 and not self._search_query
             )
             show_timeline = (
                 current_filter == "completed"
-                and current_page in ("library", "movies")
+                and current_page in ("library", "movies", "tv")
                 and not self._search_query
             )
             movie_shelves = (self._media == "movie" and current_filter in ("all", "planned")
-                             and current_page in ("library", "movies") and not self._search_query)
+                             and current_page in ("library", "movies", "tv") and not self._search_query)
             if movie_shelves:
                 self._populate_movie_shelves(anime_list, include_watched=current_filter == "all")
             elif show_grouped:
@@ -1006,9 +1021,14 @@ class MainWindow(QMainWindow):
             ("〡 WATCHING",    "watching",  "#a594f9"),
             ("〡 PLAN TO WATCH", "planned", "#6b7280"),
             ("〡 COMPLETED",   "completed", "#34d399"),
-        ] if self._media != "movie" else [
+        ] if self._media == "anime" else [
             ("〡 WATCHLIST",   "planned",   "#fbbf24"),
             ("〡 WATCHED",     "completed", "#34d399"),
+        ] if self._media == "movie" else [
+            ("〡 WATCHING",    "watching",  "#38bdf8"),
+            ("〡 WATCHLIST",   "planned",   "#6b7280"),
+            ("〡 COMPLETED",   "completed", "#34d399"),
+            ("〡 DROPPED",     "dropped",   "#b5485a"),
         ]
         row_num = 0
         for group_label, status, color in groups:
@@ -1152,7 +1172,7 @@ class MainWindow(QMainWindow):
         if card is not None and row:
             card.update_data(row)
         # Starting/finishing a rewatch moves the card in/out of "Rewatching now"
-        if self._current_filter == "completed" and self.current_page in ("library", "movies"):
+        if self._current_filter == "completed" and self.current_page in ("library", "movies", "tv"):
             in_group = anime_id in (self._completed_groups.get("rewatching") or [])
             now_active = self.db.get_active_rewatch(anime_id) is not None
             if in_group != now_active:
@@ -1272,6 +1292,8 @@ class MainWindow(QMainWindow):
         "anime": {"watching": "Watching", "completed": "Completed", "planned": "Planned", "dropped": "Dropped"},
         "movie": {"watching": "Watchlist", "completed": "Watched", "planned": "Hours watched",
                   "dropped": "This year"},
+        "tv": {"watching": "Watching", "completed": "Completed", "planned": "Watchlist",
+               "dropped": "Episodes seen"},
     }
 
     def _relabel_stats_strip(self):
@@ -1284,6 +1306,10 @@ class MainWindow(QMainWindow):
             m = self.db.get_movie_stats()
             values = {"watching": m["watchlist"], "completed": m["watched"],
                       "planned": m["hours"], "dropped": m["this_year"]}
+        elif self._media == "tv":
+            t = self.db.get_tv_stats()
+            values = {"watching": t["watching"], "completed": t["completed"],
+                      "planned": t["planned"], "dropped": t["episodes"]}
         else:
             stats = self.db.get_stats()
             values = {k: stats.get(k, 0) for k in ("watching", "completed", "planned", "dropped")}
@@ -1397,10 +1423,12 @@ class MainWindow(QMainWindow):
             self.detail_panel.clear_banner()
 
     def _open_anime_from_calendar(self, anime_id: int):
-        self._navigate("library")
         anime = self.db.get_anime_by_id(anime_id)
         if not anime:
             return
+        page = {"movie": "movies", "tv": "tv"}.get(anime.get("media_type") or "anime", "library")
+        if self.current_page != page:
+            self._navigate(page)
         self.selected_anime_id = anime_id
         self.detail_panel.load_anime(anime)
         self._open_detail_panel()
@@ -1423,7 +1451,7 @@ class MainWindow(QMainWindow):
         self._update_stats_strip()
 
         if (
-            self.current_page in ("library", "movies")
+            self.current_page in ("library", "movies", "tv")
             and self._current_filter == "all"
             and not self._search_query
         ):
@@ -1510,7 +1538,7 @@ class MainWindow(QMainWindow):
     def _on_anime_dropped(self, anime_id: int):
         self._close_detail_panel()
         self._load_library(
-            watch_status=None if self.current_page in ("library", "movies") else
+            watch_status=None if self.current_page in ("library", "movies", "tv") else
             {"watching":"watching","completed":"completed","planned":"planned"}.get(self.current_page)
         )
         self._update_stats_strip()
@@ -1529,6 +1557,9 @@ class MainWindow(QMainWindow):
         "movie": [("Top Rated", "top_rated"), ("Most Anticipated", "popularity"),
                   ("Newest", "newest"), ("Title", "title"), ("Date Added", "date_added"),
                   ("Your Rating", "rating")],
+        "tv": [("Recently Watched", "recent"), ("Next Episode", "release_date"),
+               ("Top Rated", "top_rated"), ("Title", "title"), ("Date Added", "date_added"),
+               ("Your Rating", "rating")],
     }
 
     def _fill_sort_combo(self, media: str):
@@ -1567,11 +1598,11 @@ class MainWindow(QMainWindow):
     def _open_add_movie_dialog(self):
         from ui.kinema_add_dialog import MovieAddDialog
         from ui.toast import Toast
-        dlg = MovieAddDialog(self.db, self)
+        dlg = MovieAddDialog(self.db, self, kind=self._media if self._media in ("movie", "tv") else "movie")
 
         def added(lib_id: int, title: str):
             row = self.db.get_anime_by_id(lib_id) or {}
-            where = "Watched" if row.get("watch_status") == "completed" else "your Watchlist"
+            where = self._where_label(row)
             Toast.show(self, f"'{title}' added to {where}.", kind="success")
             self._load_library()
             self._update_stats_strip()
@@ -1584,9 +1615,15 @@ class MainWindow(QMainWindow):
     def _on_discover_added(self, lib_id: int, title: str):
         from ui.toast import Toast
         row = self.db.get_anime_by_id(lib_id) or {}
-        where = "Watched" if row.get("watch_status") == "completed" else "your Watchlist"
-        Toast.show(self, f"'{title}' added to {where}.", kind="success")
+        Toast.show(self, f"'{title}' added to {self._where_label(row)}.", kind="success")
         self._update_stats_strip()
+
+    @staticmethod
+    def _where_label(row: Dict) -> str:
+        ws = row.get("watch_status")
+        if row.get("media_type") == "tv":
+            return {"watching": "Watching", "completed": "Completed"}.get(ws, "your Watchlist")
+        return "Watched" if ws == "completed" else "your Watchlist"
 
     def _sync_movies(self, manual: bool = False):
         """Refresh movies from TMDB (dates, availability, art, trailers)."""
@@ -1594,16 +1631,24 @@ class MainWindow(QMainWindow):
         if manual:
             self.refresh_btn.setText("↻  Refreshing…")
             self.refresh_btn.setEnabled(False)
-        worker = Worker(KinemaSync(self.db).sync_movies)
+        def both():
+            ks = KinemaSync(self.db)
+            a, b = ks.sync_movies(), ks.sync_tv()
+            return {"changed": a["changed"] + b["changed"],
+                    "art_changed": a["art_changed"] + b["art_changed"],
+                    "notifications": (a["notifications"] + [n for n in b["notifications"]
+                                      if n not in a["notifications"]])[:6]}
+
+        worker = Worker(both)
         worker.signals.result.connect(self._on_metadata_synced)
         if manual:
             worker.signals.finished.connect(lambda: (
-                self.refresh_btn.setText("↻  Refresh Movies" if self._media == "movie" else "↻  Refresh Airing"),
+                self.refresh_btn.setText(self._refresh_label()),
                 self.refresh_btn.setEnabled(True)))
         run_worker(worker)
 
     def _open_add_dialog(self):
-        if self._media == "movie":
+        if self._media in ("movie", "tv"):
             return self._open_add_movie_dialog()
         from ui.add_dialog import AddAnimeDialog
         dlg = AddAnimeDialog(self.db, self)
@@ -1928,10 +1973,13 @@ class MainWindow(QMainWindow):
         metadata (10 min for Planned, a day otherwise) and its promo/theme
         video list (daily). The panel re-renders when it lands."""
         import time as _t
-        if anime.get("media_type") == "movie" and anime.get("tmdb_id"):
-            if _t.time() - (anime.get("meta_synced_at") or 0) > 6 * 3600:
+        if anime.get("media_type") in ("movie", "tv") and anime.get("tmdb_id"):
+            limit = 6 * 3600 if anime["media_type"] == "movie" else 3600
+            if _t.time() - (anime.get("meta_synced_at") or 0) > limit:
                 from core.kinema_sync import KinemaSync
-                w = Worker(KinemaSync(self.db).sync_movies, only_ids=[anime["id"]])
+                ks = KinemaSync(self.db)
+                fn = ks.sync_movies if anime["media_type"] == "movie" else ks.sync_tv
+                w = Worker(fn, only_ids=[anime["id"]])
                 w.signals.result.connect(self._on_metadata_synced)
                 run_worker(w)
             return

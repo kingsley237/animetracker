@@ -17,9 +17,9 @@ meantime, it doesn't understand movies).
 
 ## Sidebar ✅
 - [ ] **Miroku · Anime**: Library, Dropped, Discover, Calendar, Miroku Stream.
-- [ ] **Kinema · Movies & TV**: Movies, Discover (TV joins in phase 3).
+- [ ] **Kinema · Movies & TV**: Movies, TV shows, Discover.
 - [ ] **Personal**: Hall of Fame, Statistics.
-- [ ] Add button changes per section (indigo sparkle / amber film frame); Ctrl+N works.
+- [ ] Add button changes per section (indigo sparkle / amber film frame / sky-blue screen); Ctrl+N works.
 
 ## Movies (Kinema) ✅
 - [ ] Movies library: All / Watchlist / Watched; stats Watchlist · Watched · Hours watched · This year.
@@ -45,9 +45,24 @@ meantime, it doesn't understand movies).
 - [ ] Unexpected errors go to `~\.animetracker\error.log` instead of closing the app.
 - [ ] Anime-only alerts wrongly attached to movies are withdrawn automatically.
 
-## TV shows (phase 3) 🕒
-- [ ] Seasons & episodes, progress (S02E05), per-season ratings, new episode/season alerts, panels per status.
-- [ ] Kinema Discover gains TV lists; TV add button (sky-blue screen).
+## TV shows (Kinema) ✅
+- [ ] TV shows page: All / Watching / Watchlist / Completed / Dropped; stats Watching · Completed · Watchlist · Episodes seen.
+- [ ] Sort: Recently Watched (default), Next Episode, Top Rated, Title, Date Added, Your Rating.
+- [ ] Cards: NEW EPISODE / +N NEW (aired this week), N TO WATCH, UP TO DATE, BETWEEN SEASONS, COMING SOON,
+      AIRING / ENDED (Watchlist), COMPLETED, DROPPED; "Next S02E05 · 13/19"; next airing date or time left to watch;
+      sky-blue progress bar.
+- [ ] Add a show (Ctrl+N on TV shows): Add to Watchlist / I'm watching it / I've finished it (marks all aired episodes).
+- [ ] Panel: Up next + one-click "Watched S02E05", progress bar, next airing + countdown, Start / Mark completed /
+      Drop / Resume / Back to Watching.
+- [ ] Seasons: tab per season (✓ when done), rate the season (6 stars), Mark all / Unmark all, episode list with ticks;
+      right-click an episode: watched up to here, rate it. Unaired episodes locked with their air date.
+- [ ] Watching the last episode of an ended show completes it automatically; first episode moves a Watchlist show to Watching.
+- [ ] Completed: verdict vs community + favourite season; where to watch; trailers; facts; cast.
+- [ ] Alerts: new episode(s) for shows you watch (one per drop), new season confirmed, premiere date set, new trailer.
+      Dropped shows stay quiet; nothing on the first sync.
+- [ ] Clicking a movie/TV alert opens that library and the title.
+- [ ] Discover: Movies | TV shows switch. TV lists: For you, Airing this week, New shows coming, Trending, Top rated,
+      Popular (no talk/news/reality; anime stays in Miroku).
 
 ## One app (phase 4) 🕒
 - [ ] Up Next home across anime, TV and movies; unified search; stats & Hall of Fame across types.

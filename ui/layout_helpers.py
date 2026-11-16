@@ -23,6 +23,7 @@ class FlowLayout(QLayout):
 
     def addItem(self, item):
         self._items.append(item)
+        self.invalidate()
 
     def count(self):
         return len(self._items)
@@ -40,6 +41,7 @@ class FlowLayout(QLayout):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+        self.invalidate()
 
     def expandingDirections(self):
         return Qt.Orientation(0)

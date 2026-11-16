@@ -1,5 +1,8 @@
 """
-Kinema - movie lists to browse, and recommendations.
+Kinema - movie and TV lists to browse, and recommendations.
+
+TV lists: for_you, airing (new episodes this week), upcoming (new shows),
+trending, top_rated, popular.
 
 Lists (US region by default, from Settings):
   for_you    recommendations from what you watched (weighted by your rating)
@@ -27,43 +30,91 @@ SOURCES = [
     ("top_rated", "Top rated"),
 ]
 
+TV_SOURCES = [
+    ("for_you", "For you"),
+    ("airing", "Airing this week"),
+    ("upcoming", "New shows coming"),
+    ("trending", "Trending"),
+    ("top_rated", "Top rated"),
+    ("popular", "Popular"),
+]
+
+
+def sources(kind: str = "movie"):
+    return TV_SOURCES if kind == "tv" else SOURCES
+
+
 SORTS = [("popularity", "Popularity"), ("rating", "Rating"),
          ("release", "Release date"), ("title", "Title")]
 
 
-def _hits(results: List[Dict]) -> List[Dict]:
+def _hits(results: List[Dict], kind: str = "movie") -> List[Dict]:
     from core.providers import _hit
     out = []
     for r in results or []:
         if r.get("adult"):
             continue
-        h = _hit(r, "movie")
+        if kind == "tv" and 16 in (r.get("genre_ids") or []) and r.get("original_language") == "ja":
+            continue                  # anime lives in Miroku
+        h = _hit(r, kind)
         h["popularity"] = r.get("popularity") or 0
-        h["release_date"] = r.get("release_date") or ""
+        h["release_date"] = r.get("release_date") or r.get("first_air_date") or ""
         h["genre_ids"] = r.get("genre_ids") or []
         out.append(h)
     return out
 
 
-def _discover(params: Dict, pages: int = 2) -> List[Dict]:
+def _discover(params: Dict, pages: int = 2, kind: str = "movie") -> List[Dict]:
     base = {"region": tmdb.region(), "include_adult": "false", **params}
-    res = tmdb.get_many([("/discover/movie", {**base, "page": p}) for p in range(1, pages + 1)])
+    if kind == "tv":
+        base.pop("region")
+        base["watch_region"] = tmdb.region()
+    res = tmdb.get_many([(f"/discover/{kind}", {**base, "page": p}) for p in range(1, pages + 1)])
     rows = []
     for page in res:
         rows += (page or {}).get("results") or []
     return rows
 
 
-def genres() -> List[Dict]:
-    data = tmdb.get("/genre/movie/list", ttl=24 * 3600)
+def genres(kind: str = "movie") -> List[Dict]:
+    data = tmdb.get(f"/genre/{'tv' if kind == 'tv' else 'movie'}/list", ttl=24 * 3600)
     return (data or {}).get("genres") or []
 
 
-def load_source(source: str, db=None) -> List[Dict]:
+# talk shows, news, reality, soaps: not what people track
+_TV_NOISE = "10767,10763,10764,10766"
+
+
+def _load_tv(source: str) -> List[Dict]:
+    today = datetime.now().date()
+    if source == "airing":
+        res = tmdb.get_many([("/tv/on_the_air", {"page": p}) for p in (1, 2)])
+        rows = sum(((r or {}).get("results") or [] for r in res), [])
+        rows = [r for r in rows if not set(r.get("genre_ids") or []) & {10767, 10763, 10764, 10766}]
+    elif source == "upcoming":
+        rows = _discover({"first_air_date.gte": today.isoformat(),
+                          "sort_by": "popularity.desc", "without_genres": _TV_NOISE},
+                         pages=3, kind="tv")
+    elif source == "trending":
+        rows = (tmdb.get("/trending/tv/week", ttl=1800) or {}).get("results") or []
+    elif source == "top_rated":
+        rows = _discover({"sort_by": "vote_average.desc", "vote_count.gte": 500,
+                          "without_genres": _TV_NOISE + ",16"}, pages=2, kind="tv")
+    elif source == "popular":
+        rows = _discover({"sort_by": "popularity.desc", "without_genres": _TV_NOISE,
+                          "vote_count.gte": 50}, pages=2, kind="tv")
+    else:
+        rows = []
+    return rows
+
+
+def load_source(source: str, db=None, kind: str = "movie") -> List[Dict]:
     today = datetime.now().date()
     if source == "for_you":
-        return recommend(db) if db is not None else []
-    if source == "upcoming":
+        return recommend(db, kind=kind) if db is not None else []
+    if kind == "tv":
+        rows = _load_tv(source)
+    elif source == "upcoming":
         rows = _discover({"primary_release_date.gte": today.isoformat(),
                           "sort_by": "popularity.desc", "with_release_type": "2|3"}, pages=3)
     elif source == "trending":
@@ -83,18 +134,19 @@ def load_source(source: str, db=None) -> List[Dict]:
     else:
         rows = []
     seen, out = set(), []
-    for h in _hits(rows):
+    for h in _hits(rows, kind):
         if h["provider_id"] not in seen:
             seen.add(h["provider_id"])
             out.append(h)
     return out
 
 
-def recommend(db, limit: int = 30) -> List[Dict]:
-    """Movies like the ones you loved and the ones you're waiting for.
-    Watched films count by your rating (a 6/6 weighs most; 1-2 are ignored),
-    Watchlist films count a little. Films already in your library are left out."""
-    rows = db.get_all_anime(media_type="movie")
+def recommend(db, limit: int = 30, kind: str = "movie") -> List[Dict]:
+    """Titles like the ones you loved and the ones you're waiting for.
+    Watched / finished titles count by your rating (a 6/6 weighs most; 1-2
+    are ignored), shows you're watching count well, Watchlist titles count a
+    little. Titles already in your library are left out."""
+    rows = db.get_all_anime(media_type=kind)
     in_library = {r["tmdb_id"] for r in rows if r.get("tmdb_id")}
     seeds = []
     for r in rows:
@@ -106,17 +158,20 @@ def recommend(db, limit: int = 30) -> List[Dict]:
                 continue
             weight = {6: 3.0, 5: 2.4, 4: 1.6, 3: 1.0}.get(int(mine), 1.0) if mine else 1.3
             seeds.append((weight, r))
+        elif r.get("watch_status") == "watching":
+            seeds.append((1.5, r))
         elif r.get("watch_status") == "planned":
             seeds.append((0.8, r))
     seeds.sort(key=lambda s: (-s[0], -(s[1].get("completed_at") or s[1].get("date_added") or 0)))
     seeds = seeds[:10]
     if not seeds:
-        trend = load_source("trending")
+        trend = load_source("trending", kind=kind)
+        what = "shows" if kind == "tv" else "films"
         for h in trend:
-            h["reason"] = "Popular right now. Rate a few films for picks of your own."
+            h["reason"] = f"Popular right now. Add or rate a few {what} for picks of your own."
         return [h for h in trend if h["provider_id"] not in in_library][:limit]
 
-    pages = tmdb.get_many([(f"/movie/{r['tmdb_id']}/recommendations", {"page": 1}) for _w, r in seeds])
+    pages = tmdb.get_many([(f"/{kind}/{r['tmdb_id']}/recommendations", {"page": 1}) for _w, r in seeds])
     score: Dict[int, float] = defaultdict(float)
     reason: Dict[int, str] = {}
     best_weight: Dict[int, float] = {}
@@ -130,8 +185,9 @@ def recommend(db, limit: int = 30) -> List[Dict]:
             raw[mid] = m
             if weight > best_weight.get(mid, 0):
                 best_weight[mid] = weight
-                verb = "watched" if seed.get("watch_status") == "completed" else "want to see"
-                reason[mid] = f"Because you {verb} {seed.get('romaji_title')}"
+                lead = {"completed": "Because you watched", "watching": "Because you're watching"}.get(
+                    seed.get("watch_status"), "Because you want to see")
+                reason[mid] = f"{lead} {seed.get('romaji_title')}"
     ranked = sorted(score, key=lambda k: (-score[k], -(raw[k].get("popularity") or 0)))
     # Variety: don't let one favourite fill the list - take picks round-robin
     # across the films they came from, best first within each.
@@ -147,7 +203,7 @@ def recommend(db, limit: int = 30) -> List[Dict]:
                 if len(mixed) >= limit:
                     break
     ranked = mixed
-    out = _hits([raw[k] for k in ranked])
+    out = _hits([raw[k] for k in ranked], kind)
     for h in out:
         h["reason"] = reason.get(h["provider_id"], "")
     return out
