@@ -119,8 +119,14 @@ meantime, it doesn't understand movies).
       Home / Miroku / Kinema tiles and your country; "Take the 1-minute tour" walks 7 steps across the real pages
       (Back / Next / Skip). Settings → About → "Replay the welcome tour".
 
-## Polish & release (phase 6) 🕒
-- [ ] Visual pass, performance, full tests, upgrade check on a copy of your real library, v3.0.0.
+## Polish & release (phase 6) 🔨
+- [x] Upgrade rehearsal on your real v2.8 library (pre-3.0 safety copy): 35 titles kept, 244 ratings kept, 3 dropped
+      kept, 11 Hall of Fame favourites moved to Completed, safety copies made, Data Doctor 0 issues, every page and
+      panel opened with 0 errors.
+- [x] No errors in your error.log from testing; static check clean; Home ready in ~4 s; This week fits 1280×720.
+- [ ] Your final test pass of this checklist (run from source, or `tools\preview_home.py`).
+- [ ] On "ship it": version 3.0.0 → merge to main → tag v3.0.0 → build (tests must pass) → Raiko-v3.0.0-Windows.zip
+      → GitHub release with docs/RELEASE_NOTES_v3.0.0.md → installs to Programs\Raiko + "Raikō" Desktop shortcut.
 
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included).
