@@ -1986,3 +1986,7 @@ QPushButton#tourBack {
 }
 QPushButton#tourSkip { background: transparent; color: #6b7391; border: none; font-size: 11px; }
 QPushButton#tourSkip:hover { color: #c7cbe0; }
+QLabel#homeCaughtUp {
+    color: #bbf7d0; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25);
+    border-radius: 12px; padding: 14px 18px; font-size: 13px; font-weight: 600;
+}

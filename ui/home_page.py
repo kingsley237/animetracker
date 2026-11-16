@@ -128,10 +128,23 @@ class _Hero(QWidget, _Img):
         self.item = item
         tag, color = LIB[item["media"]]
         self._color = color
-        self.kicker.setText(("NEW EPISODE  ·  " if item.get("new") else "UP NEXT  ·  ") + tag)
+        mode = item.get("mode", "continue")
+        kick = {"continue": "NEW EPISODE" if item.get("new") else "UP NEXT",
+                "airing": "NEXT TO AIR", "planned": "READY WHEN YOU ARE"}[mode]
+        self.kicker.setText(f"{kick}  ·  {tag}")
         self.kicker.setStyleSheet(f"color:{color};")
         self.title.setText(item["title"])
-        self.next.setText(f"{item['label']}   ·   {item['sub']}")
+        self.next.setText(f"{item['label']}   ·   {item['sub']}" if item.get("sub") else item["label"])
+        # Watched only makes sense when there's an aired episode to mark
+        self.btn_watched.setVisible(mode == "continue")
+        self.btn_open.setText("Open details" if mode == "continue" else
+                              ("See the episodes" if mode == "airing" else "Start watching"))
+        self.btn_open.setObjectName("heroSecondary" if mode == "continue" else "heroPrimaryAlt")
+        self.btn_open.setStyleSheet("" if mode == "continue" else
+                                    f"QPushButton#heroPrimaryAlt{{background:{color};color:#0b0d12;border:none;"
+                                    "border-radius:11px;padding:0 20px;font-size:13px;font-weight:800;}")
+        self._target = item.get("when") if mode == "airing" else None
+        self._tick()
         desc = re.sub(r"<[^>]+>", "", item["row"].get("description") or "").strip()
         desc = re.sub(r"\s+", " ", desc)
         self.blurb.setText(desc if len(desc) < 190 else desc[:185].rsplit(" ", 1)[0] + "…")
@@ -140,6 +153,25 @@ class _Hero(QWidget, _Img):
         self.btn_watched.setStyleSheet(
             f"QPushButton#heroPrimary{{background:{color};color:#0b0d12;}}")
         self._load_img(_img_url(item["row"], wide=True))
+
+    def _tick(self):
+        """Live countdown for 'Next to air'."""
+        t = getattr(self, "_target", None)
+        if not t or not self.item:
+            return
+        secs = int(t - datetime.now().timestamp())
+        if secs <= 0:
+            self.next.setText(f"{self.item['label']}   ·   out now")
+            return
+        d, rem = divmod(secs, 86400)
+        h, rem = divmod(rem, 3600)
+        m = rem // 60
+        span = f"{d}d {h}h {m:02d}m" if d else f"{h}h {m:02d}m"
+        self.next.setText(f"{self.item['label']}   ·   in {span}")
+        if not hasattr(self, "_clock"):
+            self._clock = QTimer(self)
+            self._clock.timeout.connect(self._tick)
+            self._clock.start(30_000)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -598,6 +630,10 @@ class HomePage(QWidget):
         self.cw_head = self._head("Continue watching", sl)
         self.cw_rail = _Rail(_ContinueCard.IMG + 70)
         sl.addWidget(self.cw_rail)
+        self.caught_up = QLabel()
+        self.caught_up.setObjectName("homeCaughtUp")
+        self.caught_up.setWordWrap(True)
+        sl.addWidget(self.caught_up)
 
         self.wk_head = self._head("This week", sl)
         self.week = QHBoxLayout()
@@ -658,16 +694,19 @@ class HomePage(QWidget):
         if sip.isdeleted(self):
             return
         cw, up, ready = data
-        # spotlight + stats
-        self.hero.setVisible(bool(cw))
-        self.hero_empty.setVisible(not cw)
-        if cw:
-            self.hero.set_item(cw[0])
+        # spotlight: never empty - a new episode, else what airs next from what
+        # you watch, else something from your Plan to Watch / Watchlist
+        hero = cw[0] if cw else self._fallback_hero(up)
+        self.hero.setVisible(hero is not None)
+        self.hero_empty.setVisible(hero is None)
+        if hero:
+            self.hero.set_item(hero)
         self._clear(self.stats)
         now = datetime.now().timestamp()
         new = sum(1 for c in cw if c["new"])
         week = [u for u in up if u["when"] <= now + 7 * 86400]
-        for v, label, color in ((len(cw), "in progress", "#f0f1f6"), (new, "new episodes", "#f87171"),
+        watching = sum(len(self.db.get_all_anime(watch_status="watching", media_type=m)) for m in ("anime", "tv"))
+        for v, label, color in ((watching, "watching", "#f0f1f6"), (new, "new episodes", "#f87171"),
                                 (len(week), "airing this week", "#8b7bff"),
                                 (len(ready), "movies in HD", "#fbbf24")):
             self.stats.addWidget(_Stat(str(v), label, color))
@@ -681,8 +720,17 @@ class HomePage(QWidget):
             c.open.connect(self.open_title.emit)
             c.watched.connect(self._mark)
             self.cw_rail.add(c)
-        self.cw_head.setVisible(bool(rest))
+        self.cw_head.setVisible(bool(rest) or not cw)
         self.cw_rail.setVisible(bool(rest))
+        self.caught_up.setVisible(not cw)
+        if not cw:
+            nxt = next((u for u in up if u["row"].get("watch_status") == "watching"), None)
+            when = ""
+            if nxt:
+                secs = int(nxt["when"] - datetime.now().timestamp())
+                d, h = secs // 86400, (secs % 86400) // 3600
+                when = f" The next episode lands in {d}d {h}h." if d else f" The next episode lands in {h}h."
+            self.caught_up.setText(f"✓  You're all caught up.{when}")
 
         # this week: 7 day columns + Later
         self._clear(self.week)
@@ -723,6 +771,37 @@ class HomePage(QWidget):
             self.rd_rail.add(c)
         self.rd_head.setVisible(bool(ready))
         self.rd_rail.setVisible(bool(ready))
+
+    def _fallback_hero(self, up: List[Dict]) -> Optional[Dict]:
+        mine = [u for u in up if u["media"] in ("anime", "tv")
+                and (u["row"].get("watch_status") == "watching")]
+        pick = mine[0] if mine else (up[0] if up else None)
+        if pick:
+            when = datetime.fromtimestamp(pick["when"])
+            day = ("today" if when.date() == datetime.now().date() else
+                   "tomorrow" if when.date() == (datetime.now() + timedelta(days=1)).date()
+                   else when.strftime("%A"))
+            at = f" at {when.strftime('%H:%M')}" if pick.get("exact") else ""
+            return {**pick, "mode": "airing", "label": f"{pick['label']} · {day}{at}", "sub": "",
+                    "progress": self._progress(pick["row"])}
+        for media in ("anime", "tv", "movie"):
+            rows = self.db.get_all_anime(watch_status="planned", media_type=media, sort_by="top_rated")
+            rows = [r for r in rows if (r.get("status") or "") != "NOT_YET_RELEASED"]
+            if rows:
+                r = rows[0]
+                return {"id": r["id"], "media": media, "row": r, "mode": "planned",
+                        "title": r.get("english_title") or r.get("romaji_title") or "",
+                        "label": "On your " + ("Plan to Watch" if media == "anime" else "Watchlist"),
+                        "sub": f"★ {r['average_score'] / 10:.1f}" if r.get("average_score") else "",
+                        "progress": 0}
+        return None
+
+    def _progress(self, row: Dict) -> float:
+        if (row.get("media_type") or "anime") == "tv":
+            p = self.db.tv_progress(row["id"])
+            return p["watched"] / p["aired"] if p["aired"] else 0
+        total = row.get("total_episodes") or 0
+        return self.db.get_watched_count(row["id"]) / total if total else 0
 
     def _mark(self, item: Dict):
         from core import up_next as un

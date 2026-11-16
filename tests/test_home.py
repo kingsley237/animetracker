@@ -118,3 +118,23 @@ def test_onboarding_welcome_and_tour(qapp, db, monkeypatch):
     pump(50)
     import core.anilist_auth as auth
     auth._auth_instance = None
+
+
+def test_home_spotlight_when_caught_up(qapp, db, monkeypatch):
+    """Nothing to continue: the spotlight shows what airs next, never an empty Home."""
+    from ui.home_page import HomePage
+    now = int(time.time())
+    aid = add_anime(db, "Weekly Show", "watching", status="RELEASING", total_episodes=12,
+                    next_episode_num=3, next_episode_at=now + 2 * 86400)
+    for ep in (1, 2):
+        db.set_episode_watched(aid, ep, True)
+    page = HomePage(db)
+    page.resize(1400, 900)
+    page.show()
+    page.load()
+    assert wait_until(lambda: page.hero.item is not None)
+    assert page.hero.item["mode"] == "airing" and page.hero.item["id"] == aid
+    assert page.hero.kicker.text().startswith("NEXT TO AIR")
+    assert not page.hero.btn_watched.isVisible()
+    assert "caught up" in page.caught_up.text() and page.caught_up.isVisible()
+    page.close()
