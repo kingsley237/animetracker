@@ -779,6 +779,8 @@ class MainWindow(QMainWindow):
                 page.open_title.connect(self._open_title)
                 page.changed.connect(self._on_home_changed)
                 page.search_online.connect(self._search_online)
+                page.open_pick.connect(self._open_pick)
+                page.play_trailer.connect(self._play_trailer)
                 self._home_page = page
                 self.stack.removeWidget(self.stack.widget(7))
                 self.stack.insertWidget(7, page)
@@ -1461,6 +1463,20 @@ class MainWindow(QMainWindow):
         if self.current_page != "home":
             self._navigate("home")
         self._home_page.focus_search()
+
+    def _open_pick(self, hit: Dict):
+        """A recommendation from Home: open it in the matching Discover preview,
+        where it can be added."""
+        kind = hit.get("media_type") or "anime"
+        if kind == "anime":
+            self._navigate("discover")
+            page = self._discover_page
+        else:
+            self._navigate("kinema_discover")
+            page = self._kinema_discover
+            page.set_kind(kind)
+        if page is not None:
+            page._select(dict(hit))
 
     def _search_online(self, where: str, query: str):
         self._navigate("discover" if where == "anime" else "kinema_discover")

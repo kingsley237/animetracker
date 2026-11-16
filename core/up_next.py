@@ -133,3 +133,103 @@ def summary(db) -> Dict[str, int]:
     return {"to_watch": len(cw), "new": sum(1 for c in cw if c["new"]),
             "this_week": sum(1 for c in coming_up(db, days=7)),
             "ready": len(ready_to_watch(db))}
+
+
+# ── Home spotlight & rails ────────────────────────────────────────────────────
+
+def watching_rail(db) -> List[Dict]:
+    """Everything you're watching: episodes waiting first, then caught-up
+    titles with when the next one airs."""
+    cw = continue_watching(db)
+    have = {c["id"] for c in cw}
+    up = {u["id"]: u for u in coming_up(db, days=60)}
+    rest = []
+    for media in ("anime", "tv"):
+        for r in db.get_all_anime(watch_status="watching", media_type=media, sort_by="recent"):
+            if r["id"] in have:
+                continue
+            u = up.get(r["id"])
+            if u:
+                when = datetime.fromtimestamp(u["when"])
+                sub = f"{u['label']} · {when.strftime('%a %b ')}{when.day}" + (
+                    when.strftime(" %H:%M") if u.get("exact") else "")
+            else:
+                sub = "Waiting for news of the next season"
+            if media == "tv":
+                p = db.tv_progress(r["id"])
+                prog = p["watched"] / p["aired"] if p["aired"] else 0
+            else:
+                total = r.get("total_episodes") or 0
+                prog = db.get_watched_count(r["id"]) / total if total else 0
+            rest.append({"id": r["id"], "media": media, "title": _name(r), "row": r,
+                         "label": "Caught up", "sub": sub, "new": False, "caught_up": True,
+                         "active": r.get("last_watched_at") or 0, "progress": prog})
+    return cw + rest
+
+
+def library_updates(db, now: Optional[float] = None) -> List[Dict]:
+    """News about titles in your library, newest kinds first: episodes out,
+    movies out in HD / in cinemas, new seasons, new trailers."""
+    import json
+    from core.kinema_sync import release_state
+    now = now or datetime.now().timestamp()
+    out: List[Dict] = []
+    for c in continue_watching(db, now):
+        if c["new"]:
+            out.append({**c, "update": "episode", "badge": "NEW EPISODE"})
+    for r in db.get_all_anime(watch_status="planned", media_type="movie"):
+        rs = release_state(r, int(now))
+        if rs["state"] == "digital" and (rs["digital_ts"] or 0) > now - 21 * DAY:
+            out.append({"id": r["id"], "media": "movie", "title": _name(r), "row": r,
+                        "update": "hd", "badge": "OUT IN HD", "label": "Out in HD",
+                        "sub": "Ready to watch at home", "progress": 0})
+        elif rs["state"] == "cinema" and (rs["cinema_ts"] or 0) > now - 14 * DAY:
+            out.append({"id": r["id"], "media": "movie", "title": _name(r), "row": r,
+                        "update": "cinema", "badge": "IN CINEMAS", "label": "In cinemas now",
+                        "sub": "HD date: " + (datetime.fromtimestamp(rs["digital_ts"]).strftime("%b %d")
+                                              if rs["digital_ts"] else "not announced yet"),
+                        "progress": 0})
+    seen = {o["id"] for o in out}
+    for kind, badge in (("new_season", "NEW SEASON"), ("tv_new_season", "NEW SEASON"),
+                        ("upcoming_trailer", "NEW TRAILER")):
+        for n in db.get_active_notifications(kind):
+            aid = n.get("anime_id")
+            r = db.get_anime_by_id(aid) if aid else None
+            if not r or aid in seen:
+                continue
+            seen.add(aid)
+            payload = n.get("payload") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except ValueError:
+                    payload = {}
+            out.append({"id": aid, "media": r.get("media_type") or "anime", "title": _name(r), "row": r,
+                        "update": "trailer" if kind == "upcoming_trailer" else "season",
+                        "badge": badge, "label": n.get("title") or badge.title(),
+                        "sub": n.get("message") or "", "progress": 0, "payload": payload})
+    return out
+
+
+def picks(db, per_kind: int = 3) -> List[Dict]:
+    """Recommendations you don't have yet, mixed across anime, TV and movies.
+    Network (AniList + TMDB); call it in the background."""
+    out: List[List[Dict]] = []
+    try:
+        from core import miroku_discover as md
+        out.append([dict(h, media_type="anime") for h in md.recommend(db, limit=per_kind * 3)][:per_kind * 3])
+    except Exception:
+        out.append([])
+    try:
+        from core import kinema_discover as kd, tmdb
+        if tmdb.has_credentials():
+            for kind in ("movie", "tv"):
+                out.append([dict(h, media_type=kind) for h in kd.recommend(db, limit=per_kind * 3, kind=kind)])
+    except Exception:
+        pass
+    mixed: List[Dict] = []
+    for i in range(per_kind * 3):
+        for lst in out:
+            if i < len(lst) and lst[i].get("overview"):
+                mixed.append(lst[i])
+    return mixed

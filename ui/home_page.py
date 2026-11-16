@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -80,98 +80,154 @@ def _tag(p: QPainter, x: float, y: float, text: str, fg: str, bg: QColor) -> flo
 
 # ── spotlight ─────────────────────────────────────────────────────────────────
 
-class _Hero(QWidget, _Img):
-    open = pyqtSignal(int)
-    watched = pyqtSignal(dict)
-    H = 330
+class _Spotlight(QWidget, _Img):
+    """Rotating spotlight. Two kinds of slide, told apart at a glance:
+      update  news about YOUR library: solid badge (NEW EPISODE, OUT IN HD,
+              IN CINEMAS, NEW SEASON, NEW TRAILER, NEXT TO AIR)
+      pick    something you don't have yet: outlined FOR YOU badge + reason
+    Auto-advances every 9 s, pauses while hovered; dots and arrows to browse."""
+    H = 340
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.item: Optional[Dict] = None
+        self.slides: List[Dict] = []
+        self.idx = 0
         self._pix = None
+        self._hover = False
         self.setFixedHeight(self.H)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 30, 36, 28)
+        lay.setContentsMargins(36, 28, 36, 28)
         lay.setSpacing(8)
-        self.kicker = QLabel()
-        self.kicker.setObjectName("heroKicker")
-        lay.addWidget(self.kicker)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.badge = QLabel()
+        self.badge.setObjectName("spotBadge")
+        self.lib = QLabel()
+        self.lib.setObjectName("spotLib")
+        top.addWidget(self.badge)
+        top.addWidget(self.lib)
+        top.addStretch()
+        lay.addLayout(top)
+        self.reason = QLabel()
+        self.reason.setObjectName("spotReason")
+        rrow = QHBoxLayout()
+        rrow.addWidget(self.reason)
+        rrow.addStretch()
+        lay.addLayout(rrow)
         lay.addStretch()
         self.title = QLabel()
         self.title.setObjectName("heroTitle")
         self.title.setWordWrap(True)
-        self.next = QLabel()
-        self.next.setObjectName("heroNext")
+        self.line = QLabel()
+        self.line.setObjectName("heroNext")
         self.blurb = QLabel()
         self.blurb.setObjectName("heroBlurb")
         self.blurb.setWordWrap(True)
-        self.blurb.setMaximumWidth(560)
-        for w in (self.title, self.next, self.blurb):
+        self.blurb.setMaximumWidth(600)
+        for w in (self.title, self.line, self.blurb):
             lay.addWidget(w)
         row = QHBoxLayout()
         row.setSpacing(10)
-        self.btn_watched = QPushButton()
-        self.btn_watched.setObjectName("heroPrimary")
-        self.btn_open = QPushButton("Open details")
-        self.btn_open.setObjectName("heroSecondary")
-        for b in (self.btn_watched, self.btn_open):
+        self.btn1 = QPushButton()
+        self.btn1.setObjectName("spotPrimary")
+        self.btn2 = QPushButton()
+        self.btn2.setObjectName("heroSecondary")
+        for b in (self.btn1, self.btn2):
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             b.setMinimumHeight(40)
             row.addWidget(b)
         row.addStretch()
+        self.prev = QPushButton("‹")
+        self.next = QPushButton("›")
+        for b in (self.prev, self.next):
+            b.setObjectName("spotArrow")
+            b.setFixedSize(36, 36)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            row.addWidget(b)
+        self.prev.clicked.connect(lambda: self.show_slide(self.idx - 1))
+        self.next.clicked.connect(lambda: self.show_slide(self.idx + 1))
         lay.addSpacing(6)
         lay.addLayout(row)
-        self.btn_watched.clicked.connect(lambda: self.item and self.watched.emit(self.item))
-        self.btn_open.clicked.connect(lambda: self.item and self.open.emit(self.item["id"]))
+        self.btn1.clicked.connect(lambda: self._run(1))
+        self.btn2.clicked.connect(lambda: self._run(2))
+        self._auto = QTimer(self)
+        self._auto.timeout.connect(lambda: self.show_slide(self.idx + 1) if not self._hover else None)
+        self._auto.start(9000)
+        self._clock = QTimer(self)
+        self._clock.timeout.connect(self._tick)
+        self._clock.start(30_000)
 
-    def set_item(self, item: Dict):
-        self.item = item
-        tag, color = LIB[item["media"]]
+    # compat with the previous single-item hero
+    @property
+    def item(self) -> Optional[Dict]:
+        return self.slides[self.idx].get("item") if self.slides else None
+
+    def set_slides(self, slides: List[Dict], keep: bool = False):
+        cur = self.slides[self.idx].get("key") if (keep and self.slides) else None
+        self.slides = slides
+        idx = next((k for k, sl in enumerate(slides) if cur and sl.get("key") == cur), 0)
+        self.show_slide(idx)
+
+    def show_slide(self, idx: int):
+        if not self.slides:
+            return
+        self.idx = idx % len(self.slides)
+        sl = self.slides[self.idx]
+        tag, color = LIB[sl["media"]]
         self._color = color
-        mode = item.get("mode", "continue")
-        kick = {"continue": "NEW EPISODE" if item.get("new") else "UP NEXT",
-                "airing": "NEXT TO AIR", "planned": "READY WHEN YOU ARE"}[mode]
-        self.kicker.setText(f"{kick}  ·  {tag}")
-        self.kicker.setStyleSheet(f"color:{color};")
-        self.title.setText(item["title"])
-        self.next.setText(f"{item['label']}   ·   {item['sub']}" if item.get("sub") else item["label"])
-        # Watched only makes sense when there's an aired episode to mark
-        self.btn_watched.setVisible(mode == "continue")
-        self.btn_open.setText("Open details" if mode == "continue" else
-                              ("See the episodes" if mode == "airing" else "Start watching"))
-        self.btn_open.setObjectName("heroSecondary" if mode == "continue" else "heroPrimaryAlt")
-        self.btn_open.setStyleSheet("" if mode == "continue" else
-                                    f"QPushButton#heroPrimaryAlt{{background:{color};color:#0b0d12;border:none;"
-                                    "border-radius:11px;padding:0 20px;font-size:13px;font-weight:800;}")
-        self._target = item.get("when") if mode == "airing" else None
+        pick = sl["kind"] == "pick"
+        self.badge.setText(sl["badge"])
+        self.badge.setStyleSheet(
+            (f"color:{color};background:transparent;border:1.5px solid {color};" if pick else
+             f"color:#0b0d12;background:{sl.get('badge_color') or color};border:none;")
+            + "border-radius:8px;padding:3px 10px;font-size:10px;font-weight:900;letter-spacing:1.4px;")
+        self.lib.setText(tag)
+        self.lib.setStyleSheet(f"color:{color};font-size:10px;font-weight:800;letter-spacing:1.4px;"
+                               "background:rgba(8,9,14,0.6);border-radius:8px;padding:3px 9px;")
+        self.reason.setText(sl.get("reason") or "")
+        self.reason.setVisible(bool(sl.get("reason")))
+        self.title.setText(sl["title"])
+        self.line.setText(sl.get("line") or "")
+        self.blurb.setText(sl.get("blurb") or "")
+        for b, key in ((self.btn1, "primary"), (self.btn2, "secondary")):
+            spec = sl.get(key)
+            b.setVisible(bool(spec))
+            if spec:
+                b.setText(spec[0])
+        self.btn1.setStyleSheet(f"QPushButton#spotPrimary{{background:{color};color:#0b0d12;border:none;"
+                                "border-radius:11px;padding:0 20px;font-size:13px;font-weight:800;}}")
+        many = len(self.slides) > 1
+        self.prev.setVisible(many)
+        self.next.setVisible(many)
+        self._load_img(sl.get("img") or "")
         self._tick()
-        desc = re.sub(r"<[^>]+>", "", item["row"].get("description") or "").strip()
-        desc = re.sub(r"\s+", " ", desc)
-        self.blurb.setText(desc if len(desc) < 190 else desc[:185].rsplit(" ", 1)[0] + "…")
-        short = item["label"].split(" · ")[0]
-        self.btn_watched.setText(f"✓  Watched {short}")
-        self.btn_watched.setStyleSheet(
-            f"QPushButton#heroPrimary{{background:{color};color:#0b0d12;}}")
-        self._load_img(_img_url(item["row"], wide=True))
+        self.update()
+
+    def _run(self, which: int):
+        sl = self.slides[self.idx] if self.slides else None
+        spec = sl and sl.get("primary" if which == 1 else "secondary")
+        if spec:
+            spec[1]()
 
     def _tick(self):
-        """Live countdown for 'Next to air'."""
-        t = getattr(self, "_target", None)
-        if not t or not self.item:
+        sl = self.slides[self.idx] if self.slides else None
+        t = sl and sl.get("countdown_to")
+        if not t:
             return
         secs = int(t - datetime.now().timestamp())
         if secs <= 0:
-            self.next.setText(f"{self.item['label']}   ·   out now")
+            self.line.setText(f"{sl['line_base']}   ·   out now")
             return
         d, rem = divmod(secs, 86400)
         h, rem = divmod(rem, 3600)
         m = rem // 60
-        span = f"{d}d {h}h {m:02d}m" if d else f"{h}h {m:02d}m"
-        self.next.setText(f"{self.item['label']}   ·   in {span}")
-        if not hasattr(self, "_clock"):
-            self._clock = QTimer(self)
-            self._clock.timeout.connect(self._tick)
-            self._clock.start(30_000)
+        self.line.setText(f"{sl['line_base']}   ·   in " + (f"{d}d {h}h {m:02d}m" if d else f"{h}h {m:02d}m"))
+
+    def enterEvent(self, e):
+        self._hover = True
+
+    def leaveEvent(self, e):
+        self._hover = False
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -195,13 +251,33 @@ class _Hero(QWidget, _Img):
         p.setPen(QColor(255, 255, 255, 18))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(path)
-        if self.item:
-            prog = max(0.02, min(1.0, self.item["progress"]))
+        if not self.slides:
+            p.end()
+            return
+        sl = self.slides[self.idx]
+        prog = sl.get("progress")
+        if prog is not None and sl["kind"] == "update":
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 28))
-            p.drawRect(QRectF(0, self.height() - 4, self.width(), 4))
-            p.setBrush(QColor(self._color))
-            p.drawRect(QRectF(0, self.height() - 4, self.width() * prog, 4))
+            p.fillRect(QRectF(0, self.height() - 4, self.width(), 4), QColor(255, 255, 255, 28))
+            p.fillRect(QRectF(0, self.height() - 4, self.width() * max(0.02, min(1.0, prog)), 4),
+                       QColor(self._color))
+        # dots: solid = your library, ring = picked for you
+        n = len(self.slides)
+        if n > 1:
+            x = self.width() - 36 - n * 14
+            y = 34
+            for k, s2 in enumerate(self.slides):
+                c = QColor(LIB[s2["media"]][1])
+                if k != self.idx:
+                    c.setAlpha(110)
+                if s2["kind"] == "pick":
+                    p.setPen(QPen(c, 1.6))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                else:
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(c)
+                rad = 4.5 if k == self.idx else 3.5
+                p.drawEllipse(QRectF(x + k * 14 - rad, y - rad, rad * 2, rad * 2))
         p.end()
 
 
@@ -280,11 +356,12 @@ class _ContinueCard(QWidget, _Img):
         self.btn.move(self.W - 44, self.IMG - 44)
         self.btn.clicked.connect(lambda: self.watched.emit(self.item))
         self.btn.setVisible(False)
+        self._can_mark = not item.get("caught_up")
         self._load_img(_img_url(item["row"], wide=True))
 
     def enterEvent(self, e):
         self._hover = True
-        self.btn.setVisible(True)
+        self.btn.setVisible(self._can_mark)
         self.update()
 
     def leaveEvent(self, e):
@@ -321,6 +398,8 @@ class _ContinueCard(QWidget, _Img):
         x += _tag(p, x, 10, tag, color, QColor(8, 9, 14, 215)) + 6
         if self.item.get("new"):
             _tag(p, x, 10, "NEW", "#0b0d12", QColor("#f87171"))
+        elif self.item.get("caught_up"):
+            _tag(p, x, 10, "CAUGHT UP", "#062016", QColor("#34d399"))
         f = QFont(self.font())
         f.setPointSizeF(10)
         f.setBold(True)
@@ -490,6 +569,70 @@ class _PosterCard(QWidget, _Img):
         p.end()
 
 
+class _PickCard(QWidget, _Img):
+    """A recommendation: outlined FOR YOU tag so it never looks like your library."""
+    open = pyqtSignal(dict)
+    W, H = 132, 198
+
+    def __init__(self, hit: Dict, parent=None):
+        super().__init__(parent)
+        self.hit = hit
+        self._hover = False
+        self.setFixedSize(self.W, self.H + 42)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip(hit.get("reason") or hit.get("title") or "")
+        self._load_img(hit.get("poster_url") or "")
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.open.emit(self.hit)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        tag, color = LIB[self.hit["media_type"]]
+        r = QRectF(0, 0, self.W, self.H)
+        path = QPainterPath()
+        path.addRoundedRect(r, 10, 10)
+        p.save()
+        p.setClipPath(path)
+        self._draw_cover(p, r)
+        p.restore()
+        p.setPen(QPen(QColor(color) if self._hover else QColor(255, 255, 255, 30), 1.2))
+        p.drawPath(path)
+        f = QFont(self.font())
+        f.setPointSizeF(7)
+        f.setBold(True)
+        p.setFont(f)
+        w = p.fontMetrics().horizontalAdvance("FOR YOU") + 16
+        p.setBrush(QColor(8, 9, 14, 215))
+        p.setPen(QPen(QColor(color), 1.3))
+        p.drawRoundedRect(QRectF(8, 8, w, 20), 6, 6)
+        p.setPen(QColor(color))
+        p.drawText(QRectF(8, 8, w, 20), Qt.AlignmentFlag.AlignCenter, "FOR YOU")
+        f.setPointSizeF(8.5)
+        p.setFont(f)
+        p.setPen(QColor("#e8eaf2"))
+        p.drawText(QRectF(0, self.H + 5, self.W, 18), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(self.hit.get("title") or "", Qt.TextElideMode.ElideRight, self.W))
+        f.setBold(False)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        p.drawText(QRectF(0, self.H + 23, self.W, 16), Qt.AlignmentFlag.AlignLeft,
+                   {"anime": "Anime", "tv": "TV show", "movie": "Movie"}[self.hit["media_type"]]
+                   + (f"  ·  ★ {self.hit['score'] / 10:.1f}" if self.hit.get("score") else ""))
+        p.end()
+
+
 class _SearchRow(QWidget, _Img):
     open = pyqtSignal(int)
 
@@ -562,6 +705,9 @@ class HomePage(QWidget):
     open_title = pyqtSignal(int)
     changed = pyqtSignal(int)
     search_online = pyqtSignal(str, str)
+    open_pick = pyqtSignal(dict)           # a recommendation -> its Discover preview
+    play_trailer = pyqtSignal(str, str, str)
+    _PICKS: Dict = {"at": 0, "hits": []}   # shared cache: picks are slow (network)
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -614,9 +760,7 @@ class HomePage(QWidget):
         sl = QVBoxLayout(self.sections)
         sl.setContentsMargins(0, 0, 0, 0)
         sl.setSpacing(0)
-        self.hero = _Hero()
-        self.hero.open.connect(self.open_title.emit)
-        self.hero.watched.connect(self._mark)
+        self.hero = _Spotlight()
         sl.addWidget(self.hero)
         self.stats = QHBoxLayout()
         self.stats.setSpacing(12)
@@ -643,6 +787,14 @@ class HomePage(QWidget):
         self.rd_head = self._head("Ready to watch  ·  out in HD", sl)
         self.rd_rail = _Rail(_PosterCard.H + 50)
         sl.addWidget(self.rd_rail)
+
+        self.pk_head = self._head("Picked for you", sl)
+        self.pk_sub = QLabel("Recommendations from what you've watched and saved. Not in your library yet.")
+        self.pk_sub.setObjectName("homeEmpty")
+        sl.addWidget(self.pk_sub)
+        sl.addSpacing(10)
+        self.pk_rail = _Rail(_PickCard.H + 50)
+        sl.addWidget(self.pk_rail)
         sl.addStretch()
         self.lay.addWidget(self.sections)
         self.lay.addStretch()
@@ -683,24 +835,48 @@ class HomePage(QWidget):
 
         def work():
             from core import up_next as un
-            return un.continue_watching(self.db), un.coming_up(self.db), un.ready_to_watch(self.db)
+            return (un.continue_watching(self.db), un.coming_up(self.db), un.ready_to_watch(self.db),
+                    un.watching_rail(self.db), un.library_updates(self.db))
 
         w = Worker(work)
         w.signals.result.connect(self._render)
         run_worker(w, PRIORITY_INTERACTIVE)
+        self._load_picks()
+
+    def _load_picks(self, force: bool = False):
+        import time as _t
+        cache = HomePage._PICKS
+        if cache["hits"] and not force and _t.time() - cache["at"] < 15 * 60:
+            self._picks = cache["hits"]
+            return
+
+        def work():
+            from core import up_next as un
+            return un.picks(self.db)
+
+        def done(hits):
+            from PyQt6 import sip
+            cache.update(at=_t.time(), hits=hits or [])
+            if sip.isdeleted(self):
+                return
+            self._picks = cache["hits"]
+            self._render_picks()
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        run_worker(w)
 
     def _render(self, data):
         from PyQt6 import sip
         if sip.isdeleted(self):
             return
-        cw, up, ready = data
+        cw, up, ready, rail, updates = data
+        self._data = data
         # spotlight: never empty - a new episode, else what airs next from what
         # you watch, else something from your Plan to Watch / Watchlist
-        hero = cw[0] if cw else self._fallback_hero(up)
-        self.hero.setVisible(hero is not None)
-        self.hero_empty.setVisible(hero is None)
-        if hero:
-            self.hero.set_item(hero)
+        self._updates = updates
+        self._up = up
+        self._render_spotlight()
         self._clear(self.stats)
         now = datetime.now().timestamp()
         new = sum(1 for c in cw if c["new"])
@@ -712,15 +888,15 @@ class HomePage(QWidget):
             self.stats.addWidget(_Stat(str(v), label, color))
         self.stats.addStretch()
 
-        # continue rail (everything after the spotlight)
+        # continue rail: everything you're watching (episodes waiting first)
         self.cw_rail.clear()
-        rest = cw[1:]
+        rest = rail
         for item in rest:
             c = _ContinueCard(item)
             c.open.connect(self.open_title.emit)
             c.watched.connect(self._mark)
             self.cw_rail.add(c)
-        self.cw_head.setVisible(bool(rest) or not cw)
+        self.cw_head.setVisible(True)
         self.cw_rail.setVisible(bool(rest))
         self.caught_up.setVisible(not cw)
         if not cw:
@@ -771,6 +947,94 @@ class HomePage(QWidget):
             self.rd_rail.add(c)
         self.rd_head.setVisible(bool(ready))
         self.rd_rail.setVisible(bool(ready))
+
+    # ── spotlight slides ──────────────────────────────────────────────────────
+
+    def _render_spotlight(self, keep: bool = False):
+        updates = getattr(self, "_updates", [])
+        slides = [self._update_slide(u) for u in updates]
+        if not any(u["update"] == "episode" for u in updates):
+            # caught up: what airs next from what you watch (or something to start)
+            nxt = self._fallback_hero(getattr(self, "_up", []))
+            if nxt and not (nxt["mode"] == "planned" and slides):
+                s2 = self._airing_slide(nxt) if nxt["mode"] == "airing" else self._planned_slide(nxt)
+                slides.insert(0, s2)
+        slides += [self._pick_slide(h) for h in getattr(self, "_picks", [])[:6]]
+        self.hero.setVisible(bool(slides))
+        self.hero_empty.setVisible(not slides)
+        if slides:
+            self.hero.set_slides(slides, keep=keep)
+
+    def _render_picks(self):
+        self._render_spotlight(keep=True)
+        self.pk_rail.clear()
+        hits = getattr(self, "_picks", [])
+        for h in hits[:18]:
+            c = _PickCard(h)
+            c.open.connect(self.open_pick.emit)
+            self.pk_rail.add(c)
+        for w in (self.pk_head, self.pk_sub, self.pk_rail):
+            w.setVisible(bool(hits))
+
+    @staticmethod
+    def _blurb(text: str) -> str:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", text or "")).strip()
+        return t if len(t) < 190 else t[:185].rsplit(" ", 1)[0] + "…"
+
+    def _update_slide(self, u: Dict) -> Dict:
+        row, kind = u["row"], u["update"]
+        sl = {"kind": "update", "key": f"u{u['id']}{kind}", "badge": u["badge"], "media": u["media"],
+              "title": u["title"], "img": _img_url(row, wide=True), "blurb": self._blurb(row.get("description")),
+              "progress": u.get("progress"), "item": u if kind == "episode" else None,
+              "badge_color": {"episode": "#f87171", "hd": "#34d399", "cinema": "#fbbf24",
+                              "season": "#f472b6", "trailer": "#38bdf8"}.get(kind)}
+        if kind == "episode":
+            short = u["label"].split(" · ")[0]
+            sl.update(line=f"{u['label']}   ·   {u['sub']}",
+                      primary=(f"✓  Watched {short}", lambda u=u: self._mark(u)),
+                      secondary=("Open details", lambda i=u["id"]: self.open_title.emit(i)))
+        elif kind == "trailer" and (u.get("payload") or {}).get("trailer_id"):
+            pl = u["payload"]
+            sl.update(line=u["sub"],
+                      primary=("▶  Play trailer", lambda pl=pl, t=u["title"]: self.play_trailer.emit(
+                          pl["trailer_id"], pl.get("trailer_site") or "youtube", t)),
+                      secondary=("Open details", lambda i=u["id"]: self.open_title.emit(i)))
+        else:
+            sl.update(line=f"{u['label']}   ·   {u['sub']}" if u.get("sub") else u["label"],
+                      primary=("Open details", lambda i=u["id"]: self.open_title.emit(i)))
+        return sl
+
+    def _airing_slide(self, it: Dict) -> Dict:
+        return {"kind": "update", "key": f"a{it['id']}", "badge": "NEXT TO AIR", "media": it["media"],
+                "title": it["title"], "img": _img_url(it["row"], wide=True),
+                "blurb": self._blurb(it["row"].get("description")), "progress": it.get("progress"),
+                "line": it["label"], "line_base": it["label"], "countdown_to": it.get("when"),
+                "badge_color": "#c7cbe0", "item": it,
+                "primary": ("See the episodes", lambda i=it["id"]: self.open_title.emit(i))}
+
+    def _planned_slide(self, it: Dict) -> Dict:
+        return {"kind": "update", "key": f"p{it['id']}", "badge": "READY WHEN YOU ARE", "media": it["media"],
+                "title": it["title"], "img": _img_url(it["row"], wide=True),
+                "blurb": self._blurb(it["row"].get("description")), "progress": None,
+                "line": f"{it['label']}   ·   {it['sub']}" if it.get("sub") else it["label"],
+                "badge_color": "#c7cbe0", "item": it,
+                "primary": ("Start watching", lambda i=it["id"]: self.open_title.emit(i))}
+
+    def _pick_slide(self, h: Dict) -> Dict:
+        from core import tmdb
+        raw = h.get("raw") or {}
+        if h["media_type"] == "anime":
+            img = raw.get("bannerImage") or h.get("poster_url")
+        else:
+            img = tmdb.image_url(raw.get("backdrop_path"), "w1280") or h.get("poster_url")
+        kind = {"anime": "Anime", "tv": "TV show", "movie": "Movie"}[h["media_type"]]
+        bits = [kind] + ([str(h["year"])] if h.get("year") else []) + \
+            ([f"★ {h['score'] / 10:.1f}"] if h.get("score") else [])
+        return {"kind": "pick", "key": f"k{h['media_type']}{h['provider_id']}", "badge": "FOR YOU",
+                "media": h["media_type"], "title": h.get("title") or "", "img": img,
+                "reason": h.get("reason") or "", "line": "   ·   ".join(bits),
+                "blurb": self._blurb(h.get("overview")), "progress": None,
+                "primary": ("Preview && add", lambda h=h: self.open_pick.emit(h))}
 
     def _fallback_hero(self, up: List[Dict]) -> Optional[Dict]:
         mine = [u for u in up if u["media"] in ("anime", "tv")

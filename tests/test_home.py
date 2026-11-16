@@ -68,11 +68,14 @@ def test_home_page_and_ctrl_k(qapp, db, monkeypatch):
     win._open_search()                                   # Ctrl+K
     home = win._home_page
     assert win.current_page == "home" and win.stack.currentWidget() is home
-    assert wait_until(lambda: home.hero.item is not None)
+    assert wait_until(lambda: bool(home.hero.slides))
+    first = home.hero.slides[0]
+    assert first["badge"] == "NEW EPISODE" and first["kind"] == "update"
     assert home.hero.item["id"] == ids["anime_new"]       # spotlight: the new episode
-    assert home.cw_rail.row.count() == 2                  # the TV show + stretch
+    assert home.cw_rail.row.count() == 4                  # anime, TV, caught-up anime + stretch
     assert home.week.count() == 8                         # 7 days + Later
-    home.hero.watched.emit(home.hero.item)                # one-click Watched
+    assert home.hero.btn1.text().startswith("✓  Watched")
+    home.hero._run(1)                                     # one-click Watched
     assert win.db.get_watched_count(ids["anime_new"]) == 3
     home.search.setText("Fresh")
     assert wait_until(lambda: home.results.isVisible() and home._last_results)
@@ -132,9 +135,35 @@ def test_home_spotlight_when_caught_up(qapp, db, monkeypatch):
     page.resize(1400, 900)
     page.show()
     page.load()
-    assert wait_until(lambda: page.hero.item is not None)
-    assert page.hero.item["mode"] == "airing" and page.hero.item["id"] == aid
-    assert page.hero.kicker.text().startswith("NEXT TO AIR")
-    assert not page.hero.btn_watched.isVisible()
+    assert wait_until(lambda: bool(page.hero.slides))
+    sl = page.hero.slides[0]
+    assert sl["badge"] == "NEXT TO AIR" and sl["item"]["id"] == aid
+    assert page.hero.badge.text() == "NEXT TO AIR" and page.hero.btn1.text() == "See the episodes"
+    assert not page.hero.btn2.isVisible()
     assert "caught up" in page.caught_up.text() and page.caught_up.isVisible()
+    page.close()
+
+
+
+def test_spotlight_tells_library_news_from_picks(qapp, db, monkeypatch):
+    from ui.home_page import HomePage
+    from core import up_next as un
+    hit = {"media_type": "movie", "provider_id": 99, "title": "Some Film", "year": 2024, "score": 80,
+           "overview": "A film.", "poster_url": "", "raw": {}, "reason": "Because you watched X"}
+    monkeypatch.setattr(un, "picks", lambda db, per_kind=3: [hit])
+    HomePage._PICKS.update(at=0, hits=[])
+    page = HomePage(db)
+    page.resize(1400, 900)
+    page.show()
+    opened = []
+    page.open_pick.connect(lambda h: opened.append(h["provider_id"]))
+    page.load()
+    assert wait_until(lambda: any(s["kind"] == "pick" for s in page.hero.slides))
+    pick = next(k for k, s in enumerate(page.hero.slides) if s["kind"] == "pick")
+    page.hero.show_slide(pick)
+    assert page.hero.badge.text() == "FOR YOU" and page.hero.reason.text() == "Because you watched X"
+    assert page.hero.btn1.text() == "Preview && add"
+    page.hero._run(1)
+    assert opened == [99]
+    assert page.pk_rail.row.count() == 2 and page.pk_rail.isVisible()
     page.close()

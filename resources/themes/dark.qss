@@ -1990,3 +1990,12 @@ QLabel#homeCaughtUp {
     color: #bbf7d0; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25);
     border-radius: 12px; padding: 14px 18px; font-size: 13px; font-weight: 600;
 }
+
+/* Home spotlight carousel */
+QLabel#spotReason { color: #e8eaf2; font-size: 12px; font-weight: 600; background: rgba(8,9,14,0.55);
+                    border-radius: 8px; padding: 4px 10px; }
+QPushButton#spotArrow {
+    background: rgba(8, 9, 14, 0.62); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 18px; font-size: 18px; font-weight: 700; padding: 0 0 3px 0;
+}
+QPushButton#spotArrow:hover { background: rgba(255,255,255,0.16); }

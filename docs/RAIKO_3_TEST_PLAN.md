@@ -94,11 +94,16 @@ meantime, it doesn't understand movies).
 
 ## One app (phase 4) ✅
 - [ ] Raikō opens on **Home** (top of the sidebar): greeting + date, "Search everything" pill (Ctrl+K).
-- [ ] **Spotlight**: your most pressing title on a full backdrop (new episodes first) with what's next, a line of
-      synopsis, **✓ Watched …** and **Open details**; progress along the bottom; stat chips under it.
-- [ ] **Continue watching**: the rest, art cards with the info underneath; hover shows a ✓ to mark watched.
-- [ ] **This week**: 7 day columns (today highlighted) + Later, small posters with the episode and air time.
-- [ ] **Ready to watch**: Watchlist movies out in HD.
+- [ ] **Spotlight carousel** (auto every 9 s, pauses on hover, dots + ‹ ›). Library news has SOLID badges:
+      NEW EPISODE (✓ Watched), OUT IN HD, IN CINEMAS, NEW SEASON, NEW TRAILER (▶ Play), NEXT TO AIR (countdown).
+      Picks have an OUTLINED "FOR YOU" badge + "Because you watched…" and open in Discover ("Preview & add").
+      Dots: filled = your library, rings = picked for you.
+- [ ] **Continue watching** always shows everything you're watching: NEW first (hover ✓), then CAUGHT UP with the
+      next air time.
+- [ ] **This week** unchanged; **Ready to watch** when a Watchlist movie is out in HD; **Picked for you** posters
+      (anime / movies / TV, FOR YOU tag) at the bottom.
+- [ ] Preview safely on a copy: `.venv\Scripts\python.exe tools\preview_home.py` (add `--fresh` to fake new
+      episodes, `--tour` for the welcome + tour).
 - [ ] **Search everything** (Ctrl+K from anywhere): your anime, shows and movies grouped by library; Enter opens the
       first; "Find anime on AniList" / "Find movies & shows on TMDB" jump to Discover with the text filled in.
 - [ ] Opening any title from Home lands in its own library with the panel open.
