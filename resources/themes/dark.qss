@@ -1882,3 +1882,7 @@ QPushButton#animeBlockTab:hover { color: #e2e4ec; border-color: #3a3f55; }
 QPushButton#animeBlockTab[active="true"] {
     background: rgba(139, 123, 255, 0.16); color: #f0edff; border-color: #8b7bff;
 }
+
+/* Browser preview: the "Because you…" line takes the library colour */
+QLabel#browserReason[kind="tv"]    { color: #7dd3fc; }
+QLabel#browserReason[kind="anime"] { color: #b8adff; }

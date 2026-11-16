@@ -703,12 +703,15 @@ class MainWindow(QMainWindow):
 
         if page_id == "discover":
             if self._discover_page is None:
-                from ui.discover_page import DiscoverPage
-                self._discover_page = DiscoverPage(self.db, self)
+                from ui.kinema_add_dialog import MovieBrowser
+                page = MovieBrowser(self.db, heading="Discover anime", start_source="for_you",
+                                    kind="anime")
+                page.setObjectName("contentArea")
+                page.added.connect(self._on_anime_discover_added)
+                self._discover_page = page
                 self.stack.removeWidget(self.stack.widget(1))
-                self.stack.insertWidget(1, self._discover_page)
+                self.stack.insertWidget(1, page)
             self.stack.setCurrentIndex(1)
-            self._discover_page.load()
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
@@ -1603,18 +1606,22 @@ class MainWindow(QMainWindow):
     def _open_add_dialog(self):
         if self._media in ("movie", "tv"):
             return self._open_add_movie_dialog()
-        from ui.add_dialog import AddAnimeDialog
-        dlg = AddAnimeDialog(self.db, self)
-        if dlg.exec():
+        from ui.kinema_add_dialog import MovieAddDialog
+        dlg = MovieAddDialog(self.db, self, kind="anime")
+        dlg.added.connect(self._on_anime_discover_added)
+        dlg.exec()
+
+    def _on_anime_discover_added(self, lib_id: int, title: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        where = {"watching": "Watching", "completed": "Completed"}.get(
+            row.get("watch_status"), "Plan to Watch")
+        Toast.show(self, f"'{title}' added to {where}.", kind="success")
+        if self.current_page == "library":
             self._load_library()
-            self._update_stats_strip()
-            if getattr(dlg, "added_title", ""):
-                from ui.toast import Toast
-                Toast.show(
-                    self,
-                    f"'{dlg.added_title}' added as {dlg.added_status}.",
-                    kind="success",
-                )
+        self._update_stats_strip()
+        if self._discover_page is not None and self.sender() is not self._discover_page:
+            self._discover_page.refresh()
 
     def _setup_anilist_session(self):
         from core.anilist_auth import get_anilist_auth
@@ -2078,7 +2085,7 @@ class MainWindow(QMainWindow):
             if not media:
                 Toast.show(self, "Could not reach AniList. Try again in a moment.", kind="error")
                 return
-            from ui.discover_page import add_media_to_library
+            from core.anime_add import add_media_to_library
             add_media_to_library(self.db, media, watch_status)
             self._dismiss_new_season(notification_id)
             self.new_season_spotlight.remove_notification(notification_id)

@@ -71,3 +71,42 @@ def test_retired_screens_are_gone():
     assert not {"calendar", "stream", "hof", "stats"} & set(pages)
     for mod in ("ui.stats_page", "ui.release_calendar_page", "ui.animestream_page"):
         assert importlib.util.find_spec(mod) is None
+
+
+def test_hall_of_fame_only_titles_join_completed(tmp_path):
+    from core.database import DatabaseManager
+    d = DatabaseManager(tmp_path / "lib.db")
+    aid = add_anime(d, "Favourite", "completed", total_episodes=3)
+    d._get_conn().execute("UPDATE anime SET hof_only=1 WHERE id=?", (aid,))
+    d._get_conn().commit()
+    assert not d.get_all_anime(watch_status="completed")
+    d.close()
+    d = DatabaseManager(tmp_path / "lib.db")              # next start: converted
+    assert [a["id"] for a in d.get_all_anime(watch_status="completed")] == [aid]
+    assert d.get_watched_count(aid) == 3
+    assert list((tmp_path / "backups").glob("anime_pre_hof_*.db"))
+    d.close()
+
+
+def test_anime_browser_adds_watching(qapp, db, monkeypatch):
+    from core import miroku_discover as md, api
+    from ui.kinema_add_dialog import MovieAddDialog
+    media = {"id": 77, "title": {"romaji": "Kono Anime", "english": "This Anime"},
+             "status": "RELEASING", "episodes": 12, "seasonYear": 2026, "genres": ["Action"],
+             "coverImage": {"large": ""}, "averageScore": 81, "format": "TV",
+             "nextAiringEpisode": {"airingAt": 2_000_000_000, "episode": 5}}
+    monkeypatch.setattr(md, "load_source", lambda src, db=None, kind="anime": md._hits([media]))
+    monkeypatch.setattr(api, "get_metadata_batch", lambda ids, batch=5: {77: media})
+    dlg = MovieAddDialog(db, kind="anime")
+    assert wait_until(lambda: len(dlg._tiles) == 1)
+    assert dlg.browser.btn_watchlist.text().endswith("Plan to Watch")
+    got = []
+    dlg.added.connect(lambda lid, t: got.append(lid))
+    dlg._select(dlg._tiles[0].hit)
+    assert wait_until(lambda: dlg.browser.btn_watching.isEnabled())
+    assert not dlg.browser.btn_watched.isEnabled()          # still airing: can't be finished
+    dlg._add("watching")
+    assert wait_until(lambda: bool(got))
+    row = db.get_anime_by_id(got[0])
+    assert row["anilist_id"] == 77 and row["watch_status"] == "watching"
+    assert row["next_episode_num"] == 5

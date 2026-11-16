@@ -56,7 +56,6 @@ class DetailPanel(QWidget):
     close_requested  = pyqtSignal()
     links_changed    = pyqtSignal()
     archive_changed  = pyqtSignal(int)
-    open_hall_of_fame = pyqtSignal()
     open_sequel      = pyqtSignal(int)
     dropped_restored = pyqtSignal(int, str)
     dropped_removed  = pyqtSignal()
@@ -248,9 +247,8 @@ class DetailPanel(QWidget):
         self.planned_bottom.setVisible(False)
         self._lay.addWidget(self.planned_bottom)
 
-        # Completed: Hall of Fame / what's next / themes
+        # Completed: what's next / themes
         self.completed_bottom = CompletedBottom(self.db)
-        self.completed_bottom.open_hall_of_fame.connect(self.open_hall_of_fame.emit)
         self.completed_bottom.open_sequel.connect(self.open_sequel.emit)
         self.completed_bottom.setVisible(False)
         self._lay.addWidget(self.completed_bottom)

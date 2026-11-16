@@ -29,7 +29,23 @@ from PyQt6.QtWidgets import (
 from workers.workers import PRIORITY_INTERACTIVE, ImageWorker, Worker, run_worker
 
 ACCENT = "#fbbf24"   # Kinema movies accent
-ACCENTS = {"movie": "#fbbf24", "tv": "#38bdf8"}
+ACCENTS = {"movie": "#fbbf24", "tv": "#38bdf8", "anime": "#8b7bff"}
+
+
+def _cat(kind: str):
+    """The list/recommendation module for a library: AniList for anime,
+    TMDB for movies and TV. Both expose sources/genres/load_source/apply."""
+    if kind == "anime":
+        from core import miroku_discover as m
+    else:
+        from core import kinema_discover as m
+    return m
+
+
+def _in_library(db, kind: str, pid) -> Optional[Dict]:
+    if kind == "anime":
+        return db.get_anime_by_anilist_id(pid)
+    return db.get_title_by_tmdb(kind, pid)
 
 
 def _nice_date(s: str) -> str:
@@ -135,7 +151,7 @@ class _PosterTile(QWidget):
         rd = self.hit.get("release_date") or ""
         if rd and rd > datetime.now().strftime("%Y-%m-%d"):
             p.setPen(QColor(accent))
-            sub = ("Premieres " if self.hit.get("media_type") == "tv" else "Out ") + _nice_date(rd)
+            sub = ("Premieres " if self.hit.get("media_type") in ("tv", "anime") else "Out ") + _nice_date(rd)
         else:
             p.setPen(QColor("#7b84a3"))
             sub = " · ".join(x for x in (str(self.hit.get("year") or ""),
@@ -321,9 +337,11 @@ class MovieBrowser(QWidget):
     # ── movies / TV ───────────────────────────────────────────────────────────
 
     def _apply_kind(self):
-        from core.kinema_discover import sources
+        sources = _cat(self.kind).sources
         tv = self.kind == "tv"
-        self.search.setPlaceholderText("Search any show: title, creator…" if tv
+        anime = self.kind == "anime"
+        self.search.setPlaceholderText("Search any anime: title, studio, season…" if anime else
+                                       "Search any show: title, creator…" if tv
                                        else "Search any movie: title, franchise…")
         self._chip_flow.clear()
         self._chips = {}
@@ -334,9 +352,13 @@ class MovieBrowser(QWidget):
             b.clicked.connect(lambda _=False, k=key: self.select_source(k))
             self._chip_flow.addWidget(b)
             self._chips[key] = b
-        self.btn_watching.setVisible(tv)
-        self.btn_watched.setText("✓  I've finished it" if tv else "✓  I've watched it")
-        self.p_title.setText("Pick a show" if tv else "Pick a movie")
+        self.btn_watching.setVisible(tv or anime)
+        self.btn_watchlist.setText("＋  Plan to Watch" if anime else "＋  Add to Watchlist")
+        self.btn_watched.setText("✓  I've finished it" if (tv or anime) else "✓  I've watched it")
+        self.p_title.setText("Pick an anime" if anime else "Pick a show" if tv else "Pick a movie")
+        self.p_reason.setProperty("kind", self.kind)
+        self.p_reason.style().unpolish(self.p_reason)
+        self.p_reason.style().polish(self.p_reason)
         for k, b in self._kind_btns.items():
             b.setProperty("active", "true" if k == self.kind else "false")
             b.style().unpolish(b)
@@ -361,8 +383,7 @@ class MovieBrowser(QWidget):
         self.p_backdrop.clear()
         self._apply_kind()
         self._load_genres()
-        from core.kinema_discover import sources
-        valid = [k for k, _l in sources(kind)]
+        valid = [k for k, _l in _cat(kind).sources(kind)]
         self.select_source(self._source if self._source in valid else "for_you")
         self.kind_changed.emit(kind)
 
@@ -372,8 +393,7 @@ class MovieBrowser(QWidget):
         kind = self.kind
 
         def work():
-            from core.kinema_discover import genres
-            return genres(kind)
+            return _cat(kind).genres(kind)
 
         def done(gs):
             if self._gone() or kind != self.kind:
@@ -386,7 +406,7 @@ class MovieBrowser(QWidget):
         run_worker(w, PRIORITY_INTERACTIVE)
 
     def select_source(self, key: str):
-        from core.kinema_discover import sources
+        sources = _cat(self.kind).sources
         self._source = key
         kind = self.kind
         ck = f"{kind}:{key}"
@@ -402,13 +422,13 @@ class MovieBrowser(QWidget):
         if ck in self._cache:
             self._show(self._cache[ck], self._next_token())
             return
-        self.status.setText(("Finding shows for you…" if kind == "tv" else "Finding films for you…")
+        self.status.setText(({"tv": "Finding shows for you…", "anime": "Finding anime for you…"}
+                             .get(kind, "Finding films for you…"))
                             if key == "for_you" else "Loading…")
         tok = self._next_token()
 
         def work():
-            from core.kinema_discover import load_source
-            return load_source(key, self.db, kind=kind)
+            return _cat(kind).load_source(key, self.db, kind=kind)
 
         def done(hits, t=tok, k=ck):
             if self._gone():
@@ -442,6 +462,10 @@ class MovieBrowser(QWidget):
 
         def work():
             from core.providers import get_provider
+            if kind == "anime":
+                from core.miroku_discover import _hits
+                from core.api import search_anime
+                return _hits(search_anime(q, per_page=30) or [])
             hits = get_provider(kind).search(q)
             for h in hits:
                 raw = h.get("raw") or {}
@@ -466,22 +490,23 @@ class MovieBrowser(QWidget):
 
     def _render(self):
         from core import tmdb
-        from core.kinema_discover import apply
+        apply = _cat(self.kind).apply
         self.grid.clear()
         self._tiles = []
         hits = apply(self._raw, self.genre.currentData() or 0, self.sort.currentData() or "default",
                      "" if self.search.text() else self._source)
         if not hits:
-            if not tmdb.has_credentials():
+            if self.kind != "anime" and not tmdb.has_credentials():
                 self.status.setText("TV & movie search needs a TMDB key: Settings → TV shows & movies.")
             elif self._raw:
                 self.status.setText("Nothing in this list matches that genre.")
             else:
-                self.status.setText("No shows found." if self.kind == "tv" else "No movies found.")
+                self.status.setText({"tv": "No shows found.", "anime": "No anime found."}
+                                    .get(self.kind, "No movies found."))
             return
         self.status.setText("")
         for h in hits[:60]:
-            in_lib = bool(self.db.get_title_by_tmdb(h.get("media_type") or self.kind, h["provider_id"]))
+            in_lib = bool(_in_library(self.db, h.get("media_type") or self.kind, h["provider_id"]))
             t = _PosterTile(h, in_lib)
             t.clicked.connect(self._select)
             t.set_selected(bool(self._selected) and self._selected.get("provider_id") == h["provider_id"])
@@ -502,7 +527,7 @@ class MovieBrowser(QWidget):
         ov = hit.get("overview") or ""
         self.p_overview.setText(ov if len(ov) < 420 else ov[:410].rsplit(" ", 1)[0] + "…")
         kind = hit.get("media_type") or self.kind
-        existing = self.db.get_title_by_tmdb(kind, hit["provider_id"])
+        existing = _in_library(self.db, kind, hit["provider_id"])
         self._existing = existing
         self.btn_watchlist.setEnabled(not existing)
         # Only enabled once details confirm it's actually out
@@ -512,7 +537,8 @@ class MovieBrowser(QWidget):
         self.p_backdrop.clear()
         raw = hit.get("raw") or {}
         from core import tmdb
-        url = tmdb.image_url(raw.get("backdrop_path"), "w780") or hit.get("poster_url")
+        url = (raw.get("bannerImage") if kind == "anime" else
+               tmdb.image_url(raw.get("backdrop_path"), "w780")) or hit.get("poster_url")
         if url:
             w = ImageWorker(url, hit["provider_id"])
             w.signals.result.connect(self._on_backdrop)
@@ -520,6 +546,15 @@ class MovieBrowser(QWidget):
         pid = hit["provider_id"]
 
         def work():
+            if kind == "anime":
+                from core.api import get_metadata_batch
+                from core.metadata_sync import media_to_row
+                m = get_metadata_batch([pid]).get(int(pid))
+                if not m:
+                    return None
+                row = media_to_row(m)
+                row.update({"media_type": "anime", "anilist_id": int(pid), "_media": m})
+                return row
             from core.providers import get_provider
             return get_provider(kind).details(pid)
 
@@ -533,6 +568,8 @@ class MovieBrowser(QWidget):
         self._selected["_row"] = row
         if row.get("media_type") == "tv":
             return self._on_tv_details(row)
+        if row.get("media_type") == "anime":
+            return self._on_anime_details(row)
         bits = [str(row.get("season_year") or "")]
         if row.get("duration"):
             h, m = divmod(int(row["duration"]), 60)
@@ -594,6 +631,50 @@ class MovieBrowser(QWidget):
         else:
             self.p_note.setText("")
 
+    def _on_anime_details(self, row: Dict):
+        m = row.get("_media") or {}
+        api = (m.get("status") or "").upper()
+        eps = m.get("episodes")
+        bits = [str(m.get("seasonYear") or "")]
+        fmt = {"TV": "TV", "TV_SHORT": "TV short", "ONA": "ONA", "MOVIE": "Movie"}.get(m.get("format") or "", "")
+        if fmt:
+            bits.append(fmt)
+        if eps:
+            bits.append(f"{eps} episodes" if eps != 1 else "1 episode")
+        studios = [n.get("name") for n in ((m.get("studios") or {}).get("nodes") or []) if n.get("name")]
+        if studios:
+            bits.append(studios[0])
+        if m.get("averageScore"):
+            bits.append(f"★ {m['averageScore'] / 10:.1f}")
+        self.p_meta.setText("  ·  ".join(b for b in bits if b))
+        if m.get("description") and not self.p_overview.text():
+            from core.miroku_discover import _clean
+            ov = _clean(m["description"])
+            self.p_overview.setText(ov if len(ov) < 420 else ov[:410].rsplit(" ", 1)[0] + "…")
+        existing = getattr(self, "_existing", None)
+        aired = api not in ("NOT_YET_RELEASED", "")
+        ended = api in ("FINISHED", "CANCELLED")
+        self.btn_watching.setEnabled(aired and not existing)
+        self.btn_watched.setEnabled(ended and not existing)
+        if existing:
+            return
+        nae = m.get("nextAiringEpisode") or {}
+        if api == "NOT_YET_RELEASED":
+            when = row.get("start_date") or ""
+            self.p_note.setText("Hasn't aired yet" + (f": starts {when}." if when else ".")
+                                + " Plan to watch it and you'll hear when it starts.")
+        elif api == "RELEASING":
+            if nae.get("airingAt"):
+                d = datetime.fromtimestamp(nae["airingAt"])
+                self.p_note.setText(f"Airing now. Episode {nae.get('episode')} airs "
+                                    f"{d.strftime('%a, %b ')}{d.day}.")
+            else:
+                self.p_note.setText("Airing now.")
+        elif ended:
+            self.p_note.setText("Finished airing" + (f": all {eps} episodes are out." if eps else "."))
+        else:
+            self.p_note.setText("")
+
     def _on_backdrop(self, result):
         try:
             _id, _s, path = result
@@ -618,6 +699,15 @@ class MovieBrowser(QWidget):
         kind = hit.get("media_type") or self.kind
 
         def work():
+            if kind == "anime":
+                m = (hit.get("_row") or {}).get("_media")
+                if not m:
+                    from core.api import get_metadata_batch
+                    m = get_metadata_batch([pid]).get(int(pid))
+                if not m:
+                    return None
+                return {"_media": m, "romaji_title": ((m.get("title") or {}).get("english")
+                                                      or (m.get("title") or {}).get("romaji") or "")}
             if kind == "tv":
                 from core.kinema_sync import fetch_tv_full
                 row, eps = fetch_tv_full(pid)
@@ -634,10 +724,13 @@ class MovieBrowser(QWidget):
             if self._gone():
                 return
             if not row:
-                self.p_note.setText("Couldn't reach TMDB. Check your connection and try again.")
+                self.p_note.setText(("Couldn't reach AniList." if kind == "anime" else "Couldn't reach TMDB.")
+                                    + " Check your connection and try again.")
                 self.btn_watchlist.setEnabled(True)
                 return
-            if kind == "tv":
+            if kind == "anime":
+                lib_id = _save_anime(self.db, row["_media"], watch_status)
+            elif kind == "tv":
                 from core.kinema_sync import save_tv_full
                 lib_id = save_tv_full(self.db, row, row.get("_episodes") or [], watch_status)
                 if watch_status == "completed":
@@ -651,9 +744,10 @@ class MovieBrowser(QWidget):
             for t in self._tiles:
                 if t.hit.get("provider_id") == pid:
                     t.set_in_library(True)
-            self.p_note.setText({"planned": "Added to your Watchlist.",
+            self.p_note.setText({"planned": "Added to Plan to Watch." if kind == "anime"
+                                 else "Added to your Watchlist.",
                                  "watching": "Added to Watching. Mark episodes as you go.",
-                                 }.get(watch_status, "Logged as finished." if kind == "tv"
+                                 }.get(watch_status, "Logged as finished." if kind in ("tv", "anime")
                                        else "Logged as watched."))
             self._cache.pop(f"{kind}:for_you", None)
             self.added.emit(lib_id, row.get("romaji_title") or "")
@@ -663,13 +757,32 @@ class MovieBrowser(QWidget):
         run_worker(w, PRIORITY_INTERACTIVE)
 
 
+def _save_anime(db, media: Dict, watch_status: str) -> int:
+    """Add an AniList media to the library with full metadata; finishing it
+    marks every episode watched."""
+    from core.anime_add import add_media_to_library
+    from core.metadata_sync import media_to_row
+    add_media_to_library(db, media, watch_status)
+    row = db.get_anime_by_anilist_id(media["id"])
+    lib_id = row["id"]
+    extra = {k: v for k, v in media_to_row(media).items()
+             if k in db._anime_columns() and v not in (None, "", [], {})
+             and k not in ("watch_status",)}
+    if extra:
+        db.update_anime(lib_id, extra)
+    if watch_status == "completed" and media.get("episodes"):
+        for n in range(1, int(media["episodes"]) + 1):
+            db.set_episode_watched(lib_id, n, True)
+    return lib_id
+
+
 class MovieAddDialog(QDialog):
     """The browser in a dialog: closes after a film is added."""
     added = pyqtSignal(int, str)
 
     def __init__(self, db, parent=None, kind: str = "movie"):
         super().__init__(parent)
-        title = "Add a show" if kind == "tv" else "Add a movie"
+        title = {"tv": "Add a show", "anime": "Add anime"}.get(kind, "Add a movie")
         self.setWindowTitle(title)
         self.setObjectName("kinemaAddDialog")
         self.setStyleSheet("QDialog#kinemaAddDialog{background:#0f1118;}")

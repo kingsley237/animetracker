@@ -9,7 +9,6 @@ completed view, year-in-review recaps):
   Your verdict  your rating vs the community, in plain words (re-rate here)
   Your journey  episodes, watch time, days, pace, average episode rating
   Season curve  per-episode ratings as bars, best / weakest episode
-  Hall of Fame  rank + tier, or one click to add
   What's next   the sequel if one is known, else a promise to tell you
   Themes        OP/ED music videos and trailers (gallery + playlist)
 """
@@ -463,7 +462,6 @@ class CompletedTop(QWidget):
 
 
 class CompletedBottom(QWidget):
-    open_hall_of_fame = pyqtSignal()
     open_sequel = pyqtSignal(int)
 
     def __init__(self, db, parent=None):
@@ -473,20 +471,6 @@ class CompletedBottom(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
-
-        # Hall of Fame
-        self.hof_card = _card("Hall of Fame")
-        hl = self.hof_card.layout()
-        self.hof_text = QLabel()
-        self.hof_text.setObjectName("plannedFactValue")
-        self.hof_text.setWordWrap(True)
-        self.hof_btn = QPushButton()
-        self.hof_btn.setObjectName("secondaryBtn")
-        self.hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.hof_btn.clicked.connect(self._hof_action)
-        hl.addWidget(self.hof_text)
-        hl.addWidget(self.hof_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-        lay.addWidget(self.hof_card)
 
         # What's next
         self.next_card = _card("What's next")
@@ -511,7 +495,6 @@ class CompletedBottom(QWidget):
 
     def load(self, anime: Dict):
         self._anime = anime
-        self._render_hof()
 
         # What's next: an active new-season alert, else what the sequel
         # check last recorded on this anime.
@@ -553,33 +536,3 @@ class CompletedBottom(QWidget):
         items = build_playlist(anime)
         items.sort(key=lambda v: 0 if v.get("kind") == "music" else 1)   # themes first
         self.gallery.load(items, anime.get("english_title") or anime.get("romaji_title") or "")
-
-    def _render_hof(self):
-        from ui.hall_of_fame import _in_hof, _migrate
-        a = self._anime
-        _migrate(self.db)
-        row = self.db._get_conn().execute(
-            "SELECT rank, tier FROM hall_of_fame WHERE anime_id=?", (a["id"],)).fetchone()
-        if row:
-            tier = f" · Tier {row['tier']}" if row["tier"] else ""
-            self.hof_text.setText(f"★  In your Hall of Fame at #{row['rank']}{tier}.")
-            self.hof_btn.setText("Open Hall of Fame")
-        else:
-            mine = self.db.get_overall_rating(a["id"])
-            nudge = " You rated it a masterpiece. It belongs there." if mine and mine >= 6 else ""
-            self.hof_text.setText("Not in your Hall of Fame." + nudge)
-            self.hof_btn.setText("＋  Add to Hall of Fame")
-
-    def _hof_action(self):
-        from ui.hall_of_fame import _add_to_hof, _in_hof
-        a = self._anime
-        if not a:
-            return
-        if _in_hof(self.db, a["id"]):
-            self.open_hall_of_fame.emit()
-            return
-        _add_to_hof(self.db, a["id"])
-        self._render_hof()
-        from ui.toast import Toast
-        Toast.show(self.window(), f"'{a.get('romaji_title', 'Anime')}' added to your Hall of Fame.",
-                   kind="success")

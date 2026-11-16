@@ -71,6 +71,10 @@ meantime, it doesn't understand movies).
 - [ ] Anime detail panel in the Kinema layout: up next + one-click mark, progress, next episode countdown,
       status actions, episode list (tick / up to here / rate), verdict, where to watch, trailers, facts, characters.
 - [ ] Miroku Discover in the Kinema flow (search, list chips, genre + sort, poster grid, preview + add), anime-themed.
+- [ ] Your 11 Hall of Fame-only favourites (Bleach, Death Note, HxH…) now show in Completed, every episode ticked
+      (backup `anime_pre_hof_*.db` taken first; rankings kept in the file).
+- [ ] Miroku Discover and **Add anime** (Ctrl+N) use the Kinema browser: For you, This season, Next season,
+      Trending, Top rated, Most popular; Plan to Watch / I'm watching it (aired) / I've finished it (finished airing).
 - [ ] Data Doctor covers anime, movies and TV; problems anywhere raise a notification that opens Data Doctor directly.
 
 ## One app (phase 4) 🕒

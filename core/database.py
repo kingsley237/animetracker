@@ -117,6 +117,7 @@ class DatabaseManager:
             except Exception:
                 pass   # column already exists
         self._ensure_rewatch_table(conn)
+        self._migrate_v6(conn)          # Hall of Fame-only titles -> Completed (once)
         # Backfill when existing Completed anime were finished: best signal
         # is the last episode the user marked, then when it was added.
         conn.execute(
@@ -315,6 +316,35 @@ class DatabaseManager:
             return dest
         except Exception:
             return None
+
+    def _migrate_v6(self, conn: sqlite3.Connection, backup: bool = True):
+        # Idempotent: only acts while hof_only rows remain.
+        """Hall of Fame retired: titles that lived ONLY there (finished
+        favourites that couldn't join the library back then) become normal
+        Completed titles with every episode watched. Rankings stay in the
+        hall_of_fame table untouched."""
+        try:
+            rows = conn.execute(
+                "SELECT id, total_episodes, COALESCE(completed_at, date_added) AS ts "
+                "FROM anime WHERE hof_only=1").fetchall()
+        except sqlite3.OperationalError:
+            return                          # very old library: no hof_only column
+        if not rows:
+            return
+        if backup:
+            conn.commit()     # the backup waits forever on our own open transaction
+            self._backup_before_upgrade(conn, "hof")
+        for r in rows:
+            aid, total, ts = r[0], r[1] or 0, r[2]
+            for n in range(1, int(total) + 1):
+                conn.execute(
+                    "INSERT INTO episodes (anime_id, episode_num, watched, watched_at) VALUES (?,?,1,?) "
+                    "ON CONFLICT(anime_id, episode_num) DO UPDATE SET watched=1, "
+                    "watched_at=COALESCE(episodes.watched_at, excluded.watched_at)",
+                    (aid, n, ts))
+            conn.execute("UPDATE anime SET hof_only=0, watch_status='completed', "
+                         "completed_at=COALESCE(completed_at, date_added) WHERE id=?", (aid,))
+        conn.commit()
 
     def _migrate_v5(self, conn: sqlite3.Connection):
         """Raikō: one library for anime, TV shows and movies.
