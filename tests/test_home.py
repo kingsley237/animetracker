@@ -165,3 +165,49 @@ def test_spotlight_tells_library_news_from_picks(qapp, db, monkeypatch):
     page.hero._run(1)
     assert opened == [99]
     page.close()
+
+
+def test_rotate_picks_mixes_libraries_and_rests_recent():
+    from core.up_next import rotate_picks
+    pool = [{"media_type": k, "provider_id": i} for k in ("anime", "movie", "tv") for i in range(9)]
+    a = rotate_picks(pool, {}, seed=1)
+    b = rotate_picks(pool, {}, seed=2)
+    assert len(a) == 6 and {h["media_type"] for h in a} == {"anime", "movie", "tv"}
+    assert [(h["media_type"], h["provider_id"]) for h in a] != [(h["media_type"], h["provider_id"]) for h in b]
+    now = 1_000_000.0
+    recent = {f"{h['media_type']}:{h['provider_id']}": now for h in a}
+    c = rotate_picks(pool, recent, seed=1, now=now + 3600)
+    assert not ({(h["media_type"], h["provider_id"]) for h in c} & {(h["media_type"], h["provider_id"]) for h in a})
+
+
+def test_tour_scrolls_target_into_view(qapp, db, monkeypatch):
+    from ui.main_window import MainWindow
+    from ui import onboarding as ob
+    for name in ("_check_connection", "_check_anilist_status", "_check_tmdb_status", "_check_for_updates",
+                 "_setup_anilist_session", "_scan_sequels", "_maybe_show_onboarding",
+                 "_sync_metadata", "_refresh_upcoming", "_refresh_airing", "_scan_notifications",
+                 "_sync_movies", "_refresh_open_anime"):
+        monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
+    _library(db, monkeypatch)
+    win = MainWindow(db)
+    win.setGeometry(0, 0, 1200, 700)
+    win.show()
+    win._navigate("home")
+    home = win._home_page
+    bar = home.scroll.verticalScrollBar()
+    assert wait_until(lambda: bool(home.hero.slides) and bar.maximum() > 0)
+    bar.setValue(bar.maximum())                 # user scrolled down, then replays the tour
+    assert bar.value() > 0
+    tour = ob.OnboardingOverlay(win, win.centralWidget())
+    tour._next()                                # step 2: the search pill
+    pump(700)
+    assert bar.value() == 0                     # scrolled back up
+    assert not tour._spotlight.isNull() and tour.rect().contains(tour._spotlight)
+    card = tour._card.geometry()
+    assert tour.rect().contains(card)           # the whole step card is visible
+    tour._finish()
+    win.close()
+    win.deleteLater()
+    pump(50)
+    import core.anilist_auth as auth
+    auth._auth_instance = None

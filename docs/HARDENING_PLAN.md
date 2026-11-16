@@ -6,7 +6,7 @@ each gets tested by you before shipping.
 
 ## Queued
 
-- [ ] **Welcome tour scrolls each target into view.** Replaying the tour (Settings → About) after
+- [x] **Welcome tour scrolls each target into view.** (done on develop, awaiting your test) Replaying the tour (Settings → About) after
       scrolling down Home leaves the highlighted element off-screen — e.g. step 2 spotlights the search
       bar while the page is scrolled down, so neither the search bar nor part of the step card is
       visible. Fix: before spotlighting, scroll the page's scroll area so the target is visible (top of
@@ -14,7 +14,7 @@ each gets tested by you before shipping.
       scroll settles. Test: scroll Home to the bottom → Settings → About → Replay the welcome tour →
       every step shows its target and the whole card.
 
-- [ ] **Spotlight "For you" picks rotate.** Today the spotlight always shows the same top 6 picks
+- [x] **Spotlight "For you" picks rotate.** (done on develop, awaiting your test) Today the spotlight always shows the same top 6 picks
       (the list is deterministic and only changes when the library changes). Fix: keep the whole pool
       (~27 across anime, movies and TV), show a fresh mix of 6 every few hours and on each start,
       always mixing the three libraries, and rest picks you've recently seen. Library news (new

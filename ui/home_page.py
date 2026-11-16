@@ -643,6 +643,11 @@ class HomePage(QWidget):
         self.lay.addWidget(self.sections)
         self.lay.addStretch()
         self._last_results: List[Dict] = []
+        # left open for hours: pick up the next rotation without leaving Home
+        self._rot_timer = QTimer(self)
+        self._rot_timer.timeout.connect(
+            lambda: getattr(self, "_picks", None) and self._render_spotlight(keep=True))
+        self._rot_timer.start(20 * 60 * 1000)
 
     @staticmethod
     def _head(text: str, lay: QVBoxLayout) -> QLabel:
@@ -783,11 +788,45 @@ class HomePage(QWidget):
             if nxt and not (nxt["mode"] == "planned" and slides):
                 s2 = self._airing_slide(nxt) if nxt["mode"] == "airing" else self._planned_slide(nxt)
                 slides.insert(0, s2)
-        slides += [self._pick_slide(h) for h in getattr(self, "_picks", [])[:6]]
+        slides += [self._pick_slide(h) for h in self._rotated_picks()]
         self.hero.setVisible(bool(slides))
         self.hero_empty.setVisible(not slides)
         if slides:
             self.hero.set_slides(slides, keep=keep)
+
+    # A new mix every few hours and every app start; recently shown picks rest.
+    _ROTATE_EVERY = 4 * 3600
+    _SESSION_SEED = None
+
+    def _rotated_picks(self) -> List[Dict]:
+        import random
+        import time as _t
+        pool = getattr(self, "_picks", []) or []
+        if not pool:
+            return []
+        if HomePage._SESSION_SEED is None:
+            HomePage._SESSION_SEED = random.randrange(1 << 30)      # new mix on each start
+        seed = HomePage._SESSION_SEED + int(_t.time() // self._ROTATE_EVERY)
+        cached = getattr(self, "_rot", None)
+        ids = tuple(sorted(f"{h.get('media_type')}:{h.get('provider_id')}" for h in pool))
+        if cached and cached[0] == seed and cached[1] == ids:
+            return cached[2]
+        from core import up_next as un
+        from core.app_settings import app_settings
+        st = app_settings()
+        import json
+        try:
+            recent = json.loads(st.value("spotlight_recent_picks", "{}") or "{}")
+        except (TypeError, ValueError):
+            recent = {}
+        now = _t.time()
+        recent = {k: v for k, v in recent.items() if now - float(v) < 24 * 3600}
+        chosen = un.rotate_picks(pool, recent, seed)
+        for h in chosen:
+            recent[f"{h.get('media_type')}:{h.get('provider_id')}"] = now
+        st.setValue("spotlight_recent_picks", json.dumps(recent))
+        self._rot = (seed, ids, chosen)
+        return chosen
 
     def _render_picks(self):
         self._render_spotlight(keep=True)

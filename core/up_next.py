@@ -233,3 +233,35 @@ def picks(db, per_kind: int = 3) -> List[Dict]:
             if i < len(lst) and lst[i].get("overview"):
                 mixed.append(lst[i])
     return mixed
+
+
+def rotate_picks(pool: List[Dict], recent: Dict[str, float], seed: int, count: int = 6,
+                 now: Optional[float] = None) -> List[Dict]:
+    """Choose which recommendations the spotlight shows this time.
+
+    - a different mix per `seed` (a new seed every few hours and every start)
+    - always mixes anime / TV / movies (round-robin across what's available)
+    - titles shown in the last 24 h sit out while there are fresh ones
+    """
+    import random
+    now = now or datetime.now().timestamp()
+    key = lambda h: f"{h.get('media_type')}:{h.get('provider_id')}"
+    fresh = [h for h in pool if now - recent.get(key(h), 0) > 24 * 3600]
+    rested = [h for h in pool if h not in fresh]
+    rng = random.Random(seed)
+    by_kind: Dict[str, List[Dict]] = {}
+    for h in fresh:
+        by_kind.setdefault(h.get("media_type") or "anime", []).append(h)
+    for lst in by_kind.values():
+        rng.shuffle(lst)
+    kinds = list(by_kind)
+    rng.shuffle(kinds)
+    out: List[Dict] = []
+    while len(out) < count and any(by_kind.values()):
+        for k in kinds:
+            if by_kind[k] and len(out) < count:
+                out.append(by_kind[k].pop(0))
+    if len(out) < count:                       # not enough fresh ones: top up with rested picks
+        rng.shuffle(rested)
+        out += rested[:count - len(out)]
+    return out
