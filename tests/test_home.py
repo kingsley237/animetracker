@@ -68,9 +68,11 @@ def test_home_page_and_ctrl_k(qapp, db, monkeypatch):
     win._open_search()                                   # Ctrl+K
     home = win._home_page
     assert win.current_page == "home" and win.stack.currentWidget() is home
-    assert wait_until(lambda: home.cw_rail.row.count() == 3)          # 2 cards + stretch
-    card = home.cw_rail.row.itemAt(0).widget()
-    card.watched.emit(card.item)                          # one-click Watched
+    assert wait_until(lambda: home.hero.item is not None)
+    assert home.hero.item["id"] == ids["anime_new"]       # spotlight: the new episode
+    assert home.cw_rail.row.count() == 2                  # the TV show + stretch
+    assert home.week.count() == 8                         # 7 days + Later
+    home.hero.watched.emit(home.hero.item)                # one-click Watched
     assert win.db.get_watched_count(ids["anime_new"]) == 3
     home.search.setText("Fresh")
     assert wait_until(lambda: home.results.isVisible() and home._last_results)

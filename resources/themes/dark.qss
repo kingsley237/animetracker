@@ -1910,3 +1910,40 @@ QPushButton#homeWatchedBtn {
     border-radius: 9px; padding: 5px 11px; font-size: 11px; font-weight: 700;
 }
 QPushButton#homeWatchedBtn:hover { background: #34d399; color: #062016; border-color: #34d399; }
+
+/* ── Raikō Home v2 ───────────────────────────────────────────────────────── */
+QLabel#homeHello { color: #f4f5fa; font-size: 24px; font-weight: 800; }
+QLabel#homeDate { color: #7f87a3; font-size: 12px; }
+QLineEdit#homeSearch {
+    background: #12141d; border: 1px solid #23273a; border-radius: 20px;
+    padding: 0 16px; color: #e8eaf2; font-size: 12px;
+}
+QLineEdit#homeSearch:focus { border-color: #8b7bff; background: #151827; }
+QLabel#heroKicker { font-size: 11px; font-weight: 800; letter-spacing: 1.6px; background: transparent; }
+QLabel#heroTitle { color: #ffffff; font-size: 30px; font-weight: 800; background: transparent; }
+QLabel#heroNext { color: #dfe2ee; font-size: 14px; font-weight: 600; background: transparent; }
+QLabel#heroBlurb { color: #a8aec6; font-size: 12px; background: transparent; }
+QPushButton#heroPrimary {
+    border: none; border-radius: 11px; padding: 0 20px; font-size: 13px; font-weight: 800;
+}
+QPushButton#heroSecondary {
+    background: rgba(255,255,255,0.10); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 11px; padding: 0 18px; font-size: 13px; font-weight: 700;
+}
+QPushButton#heroSecondary:hover { background: rgba(255,255,255,0.18); }
+QWidget#homeStat { background: #11131c; border: 1px solid #1c2030; border-radius: 12px; }
+QLabel#homeStatValue { font-size: 22px; font-weight: 800; background: transparent; }
+QLabel#homeStatLabel { color: #7f87a3; font-size: 9px; font-weight: 800; letter-spacing: 1.2px; background: transparent; }
+QLabel#homeSection { color: #eef0f7; font-size: 17px; font-weight: 800; }
+QLabel#homeEmpty { color: #7f87a3; font-size: 12px; }
+QPushButton#cardTick {
+    background: #34d399; color: #062016; border: none; border-radius: 17px;
+    font-size: 15px; font-weight: 900; padding: 0;
+}
+QWidget#homeDayCol, QWidget#homeDayColToday {
+    background: #0f1119; border: 1px solid #1a1d2a; border-radius: 12px;
+}
+QWidget#homeDayColToday { background: #13122a; border-color: #3b3470; }
+QLabel#homeDayTitle { color: #eef0f7; font-size: 12px; font-weight: 800; background: transparent; }
+QLabel#homeDaySub { color: #6b7391; font-size: 10px; background: transparent; }
+QLabel#homeDayEmpty { color: #3d4359; font-size: 11px; background: transparent; }

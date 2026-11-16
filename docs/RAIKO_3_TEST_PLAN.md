@@ -93,12 +93,11 @@ meantime, it doesn't understand movies).
 - [ ] Quick links: one-click label presets (Crunchyroll, Netflix, Telegram channel, Episodes…) also set the platform.
 
 ## One app (phase 4) ✅
-- [ ] Raikō opens on **Home** (top of the sidebar): greeting + "N to continue · N new episodes · N coming this
-      week · N movies ready".
-- [ ] **Continue watching**: next episode of every anime and show you're watching, new episodes first, wide art
-      cards tagged MIROKU / KINEMA · TV, progress bar; **✓ Watched** marks it in one click; clicking opens it.
-- [ ] **Coming up** (14 days, grouped Today / Tomorrow / weekday): anime episodes with air time, TV episodes and
-      season premieres, Watchlist movies reaching cinemas or HD.
+- [ ] Raikō opens on **Home** (top of the sidebar): greeting + date, "Search everything" pill (Ctrl+K).
+- [ ] **Spotlight**: your most pressing title on a full backdrop (new episodes first) with what's next, a line of
+      synopsis, **✓ Watched …** and **Open details**; progress along the bottom; stat chips under it.
+- [ ] **Continue watching**: the rest, art cards with the info underneath; hover shows a ✓ to mark watched.
+- [ ] **This week**: 7 day columns (today highlighted) + Later, small posters with the episode and air time.
 - [ ] **Ready to watch**: Watchlist movies out in HD.
 - [ ] **Search everything** (Ctrl+K from anywhere): your anime, shows and movies grouped by library; Enter opens the
       first; "Find anime on AniList" / "Find movies & shows on TMDB" jump to Discover with the text filled in.
