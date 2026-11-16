@@ -61,6 +61,21 @@ def _resolve(mw, target: str) -> Optional[QWidget]:
     return obj if isinstance(obj, QWidget) else None
 
 
+class _FollowParent:
+    """Mixin: an overlay that always covers its parent, whatever the window does
+    (maximize, resize) after it was created."""
+
+    def _follow_parent(self):
+        self.setGeometry(self.parentWidget().rect())
+        self.parentWidget().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        from PyQt6.QtCore import QEvent
+        if obj is self.parentWidget() and ev.type() == QEvent.Type.Resize:
+            self.setGeometry(obj.rect())
+        return False
+
+
 # ── welcome ───────────────────────────────────────────────────────────────────
 
 class _Tile(QWidget):
@@ -95,13 +110,13 @@ class _Tile(QWidget):
         l.addStretch()
 
 
-class WelcomeOverlay(QWidget):
+class WelcomeOverlay(_FollowParent, QWidget):
     tour = pyqtSignal()
     done = pyqtSignal()
 
     def __init__(self, parent: QWidget, upgrading: bool):
         super().__init__(parent)
-        self.setGeometry(parent.rect())
+        self._follow_parent()
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         card = QWidget(self)
         card.setObjectName("welcomeCard")
@@ -225,7 +240,7 @@ class WelcomeOverlay(QWidget):
 
 # ── spotlight tour ────────────────────────────────────────────────────────────
 
-class OnboardingOverlay(QWidget):
+class OnboardingOverlay(_FollowParent, QWidget):
     finished = pyqtSignal()
 
     def __init__(self, main_window, parent: QWidget, steps=None):
@@ -234,7 +249,7 @@ class OnboardingOverlay(QWidget):
         self._steps = steps or TOUR_STEPS
         self._current = 0
         self._spotlight = QRect()
-        self.setGeometry(parent.rect())
+        self._follow_parent()
         self._card = _TourCard(self)
         self._card.next_clicked.connect(self._next)
         self._card.back_clicked.connect(self._back)
@@ -255,9 +270,32 @@ class OnboardingOverlay(QWidget):
         self._card.set_content(self._current + 1, len(self._steps), title, desc,
                                is_last=self._current == len(self._steps) - 1,
                                first=self._current == 0)
-        # re-measure as the page settles (a library that just loaded, images…)
+        QTimer.singleShot(30, lambda t=target: self._bring_into_view(t))
+        # re-measure as the page settles (scrolling, a library that just loaded, images…)
         for ms in (60, 450, 1200):
             QTimer.singleShot(ms, lambda t=target: self._spot(t))
+
+    def _bring_into_view(self, target: str):
+        """Scroll whatever page holds the target so it's on screen - e.g. the
+        search bar when the tour is replayed with Home scrolled down."""
+        from PyQt6 import sip
+        from PyQt6.QtWidgets import QScrollArea
+        if sip.isdeleted(self) or target != self._steps[self._current][1]:
+            return
+        w = _resolve(self._mw, target)
+        if w is None:
+            return
+        if isinstance(w, QScrollArea):            # a whole list: show it from the top
+            w.verticalScrollBar().setValue(0)
+            return
+        p = w.parentWidget()
+        while p is not None and not isinstance(p, QScrollArea):
+            p = p.parentWidget()
+        if p is not None:
+            if w.mapTo(p.widget(), QPoint(0, 0)).y() < 300:
+                p.verticalScrollBar().setValue(0)  # header items: go right to the top
+            else:
+                p.ensureWidgetVisible(w, 40, 80)
 
     def _spot(self, target: str):
         from PyQt6 import sip
@@ -269,7 +307,8 @@ class OnboardingOverlay(QWidget):
             r = QRect(tl, w.size())
             if r.height() > self.height() * 0.6:          # a big area: spotlight its top part
                 r.setHeight(int(self.height() * 0.45))
-            self._spotlight = r.adjusted(-8, -8, 8, 8)
+            # never point outside the window
+            self._spotlight = r.adjusted(-8, -8, 8, 8).intersected(self.rect().adjusted(4, 4, -4, -4))
         else:
             self._spotlight = QRect()
         self._position_card()
