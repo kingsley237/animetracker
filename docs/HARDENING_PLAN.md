@@ -13,3 +13,10 @@ each gets tested by you before shipping.
       the page for header items), keep the step card fully inside the window, and re-measure after the
       scroll settles. Test: scroll Home to the bottom → Settings → About → Replay the welcome tour →
       every step shows its target and the whole card.
+
+- [ ] **Spotlight "For you" picks rotate.** Today the spotlight always shows the same top 6 picks
+      (the list is deterministic and only changes when the library changes). Fix: keep the whole pool
+      (~27 across anime, movies and TV), show a fresh mix of 6 every few hours and on each start,
+      always mixing the three libraries, and rest picks you've recently seen. Library news (new
+      episode, out in HD…) still comes first; only the For you part rotates. Test: restart / wait a few
+      hours → different picks, still a mix of anime, movies and TV.
