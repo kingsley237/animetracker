@@ -130,6 +130,7 @@ class MainWindow(QMainWindow):
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
+        self._check_tmdb_status()
         self._check_for_updates()
         self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
@@ -265,6 +266,7 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
+        self.sidebar = sidebar
         sidebar.setFixedWidth(232)
         lay = QVBoxLayout(sidebar)
         lay.setContentsMargins(14, 0, 14, 14)
@@ -604,6 +606,10 @@ class MainWindow(QMainWindow):
         self.anilist_status_label.setObjectName("connStatus")
         self.anilist_status_label.setVisible(False)
         bar.addPermanentWidget(self.anilist_status_label)
+        self.tmdb_status_label = QLabel()
+        self.tmdb_status_label.setObjectName("connStatus")
+        self.tmdb_status_label.setVisible(False)
+        bar.addPermanentWidget(self.tmdb_status_label)
         return bar
 
     def _reserve_panel_space(self, reserve: bool):
@@ -2242,20 +2248,37 @@ class MainWindow(QMainWindow):
             self.conn_label.setText(f"⬤  Online  ({latency_ms:.0f}ms)")
             self.conn_label.setStyleSheet("color:#34d399;")
 
+    def _status_banner(self, kind: str):
+        """The themed status banner for 'offline' / 'anilist' / 'tmdb'."""
+        banners = self.__dict__.setdefault("_status_banners", {})
+        if kind not in banners:
+            from ui.status_banner import StatusBanner
+            retry = {"offline": None,
+                     "anilist": lambda: self._anilist_status_monitor.force_check(),
+                     "tmdb": lambda: self._tmdb_status_monitor.force_check()}[kind]
+            banners[kind] = StatusBanner(kind, self.centralWidget(),
+                                         on_retry=None if kind == "offline" else retry)
+        return banners[kind]
+
     def _on_went_offline(self):
-        """Show floating offline banner."""
-        if not hasattr(self, "_offline_banner"):
-            from ui.offline_banner import OfflineBanner
-            self._offline_banner = OfflineBanner(self.centralWidget())
-        self._offline_banner.show_offline()
+        self._status_banner("offline").show_banner()
+        # the services can't be judged while you're offline
+        for k in ("anilist", "tmdb"):
+            if k in self.__dict__.get("_status_banners", {}):
+                self._status_banners[k].hide_banner()
 
     def _on_reconnected(self):
-        """Hide offline banner and refresh airing data."""
-        if hasattr(self, "_offline_banner"):
-            self._offline_banner.hide_offline()
+        if "offline" in self.__dict__.get("_status_banners", {}):
+            self._status_banners["offline"].hide_banner()
         QTimer.singleShot(500, self._refresh_airing)
         if hasattr(self, "_anilist_status_monitor"):
             self._anilist_status_monitor.force_check()
+        if hasattr(self, "_tmdb_status_monitor"):
+            self._tmdb_status_monitor.force_check()
+
+    def _is_offline(self) -> bool:
+        b = self.__dict__.get("_status_banners", {}).get("offline")
+        return bool(b and b.is_shown())
 
     # ── AniList API status ────────────────────────────────────────────────────
 
@@ -2275,22 +2298,46 @@ class MainWindow(QMainWindow):
         else:
             self.anilist_status_label.setText("⬤  AniList down")
             self.anilist_status_label.setStyleSheet("color:#fbbf24;")
-        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
-            self._api_status_banner.update_message(message)
+        b = self.__dict__.get("_status_banners", {}).get("anilist")
+        if b and b.is_shown():
+            b.set_message(message)
 
     def _on_anilist_down(self, message: str):
-        if not hasattr(self, "_api_status_banner"):
-            from ui.api_status_banner import ApiStatusBanner
-            self._api_status_banner = ApiStatusBanner(self.centralWidget())
-            self._api_status_banner.set_on_retry(
-                lambda: self._anilist_status_monitor.force_check()
-            )
-        self._api_status_banner.show_down(message)
+        if not self._is_offline():
+            self._status_banner("anilist").show_banner(message)
 
     def _on_anilist_up(self):
-        if hasattr(self, "_api_status_banner"):
-            self._api_status_banner.hide_down()
+        b = self.__dict__.get("_status_banners", {}).get("anilist")
+        if b:
+            b.hide_banner()
         QTimer.singleShot(500, self._refresh_airing)
+
+    # ── TMDB status (Kinema) ──────────────────────────────────────────────────
+
+    def _check_tmdb_status(self):
+        from core.anilist_status import TMDBStatusMonitor
+        self._tmdb_status_monitor = TMDBStatusMonitor(self)
+        self._tmdb_status_monitor.checked.connect(self._on_tmdb_checked)
+        self._tmdb_status_monitor.api_down.connect(self._on_tmdb_down)
+        self._tmdb_status_monitor.api_up.connect(self._on_tmdb_up)
+        self._tmdb_status_monitor.start()
+
+    def _on_tmdb_checked(self, is_up: bool, message: str):
+        self.tmdb_status_label.setVisible(True)
+        self.tmdb_status_label.setText("⬤  TMDB OK" if is_up else "⬤  TMDB down")
+        self.tmdb_status_label.setStyleSheet("color:#34d399;" if is_up else "color:#fbbf24;")
+        b = self.__dict__.get("_status_banners", {}).get("tmdb")
+        if b and b.is_shown():
+            b.set_message(message)
+
+    def _on_tmdb_down(self, message: str):
+        if not self._is_offline():
+            self._status_banner("tmdb").show_banner(message)
+
+    def _on_tmdb_up(self):
+        b = self.__dict__.get("_status_banners", {}).get("tmdb")
+        if b:
+            b.hide_banner()
 
     # ── Resize ─────────────────────────────────────────────────────────────────
 
@@ -2307,10 +2354,9 @@ class MainWindow(QMainWindow):
             self.notification_banner._reposition()
         if hasattr(self, "new_season_spotlight") and self.new_season_spotlight.isVisible():
             self.new_season_spotlight.reposition()
-        if hasattr(self, "_offline_banner") and self._offline_banner.isVisible():
-            self._offline_banner.reposition()
-        if hasattr(self, "_api_status_banner") and self._api_status_banner.isVisible():
-            self._api_status_banner.reposition()
+        if self.__dict__.get("_status_banners"):
+            from ui.status_banner import relayout
+            relayout(self.centralWidget())
 
 # ── Skeleton card widget ───────────────────────────────────────────────────────
 

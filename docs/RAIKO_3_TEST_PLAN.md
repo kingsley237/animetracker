@@ -82,6 +82,16 @@ meantime, it doesn't understand movies).
 - [ ] Any unexpected error shows "Something went wrong" with **Open Data Doctor** (max once per 10 min);
       the app keeps running and Data Doctor lists the error until you mark it reviewed.
 
+## Fixes batch (2026-11-16) ✅
+- [ ] Discover (both): clicking a list / switching Movies|TV / searching shows shimmering placeholders right away.
+- [ ] Discover preview: ONE official trailer (click to play in-app) + cast / characters with photos.
+- [ ] TV: "Mark completed" only on ended shows; adding a running show offers "Seen earlier seasons"
+      (follows the current season); the panel opens on the season you're on; "✓ Mark S1 watched" moves you to S2.
+- [ ] Opening a Plan to Watch anime no longer pops "Trailer available"; only genuinely new trailers/dates alert.
+- [ ] Status banners: themed cards inside the window, bottom-centre, stacked — No internet (red), AniList down
+      (indigo), TMDB down (amber, new), with Check now; status bar shows "TMDB OK".
+- [ ] Quick links: one-click label presets (Crunchyroll, Netflix, Telegram channel, Episodes…) also set the platform.
+
 ## One app (phase 4) 🕒
 - [ ] Up Next home across anime, TV and movies; unified search; stats & Hall of Fame across types.
 

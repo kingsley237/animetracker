@@ -110,3 +110,29 @@ def test_anime_browser_adds_watching(qapp, db, monkeypatch):
     row = db.get_anime_by_id(got[0])
     assert row["anilist_id"] == 77 and row["watch_status"] == "watching"
     assert row["next_episode_num"] == 5
+
+
+def test_link_label_presets_fill_label_and_platform(qapp, db):
+    from ui.anime_links import LinkEditDialog
+    aid = add_anime(db, "X", "watching")
+    dlg = LinkEditDialog(aid, db)
+    btn = next(b for b in dlg._preset_btns if b.text() == "Crunchyroll")
+    btn.click()
+    assert dlg.label_edit.text() == "Crunchyroll"
+    assert dlg.platform_combo.currentData() == "crunchyroll"
+    next(b for b in dlg._preset_btns if b.text() == "Episodes").click()
+    assert dlg.label_edit.text() == "Episodes"
+
+
+def test_status_banners_themed_and_stacked(win):
+    w, _ids = win
+    w._status_banner("anilist").show_banner("The AniList API has been temporarily disabled.")
+    w._status_banner("tmdb").show_banner("TMDB isn't responding properly (HTTP 503).")
+    a, t = w._status_banners["anilist"], w._status_banners["tmdb"]
+    assert a.is_shown() and t.is_shown() and a.parentWidget() is w.centralWidget()
+    assert a.y() + a.height() <= t.y()                       # stacked, AniList above TMDB
+    assert a.x() >= w.sidebar.width()                        # never over the sidebar
+    w._on_went_offline()                                     # offline: services can't be judged
+    assert w._status_banners["offline"].is_shown() and not a.is_shown() and not t.is_shown()
+    w._on_tmdb_down("x")
+    assert not t.is_shown()

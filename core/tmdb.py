@@ -145,6 +145,32 @@ def get(path: str, params: Optional[Dict[str, Any]] = None, ttl: int = CACHE_TTL
     return None
 
 
+def check_status() -> Tuple[bool, str]:
+    """Is TMDB itself answering? (Not the user's internet - the app checks
+    that separately.) A rejected key counts as 'not working' with a clear
+    reason, since nothing on the Kinema side can load either way."""
+    creds = get_credentials()
+    if not (creds["token"] or creds["api_key"]):
+        return False, "No TMDB key is set. Add one in Settings → TV shows & movies."
+    headers, params = {}, {}
+    if creds["token"]:
+        headers["Authorization"] = f"Bearer {creds['token']}"
+    else:
+        params["api_key"] = creds["api_key"]
+    try:
+        r = _get_session().request("GET", API + "/configuration", params=params,
+                                   headers=headers, timeout=8)
+    except requests.RequestException as e:
+        return False, f"Couldn't reach TMDB ({e.__class__.__name__})."
+    if r.status_code == 200:
+        return True, "TMDB is operating normally."
+    if r.status_code == 401:
+        return False, "TMDB rejected the key. Check it in Settings → TV shows & movies."
+    if r.status_code == 429:
+        return True, "TMDB is busy (rate limited) but up."
+    return False, f"TMDB isn't responding properly (HTTP {r.status_code})."
+
+
 def get_many(requests_: Iterable[Tuple[str, Optional[Dict[str, Any]]]],
              workers: int = 6) -> List[Optional[Dict]]:
     """Run several GETs in parallel (TMDB calls are slow per-request but

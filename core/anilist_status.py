@@ -107,11 +107,14 @@ class AniListStatusMonitor(QObject):
         """
         self._check()
 
+    def _probe(self):
+        return check_anilist_status()
+
     def _check(self):
         from workers.workers import Worker, run_worker
 
         def fetch():
-            return check_anilist_status()
+            return self._probe()
 
         def on_done(result):
             is_up, message = result
@@ -129,3 +132,11 @@ class AniListStatusMonitor(QObject):
         w = Worker(fetch)
         w.signals.result.connect(on_done)
         run_worker(w)
+
+
+class TMDBStatusMonitor(AniListStatusMonitor):
+    """Same behaviour for TMDB (Kinema: movies & TV)."""
+
+    def _probe(self):
+        from core import tmdb
+        return tmdb.check_status()
