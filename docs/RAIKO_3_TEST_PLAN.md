@@ -92,8 +92,18 @@ meantime, it doesn't understand movies).
       (indigo), TMDB down (amber, new), with Check now; status bar shows "TMDB OK".
 - [ ] Quick links: one-click label presets (Crunchyroll, Netflix, Telegram channel, Episodes…) also set the platform.
 
-## One app (phase 4) 🕒
-- [ ] Up Next home across anime, TV and movies; unified search; stats & Hall of Fame across types.
+## One app (phase 4) ✅
+- [ ] Raikō opens on **Home** (top of the sidebar): greeting + "N to continue · N new episodes · N coming this
+      week · N movies ready".
+- [ ] **Continue watching**: next episode of every anime and show you're watching, new episodes first, wide art
+      cards tagged MIROKU / KINEMA · TV, progress bar; **✓ Watched** marks it in one click; clicking opens it.
+- [ ] **Coming up** (14 days, grouped Today / Tomorrow / weekday): anime episodes with air time, TV episodes and
+      season premieres, Watchlist movies reaching cinemas or HD.
+- [ ] **Ready to watch**: Watchlist movies out in HD.
+- [ ] **Search everything** (Ctrl+K from anywhere): your anime, shows and movies grouped by library; Enter opens the
+      first; "Find anime on AniList" / "Find movies & shows on TMDB" jump to Discover with the text filled in.
+- [ ] Opening any title from Home lands in its own library with the panel open.
+- (Statistics / Hall of Fame across types: dropped, as you retired those screens; Home's summary line covers counts.)
 
 ## Rebrand to Raikō (phase 5) 🕒
 - [ ] New logo system (Raikō + Miroku + Kinema marks), icons/.ico, splash, sidebar, About, window titles,

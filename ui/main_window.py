@@ -30,6 +30,7 @@ from ui.update_banner import UpdateBanner
 # Raikō: one sidebar, a section per library. Each library keeps its own
 # tools under its own name.
 NAV_SECTIONS = [
+    ("", [("Home", "⌂", "home")]),
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
@@ -131,6 +132,14 @@ class MainWindow(QMainWindow):
         self._check_connection()
         self._check_anilist_status()
         self._check_tmdb_status()
+        # Raikō opens on Home (Settings key 'start_page' can say 'library')
+        try:
+            from core.app_settings import app_settings
+            start = app_settings().value("start_page", "home")
+        except Exception:
+            start = "home"
+        if start == "home":
+            QTimer.singleShot(0, lambda: self._navigate("home"))
         self._check_for_updates()
         self._setup_anilist_session()
         QTimer.singleShot(800, self._maybe_show_onboarding)
@@ -190,11 +199,12 @@ class MainWindow(QMainWindow):
         self._discover_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(6):       # 1-5 Miroku pages, 6 Kinema Discover
+        for _ in range(7):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
         self._kinema_discover = None
+        self._home_page = None
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -324,11 +334,14 @@ class MainWindow(QMainWindow):
                 sub.setObjectName("sidebarBrandSub")
                 hl.addWidget(sub)
                 hl.addStretch()
-            else:
+            elif section:
                 header = QLabel(section.upper())
                 header.setObjectName("sidebarSectionLabel")
-            lay.addWidget(header)
-            lay.addSpacing(4)
+            else:
+                header = None
+            if header is not None:
+                lay.addWidget(header)
+                lay.addSpacing(4)
 
             for label, token, page_id in items:
                 btn = QPushButton(f"{token:<4}  {label}")
@@ -349,6 +362,7 @@ class MainWindow(QMainWindow):
         add_btn.clicked.connect(self._open_add_dialog)
         from PyQt6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self._open_add_dialog)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_search)
         lay.addWidget(add_btn)
         lay.addSpacing(8)
 
@@ -747,6 +761,18 @@ class MainWindow(QMainWindow):
                 self.stack.removeWidget(self.stack.widget(1))
                 self.stack.insertWidget(1, page)
             self.stack.setCurrentIndex(1)
+        elif page_id == "home":
+            if self._home_page is None:
+                from ui.home_page import HomePage
+                page = HomePage(self.db, self)
+                page.open_title.connect(self._open_title)
+                page.changed.connect(self._on_home_changed)
+                page.search_online.connect(self._search_online)
+                self._home_page = page
+                self.stack.removeWidget(self.stack.widget(7))
+                self.stack.insertWidget(7, page)
+            self.stack.setCurrentIndex(7)
+            self._home_page.load()
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
@@ -1414,6 +1440,25 @@ class MainWindow(QMainWindow):
         else:
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
+
+    def _open_search(self):
+        """Ctrl+K: one search across anime, shows and movies."""
+        if self.current_page != "home":
+            self._navigate("home")
+        self._home_page.focus_search()
+
+    def _search_online(self, where: str, query: str):
+        self._navigate("discover" if where == "anime" else "kinema_discover")
+        page = self._discover_page if where == "anime" else self._kinema_discover
+        if page is not None and query:
+            page.search.setText(query)
+
+    def _on_home_changed(self, lib_id: int):
+        row = self.db.get_anime_by_id(lib_id)
+        card = self._cards.get(lib_id)
+        if row and card is not None:
+            card.update_data(row)
+        self._update_stats_strip()
 
     def _open_title(self, anime_id: int):
         anime = self.db.get_anime_by_id(anime_id)

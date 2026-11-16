@@ -51,6 +51,8 @@ def isolated_settings(monkeypatch, tmp_path):
     ini = str(tmp_path / "settings.ini")
     import core.app_settings as cs
     monkeypatch.setattr(cs, "app_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    # existing UI tests start on the Library (the app itself opens on Home)
+    QSettings(ini, QSettings.Format.IniFormat).setValue("start_page", "library")
     yield
 
 

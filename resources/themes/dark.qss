@@ -1893,3 +1893,20 @@ QPushButton#linkPreset {
     border-radius: 12px; padding: 3px 10px; font-size: 11px;
 }
 QPushButton#linkPreset:hover { color: #f0f1f6; border-color: #8b7bff; background: rgba(139,123,255,0.10); }
+
+/* ── Raikō Home ──────────────────────────────────────────────────────────── */
+QLabel#homeSummary { color: #9da5c0; font-size: 13px; }
+QLabel#homeSection {
+    color: #8c93ad; font-size: 11px; font-weight: 800; letter-spacing: 1.6px; padding-top: 14px;
+}
+QLabel#homeDay { color: #c7cbe0; font-size: 12px; font-weight: 700; padding: 8px 0 2px 2px; }
+QWidget#homeUpRow { background: #11131c; border: 1px solid #1c2030; border-radius: 10px; }
+QWidget#homeUpRow:hover { background: #161a27; border-color: #2a3150; }
+QLabel#homeUpTitle { color: #eceef6; font-size: 13px; font-weight: 600; }
+QLabel#homeUpLabel { font-size: 11px; font-weight: 600; }
+QLabel#homeUpWhen { color: #8c93ad; font-size: 11px; font-weight: 600; }
+QPushButton#homeWatchedBtn {
+    background: rgba(8, 9, 14, 0.82); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 9px; padding: 5px 11px; font-size: 11px; font-weight: 700;
+}
+QPushButton#homeWatchedBtn:hover { background: #34d399; color: #062016; border-color: #34d399; }
