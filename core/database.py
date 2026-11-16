@@ -1225,6 +1225,24 @@ class DatabaseManager:
             result.append(item)
         return result
 
+    # Alerts that only make sense for anime (episodes, airing, sequels).
+    ANIME_ONLY_ALERTS = ("incomplete_completion", "auto_completed", "auto_planned",
+                         "planned_ended", "planned_started", "episode_aired",
+                         "upcoming_episodes", "new_season")
+
+    def retire_misplaced_alerts(self) -> int:
+        """Withdraw anime-only alerts attached to movies / TV shows (e.g.
+        created by an older Miroku build that didn't know about them)."""
+        conn = self._get_conn()
+        q = ",".join("?" * len(self.ANIME_ONLY_ALERTS))
+        cur = conn.execute(
+            f"UPDATE notifications SET state='dismissed', dismissed_at=? "
+            f"WHERE state='active' AND kind IN ({q}) AND anime_id IN "
+            f"(SELECT id FROM anime WHERE COALESCE(media_type,'anime') != 'anime')",
+            (int(datetime.now().timestamp()), *self.ANIME_ONLY_ALERTS))
+        conn.commit()
+        return cur.rowcount
+
     def dismiss_notification(self, notification_id: int):
         conn = self._get_conn()
         now = int(datetime.now().timestamp())

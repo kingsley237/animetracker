@@ -258,11 +258,13 @@ def test_unreleased_cannot_be_marked_watched(movie_window):
     assert win.db.get_anime_by_id(ids["soon"])["watch_status"] == "planned"
 
 
-def test_add_movie_dialog(qapp, db, tmdb_fake):
-    from core.providers import _hit
+def test_add_movie_dialog(qapp, db, tmdb_fake, monkeypatch):
+    from core import kinema_discover as kd
     from ui.kinema_add_dialog import MovieAddDialog
     tmdb_fake["movies"][30] = fake_movie(30, title="New Film")
-    tmdb_fake["search"] = [dict(tmdb_fake["movies"][30], media_type="movie")]
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None: kd._hits([
+        dict(tmdb_fake["movies"][30], media_type="movie")]))
+    monkeypatch.setattr(kd, "genres", lambda: [{"id": 18, "name": "Drama"}])
     dlg = MovieAddDialog(db)
     assert wait_until(lambda: len(dlg._tiles) == 1)
     got = []
@@ -272,3 +274,81 @@ def test_add_movie_dialog(qapp, db, tmdb_fake):
     assert wait_until(lambda: bool(got))
     row = db.get_anime_by_id(got[0][0])
     assert row["romaji_title"] == "New Film" and row["watch_status"] == "planned"
+
+
+# ── Kinema Discover ───────────────────────────────────────────────────────────
+
+def test_recommendations_weighting_exclusion_and_variety(db, tmdb_fake, monkeypatch):
+    from core import kinema_discover as kd, tmdb
+    loved = add_movie(db, tmdb_fake, 100, status="completed", title="Loved")
+    hated = add_movie(db, tmdb_fake, 101, status="completed", title="Hated")
+    wish = add_movie(db, tmdb_fake, 102, status="planned", title="Wish")
+    db.set_rating(loved, 0, 6)
+    db.set_rating(hated, 0, 1)
+    recs = {
+        100: [{"id": 200 + i, "title": f"Like Loved {i}", "popularity": 10} for i in range(8)]
+             + [{"id": 102, "title": "Wish"}],                # already in library
+        101: [{"id": 300, "title": "Like Hated"}],
+        102: [{"id": 400, "title": "Like Wish"}],
+    }
+    def fake_many(reqs, workers=6):
+        return [{"results": recs.get(int(p.split("/")[2]), [])} for p, _ in reqs]
+    monkeypatch.setattr(tmdb, "get_many", fake_many)
+    out = kd.recommend(db, limit=6)
+    ids = [h["provider_id"] for h in out]
+    assert 300 not in ids                 # 1/6 ratings don't drive picks
+    assert 102 not in ids                 # films in your library are left out
+    assert 400 in ids[:3]                 # variety: the Watchlist pick isn't buried
+    assert out[0]["reason"] == "Because you watched Loved"
+    assert any(h["reason"] == "Because you want to see Wish" for h in out)
+
+
+def test_recommendations_fallback_without_history(db, tmdb_fake, monkeypatch):
+    from core import kinema_discover as kd
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None: kd._hits([{"id": 9, "title": "Hot"}])
+                        if src == "trending" else [])
+    out = kd.recommend(db)
+    assert [h["title"] for h in out] == ["Hot"] and "Rate a few films" in out[0]["reason"]
+
+
+def test_list_filter_and_sort():
+    from core.kinema_discover import apply
+    hits = [{"title": "B", "score": 70, "popularity": 5, "release_date": "2026-12-01", "genre_ids": [18]},
+            {"title": "A", "score": 90, "popularity": 1, "release_date": "2026-11-20", "genre_ids": [28]},
+            {"title": "C", "score": 80, "popularity": 9, "release_date": "2027-01-10", "genre_ids": [18]}]
+    assert [h["title"] for h in apply(hits, 18)] == ["B", "C"]
+    assert [h["title"] for h in apply(hits, 0, "rating")] == ["A", "C", "B"]
+    assert [h["title"] for h in apply(hits, 0, "popularity")] == ["C", "B", "A"]
+    assert [h["title"] for h in apply(hits, 0, "release", "upcoming")] == ["A", "B", "C"]   # soonest first
+    assert [h["title"] for h in apply(hits, 0, "title")] == ["A", "B", "C"]
+
+
+def test_sidebar_sections_and_kinema_discover(movie_window, monkeypatch):
+    from core import kinema_discover as kd
+    import ui.main_window as mw
+    monkeypatch.setattr(kd, "load_source", lambda src, db=None: [])
+    monkeypatch.setattr(kd, "genres", lambda: [])
+    win, ids = movie_window
+    assert [s for s, _ in mw.NAV_SECTIONS][:2] == ["Miroku", "Kinema"]
+    miroku = [pid for _l, _t, pid in mw.NAV_SECTIONS[0][1]]
+    assert miroku == ["library", "dropped", "discover", "calendar", "stream"]
+    win._navigate("kinema_discover")
+    assert win.stack.currentWidget() is win._kinema_discover
+    assert win._add_btn.media() == "movie"
+    win._navigate("calendar")
+    assert win._add_btn.media() == "anime"
+
+
+def test_anime_alerts_on_movies_are_withdrawn(db, tmdb_fake):
+    """An older build (v2.8) saw a watched movie as 'Completed with 1
+    unwatched episode'. The current app withdraws such alerts."""
+    from core.notification_service import NotificationService
+    mid = add_movie(db, tmdb_fake, 50, status="completed")
+    anime = add_anime(db, "Show", "completed", total_episodes=12)
+    for aid in (mid, anime):
+        db.upsert_notification({"fingerprint": f"incomplete-completion:{aid}:x",
+                                "kind": "incomplete_completion", "anime_id": aid,
+                                "title": "Unfinished in Completed", "message": "m"})
+    NotificationService(db).scan()
+    left = {n["anime_id"] for n in db.get_active_notifications("incomplete_completion")}
+    assert mid not in left and anime in left

@@ -28,16 +28,19 @@ from ui.anime_card import AnimeCard
 from ui.update_banner import UpdateBanner
 
 
+# Raikō: one sidebar, a section per library. Each library keeps its own
+# tools under its own name; shared things live under Personal.
 NAV_SECTIONS = [
-    ("Library", [
-        ("Anime", "LIB", "library"),
-        ("Movies", "MOV", "movies"),
+    ("Miroku", [
+        ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
-    ]),
-    ("Explore", [
         ("Discover", "DISC", "discover"),
         ("Calendar", "CAL", "calendar"),
         ("Miroku Stream", "PLAY", "stream"),
+    ]),
+    ("Kinema", [
+        ("Movies", "MOV", "movies"),
+        ("Discover", "DISC", "kinema_discover"),
     ]),
     ("Personal", [
         ("Hall of Fame", "HOF", "hof"),
@@ -169,10 +172,11 @@ class MainWindow(QMainWindow):
         self._calendar_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(5):
+        for _ in range(6):       # 1-5 Miroku pages, 6 Kinema Discover
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
+        self._kinema_discover = None
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -279,11 +283,32 @@ class MainWindow(QMainWindow):
         lay.addWidget(logo_w)
 
         self._nav_buttons: Dict[str, QPushButton] = {}
+        brands = {"Miroku": ("#8b7bff", "Anime"), "Kinema": ("#fbbf24", "Movies & TV")}
         for section, items in NAV_SECTIONS:
-            header = QLabel(section.upper())
-            header.setObjectName("sidebarSectionLabel")
+            if section in brands:
+                color, what = brands[section]
+                header = QWidget()
+                header.setObjectName("sidebarBrandHeader")
+                hl = QHBoxLayout(header)
+                hl.setContentsMargins(14, 2, 8, 2)
+                hl.setSpacing(8)
+                dot = QLabel()
+                dot.setFixedSize(8, 8)
+                dot.setStyleSheet(f"background:{color};border-radius:4px;")
+                hl.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
+                name = QLabel(section)
+                name.setObjectName("sidebarBrandName")
+                name.setStyleSheet(f"color:{color};")
+                hl.addWidget(name)
+                sub = QLabel(what)
+                sub.setObjectName("sidebarBrandSub")
+                hl.addWidget(sub)
+                hl.addStretch()
+            else:
+                header = QLabel(section.upper())
+                header.setObjectName("sidebarSectionLabel")
             lay.addWidget(header)
-            lay.addSpacing(6)
+            lay.addSpacing(4)
 
             for label, token, page_id in items:
                 btn = QPushButton(f"{token:<4}  {label}")
@@ -292,9 +317,9 @@ class MainWindow(QMainWindow):
                 btn.clicked.connect(lambda _, p=page_id: self._navigate(p))
                 self._nav_buttons[page_id] = btn
                 lay.addWidget(btn)
-                lay.addSpacing(4)
+                lay.addSpacing(2)
 
-            lay.addSpacing(12)
+            lay.addSpacing(10)
 
         lay.addStretch()
 
@@ -673,6 +698,8 @@ class MainWindow(QMainWindow):
         self.current_page = page_id
         self._set_nav_active(page_id)
         self._close_detail_panel()
+        if page_id in ("discover", "calendar", "stream"):
+            self._set_media("anime")       # Miroku pages: add button = anime
 
         if page_id == "discover":
             if self._discover_page is None:
@@ -715,6 +742,17 @@ class MainWindow(QMainWindow):
                 self.stack.insertWidget(5, self._calendar_page)
             self.stack.setCurrentIndex(5)
             self._calendar_page.load()
+        elif page_id == "kinema_discover":
+            if self._kinema_discover is None:
+                from ui.kinema_add_dialog import MovieBrowser
+                page = MovieBrowser(self.db, heading="Discover movies", start_source="for_you")
+                page.setObjectName("contentArea")
+                page.added.connect(self._on_discover_added)
+                self._kinema_discover = page
+                self.stack.removeWidget(self.stack.widget(6))
+                self.stack.insertWidget(6, page)
+            self.stack.setCurrentIndex(6)
+            self._set_media("movie")
         elif page_id == "movies":
             self.stack.setCurrentIndex(0)
             self._set_media("movie")
@@ -727,7 +765,7 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(0)
             self._set_media("anime")
             titles = {
-                "library":   "Anime",
+                "library":   "Library",
                 "watching":  "Watching",
                 "completed": "Completed",
                 "planned":   "Plan to Watch",
@@ -863,6 +901,9 @@ class MainWindow(QMainWindow):
 
     def _render_library(self, anime_list: List[Dict],
                          current_filter: str, current_page: str):
+        from PyQt6 import sip
+        if sip.isdeleted(self) or sip.isdeleted(self.grid_container):
+            return                      # window closed while the load was running
         """Called from worker result — renders real cards replacing skeletons."""
         self._clear_grid()
 
@@ -1534,9 +1575,18 @@ class MainWindow(QMainWindow):
             Toast.show(self, f"'{title}' added to {where}.", kind="success")
             self._load_library()
             self._update_stats_strip()
+            if self._kinema_discover is not None:
+                self._kinema_discover.refresh()
 
         dlg.added.connect(added)
         dlg.exec()
+
+    def _on_discover_added(self, lib_id: int, title: str):
+        from ui.toast import Toast
+        row = self.db.get_anime_by_id(lib_id) or {}
+        where = "Watched" if row.get("watch_status") == "completed" else "your Watchlist"
+        Toast.show(self, f"'{title}' added to {where}.", kind="success")
+        self._update_stats_strip()
 
     def _sync_movies(self, manual: bool = False):
         """Refresh movies from TMDB (dates, availability, art, trailers)."""

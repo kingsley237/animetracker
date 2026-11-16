@@ -109,6 +109,46 @@ def qapp():
     yield app
 
 
+LATE_ERRORS = []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qt_error_guard():
+    """Errors escaping Qt callbacks would abort the whole test run (as they
+    would the app without main.py's guard). Record them instead and fail
+    the test they happened in."""
+    import traceback
+
+    def hook(t, v, tb):
+        LATE_ERRORS.append("".join(traceback.format_exception(t, v, tb)))
+        sys.__stderr__.write("\n[Qt callback error]\n" + LATE_ERRORS[-1])
+
+    old = sys.excepthook
+    sys.excepthook = hook
+    yield
+    sys.excepthook = old
+
+
+@pytest.fixture(autouse=True)
+def _no_callback_errors():
+    start = len(LATE_ERRORS)
+    yield
+    new = LATE_ERRORS[start:]
+    assert not new, "error in a Qt callback during this test:\n" + new[0]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _drain_workers_at_exit():
+    """Let background workers finish before the interpreter shuts down;
+    tearing Qt's thread pool down under a running worker hard-exits."""
+    yield
+    try:
+        from PyQt6.QtCore import QThreadPool
+        QThreadPool.globalInstance().waitForDone(10000)
+    except Exception:
+        pass
+
+
 def pump(ms=50):
     """Let Qt process events (and finished background workers) for ms."""
     from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer

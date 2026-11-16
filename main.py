@@ -38,7 +38,32 @@ def _build_app_icon() -> QIcon:
     return icon
 
 
+def _install_crash_guard():
+    """PyQt aborts the whole app when a Python error escapes a Qt callback.
+    Log it to ~/.animetracker/error.log instead and keep running."""
+    import traceback
+    from datetime import datetime as _dt
+    log_path = Path.home() / ".animetracker" / "error.log"
+
+    def hook(exc_type, exc, tb):
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            # keep the log small: trim to the last ~200 KB
+            if log_path.exists() and log_path.stat().st_size > 400_000:
+                log_path.write_text(log_path.read_text(encoding="utf-8", errors="ignore")[-200_000:],
+                                    encoding="utf-8")
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n[{_dt.now():%Y-%m-%d %H:%M:%S}] "
+                        + "".join(traceback.format_exception(exc_type, exc, tb)))
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def main():
+    _install_crash_guard()
     try:
         from core.updater import APP_VERSION
     except Exception:

@@ -1775,3 +1775,22 @@ QLabel#releaseTimeline {
     font-size: 12px;
     padding-top: 4px;
 }
+
+QLabel#browserReason {
+    color: #fbbf24;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ── Sidebar library headers (Miroku / Kinema) ────────────────────────────── */
+QLabel#sidebarBrandName {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+QLabel#sidebarBrandSub {
+    color: #4a5070;
+    font-size: 10px;
+    font-weight: 600;
+}

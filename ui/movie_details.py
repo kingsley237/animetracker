@@ -519,7 +519,8 @@ class MovieSection(QWidget):
         run_worker(w, PRIORITY_INTERACTIVE)
 
     def _on_live(self, res: Optional[Dict], token: int):
-        if token != self._token or not self._row:
+        from PyQt6 import sip
+        if sip.isdeleted(self) or token != self._token or not self._row:
             return
         self._clear(self.where_lay)
         if not res:

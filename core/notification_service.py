@@ -130,6 +130,7 @@ class NotificationService:
         self.db = db
 
     def scan(self) -> List[Dict]:
+        self.db.retire_misplaced_alerts()
         self._scan_finished_watching()
         self._scan_aired_episodes()
         self._scan_planned_status_changes()
