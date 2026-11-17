@@ -174,6 +174,14 @@ class DetailPanel(QWidget):
         hl.addLayout(tb, stretch=1)
         self._lay.addWidget(hdr)
 
+        # Hall of Fame: rank badge, or an offer to induct a finished title
+        self.hof_btn = QPushButton("★  Hall of Fame")
+        self.hof_btn.setObjectName("hofBtn")
+        self.hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.hof_btn.clicked.connect(self._hall_action)
+        self.hof_btn.hide()
+        self._lay.addWidget(self.hof_btn)
+
         # Progress info — last watched + next airing (clear, separate lines)
         self.progress_info_lbl = QLabel()
         self.progress_info_lbl.setObjectName("detailProgressCard")
@@ -289,13 +297,6 @@ class DetailPanel(QWidget):
         drop_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         drop_btn.clicked.connect(self._drop)
         arl.addWidget(drop_btn)
-
-        self.hof_btn = QPushButton("★  Hall of Fame")
-        self.hof_btn.setObjectName("hofBtn")
-        self.hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.hof_btn.clicked.connect(self._hall_action)
-        self.hof_btn.hide()
-        arl.addWidget(self.hof_btn)
 
         del_btn = QPushButton("Delete")
         del_btn.setObjectName("dangerBtn")
