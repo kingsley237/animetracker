@@ -1458,6 +1458,23 @@ class MainWindow(QMainWindow):
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
 
+    def handle_external(self, message: str):
+        """From a second launch or a clicked Windows notification."""
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if message.startswith("open:"):
+            try:
+                lib_id = int(message.split(":", 1)[1])
+            except ValueError:
+                return
+            if lib_id > 0 and self.db.get_anime_by_id(lib_id):
+                self._open_title(lib_id)
+            else:
+                self._navigate("home")
+
     def _open_search(self):
         """Ctrl+K: one search across anime, shows and movies."""
         if self.current_page != "home":
@@ -1802,6 +1819,16 @@ class MainWindow(QMainWindow):
         self._catalog_timer.timeout.connect(self._refresh_catalog)
         self._catalog_timer.start(12 * 3600 * 1000)
 
+        # Closed-app notifications: keep the scheduled check pointing at this Raikō
+        QTimer.singleShot(20000, lambda: run_worker(Worker(
+            __import__("core.background_check", fromlist=["x"]).refresh_registration)))
+
+        # Taskbar badge: unread alerts, kept fresh
+        self._badge_timer = QTimer(self)
+        self._badge_timer.timeout.connect(self._update_badge)
+        self._badge_timer.start(60 * 1000)
+        QTimer.singleShot(3000, self._update_badge)
+
         # Data Doctor: quick health check shortly after start, then every 6h
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._health_check)
@@ -1991,6 +2018,7 @@ class MainWindow(QMainWindow):
         run_worker(worker)
 
     def _on_notifications_ready(self, notifications):
+        QTimer.singleShot(0, self._update_badge)
         if notifications:
             self.notification_banner.show_notifications(notifications)
         else:
@@ -2097,7 +2125,56 @@ class MainWindow(QMainWindow):
             if self.detail_panel.isVisible():
                 self.notification_banner.pause_for_detail()
 
+    # ── taskbar badge ─────────────────────────────────────────────────────────
+
+    def _unread_count(self) -> int:
+        from core.background_check import OS_KINDS
+        return sum(len(self.db.get_active_notifications(k)) for k in OS_KINDS)
+
+    def _update_badge(self):
+        """Red count on Raikō's taskbar button while it's open (Windows shows
+        the window icon there). Clears when nothing new is waiting."""
+        from PyQt6 import sip
+        if sip.isdeleted(self):
+            return
+        n = self._unread_count()
+        if n == getattr(self, "_badge_n", None):
+            return
+        self._badge_n = n
+        base = getattr(self, "_base_icon", None)
+        if base is None:
+            base = self._base_icon = self.windowIcon()
+        if not n:
+            self.setWindowIcon(base)
+            return
+        from PyQt6.QtGui import QIcon, QPainter, QPixmap, QColor, QFont
+        from PyQt6.QtCore import QRectF
+        icon = QIcon()
+        for size in (16, 24, 32, 48, 64, 256):
+            px = base.pixmap(size, size)
+            if px.isNull():
+                px = QPixmap(size, size)
+                px.fill(QColor("#11131c"))
+            p = QPainter(px)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            d = size * 0.58
+            r = QRectF(size - d, 0, d, d)
+            p.setPen(QColor("#0b0d12"))
+            p.setBrush(QColor("#ef4444"))
+            p.drawEllipse(r)
+            if size >= 24:
+                f = QFont("Segoe UI")
+                f.setBold(True)
+                f.setPixelSize(max(7, int(d * (0.62 if n < 10 else 0.5))))
+                p.setFont(f)
+                p.setPen(QColor("#ffffff"))
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, str(n) if n < 100 else "99+")
+            p.end()
+            icon.addPixmap(px)
+        self.setWindowIcon(icon)
+
     def _dismiss_notification(self, notification_id: int):
+        QTimer.singleShot(200, self._update_badge)
         self.db.dismiss_notification(notification_id)
 
     # ── Metadata sync ──────────────────────────────────────────────────────────

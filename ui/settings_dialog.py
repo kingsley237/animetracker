@@ -409,6 +409,43 @@ class SettingsDialog(QDialog):
             "Leave empty to use the built-in key. A free key is available from themoviedb.org."))
         lay.addWidget(kin)
 
+        # Windows notifications while Raikō is closed (opt-in scheduled check)
+        notif, nl = self._card("Notifications when Raikō is closed")
+        from core import background_check as bc
+        self.os_notify_cb = QCheckBox("Notify me about new episodes, HD releases and new seasons even when Raikō is closed")
+        self.os_notify_cb.setChecked(bc.enabled())
+        nl.addWidget(self.os_notify_cb)
+        freq_row = QHBoxLayout()
+        freq_row.addWidget(QLabel("Check"))
+        freq_row.addStretch()
+        self.os_notify_freq = QComboBox()
+        for text, h in (("Every hour", 1), ("Every 3 hours", 3), ("Every 6 hours", 6), ("Every 12 hours", 12)):
+            self.os_notify_freq.addItem(text, h)
+        self.os_notify_freq.setCurrentIndex(max(0, self.os_notify_freq.findData(bc.interval_hours())))
+        self.os_notify_freq.setFixedWidth(180)
+        freq_row.addWidget(self.os_notify_freq)
+        nl.addLayout(freq_row)
+        test_row = QHBoxLayout()
+        self.os_notify_status = QLabel("")
+        self.os_notify_status.setObjectName("settingsMutedText")
+        self.os_notify_status.setWordWrap(True)
+        test_row.addWidget(self.os_notify_status, 1)
+        test_btn = QPushButton("Send a test notification")
+        test_btn.setObjectName("secondaryBtn")
+        test_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        test_btn.clicked.connect(self._test_os_notification)
+        test_row.addWidget(test_btn)
+        nl.addLayout(test_row)
+        nl.addWidget(self._helper_text(
+            "Windows starts Raikō invisibly for a few seconds at each check (and after you log in or "
+            "your PC wakes), shows a notification for anything new, then closes it again. Nothing keeps "
+            "running in between. Each event notifies once; Windows Focus / Do Not Disturb is respected."))
+        self.os_notify_cb.toggled.connect(self._toggle_os_notify)
+        self.os_notify_freq.currentIndexChanged.connect(
+            lambda _i: self.os_notify_cb.isChecked() and self._toggle_os_notify(True))
+        self._refresh_os_notify_status()
+        lay.addWidget(notif)
+
         cache, cl = self._card("Image cache")
         row = QHBoxLayout()
         self.cache_lbl = QLabel(f"{cache_size_mb()} MB stored locally")
@@ -739,6 +776,41 @@ class SettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Backup Failed", str(exc))
     
+    def _main_db(self):
+        mw = self.parent()
+        while mw is not None and not hasattr(mw, "db"):
+            mw = mw.parent()
+        return getattr(mw, "db", None) or self.db
+
+    def _toggle_os_notify(self, on: bool):
+        from core import background_check as bc
+        if on:
+            ok = bc.enable(self._main_db(), self.os_notify_freq.currentData() or 3)
+            if not ok:
+                self.os_notify_cb.blockSignals(True)
+                self.os_notify_cb.setChecked(False)
+                self.os_notify_cb.blockSignals(False)
+                QMessageBox.warning(self, "Couldn't set up notifications",
+                                    "Windows didn't accept the scheduled check. Please try again.")
+        else:
+            bc.disable()
+        self._refresh_os_notify_status()
+
+    def _refresh_os_notify_status(self):
+        from core import background_check as bc
+        if bc.enabled():
+            self.os_notify_status.setText(f"On · checks every {bc.interval_hours()} h, at log-in and after sleep.")
+        else:
+            self.os_notify_status.setText("Off. New things only show inside Raikō.")
+        self.os_notify_freq.setEnabled(bc.enabled())
+
+    def _test_os_notification(self):
+        from core import background_check as bc
+        shown = bc.test_toast()
+        if not shown:
+            QMessageBox.information(self, "Test notification",
+                                    "Windows didn't show it. Check Settings → System → Notifications → Raikō.")
+
     def _replay_tour(self):
         mw = self.parent()
         while mw is not None and not hasattr(mw, "start_onboarding"):

@@ -62,8 +62,55 @@ def _install_crash_guard():
     sys.excepthook = hook
 
 
+INSTANCE_KEY = "raiko-main-instance"
+
+
+def _send_to_running(message: str) -> bool:
+    """If Raikō is already open, hand it a message ('show' / 'open:<id>')."""
+    from PyQt6.QtNetwork import QLocalSocket
+    sock = QLocalSocket()
+    sock.connectToServer(INSTANCE_KEY)
+    if not sock.waitForConnected(400):
+        return False
+    sock.write(message.encode("utf-8"))
+    sock.flush()
+    sock.waitForBytesWritten(400)
+    sock.disconnectFromServer()
+    return True
+
+
+def _open_target() -> str:
+    """raiko://open/<id> (a clicked Windows notification) -> 'open:<id>'."""
+    for a in sys.argv[1:]:
+        if a.lower().startswith("raiko://open/"):
+            tail = a.split("://open/", 1)[1].strip("/ ")
+            return f"open:{tail}" if tail.isdigit() else "show"
+    return "show"
+
+
+def _run_check() -> int:
+    """`--check`: Windows' scheduled task. Refresh, notify, exit. Silent, no window."""
+    from PyQt6.QtCore import QCoreApplication
+    from PyQt6.QtNetwork import QLocalSocket
+    qapp = QCoreApplication(sys.argv)            # noqa: F841 - settings / sockets need it
+    sock = QLocalSocket()
+    sock.connectToServer(INSTANCE_KEY)
+    if sock.waitForConnected(300):
+        return 0                                 # Raikō is open: it shows its own alerts
+    from core import background_check as bc
+    if not bc.enabled():
+        return 0
+    db = DatabaseManager()
+    bc.register()
+    bc.run_check(db)
+    bc.notify_new(db)
+    return 0
+
+
 def main():
     _install_crash_guard()
+    if "--check" in sys.argv:
+        sys.exit(_run_check())
     try:
         from core.updater import APP_VERSION
     except Exception:
@@ -73,6 +120,10 @@ def main():
     migrate_legacy_settings()
 
     app = QApplication(sys.argv)
+    # One Raikō at a time: a second launch (or a clicked notification) is
+    # handed to the window that's already open.
+    if _send_to_running(_open_target()):
+        sys.exit(0)
     app.setApplicationName("Miroku")
     app.setApplicationDisplayName("Raikō")
     app.setApplicationVersion(APP_VERSION)
@@ -138,6 +189,27 @@ def main():
 
     window.show()
     splash.finish(window)
+
+    # Listen for later launches / notification clicks
+    from PyQt6.QtNetwork import QLocalServer
+    QLocalServer.removeServer(INSTANCE_KEY)          # stale socket after a crash
+    server = QLocalServer(window)
+    server.listen(INSTANCE_KEY)
+
+    def _incoming():
+        conn = server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.waitForReadyRead(400)
+        window.handle_external(bytes(conn.readAll()).decode("utf-8", "ignore"))
+        conn.disconnectFromServer()
+
+    server.newConnection.connect(_incoming)
+    window._instance_server = server
+    first = _open_target()
+    if first.startswith("open:"):
+        from PyQt6.QtCore import QTimer as _QT
+        _QT.singleShot(1500, lambda: window.handle_external(first))
 
     exit_code = app.exec()
     db.close()

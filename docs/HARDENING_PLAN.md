@@ -1,4 +1,4 @@
-# Raikō — risk-hardening release (after 3.0.0)
+# Raikō — fixes after 3.0 (the broad risk-hardening release was dropped on 2026-11-17)
 
 The release after 3.0 addresses risks across the whole app (anime side included) before any new
 features (Trakt sync comes after this, as its own version). Items are added here as they're found;
@@ -21,7 +21,7 @@ each gets tested by you before shipping.
       episode, out in HD…) still comes first; only the For you part rotates. Test: restart / wait a few
       hours → different picks, still a mix of anime, movies and TV.
 
-- [ ] **Search suggests as you type ("vin" → Vinland Saga).** AniList's search only matches nearly
+- [x] **Search suggests as you type ("vin" → Vinland Saga).** AniList's search only matches nearly
       complete words ("vin"/"vinl"/"frie" return nothing; "vinla" finds Vinland Saga). Fix: suggestions
       as you type from (1) your library (partial titles), (2) a local catalogue of the most popular anime
       (a few thousand titles, refreshed weekly in the background), (3) AniList / TMDB results as they
@@ -32,12 +32,12 @@ each gets tested by you before shipping.
 
 ## Proposed feature (own release, after hardening): notifications when Raikō is closed
 
-- [ ] Opt-in in Settings ("Notify me even when Raikō is closed", every 1/3/6 h + at log-in). Raikō
+- [x] Opt-in in Settings ("Notify me even when Raikō is closed", every 1/3/6 h + at log-in). Raikō
       registers a Windows scheduled task that starts it invisibly (`Raiko.exe --check`), runs the usual
       checks (new episodes, out in HD, new season, premiere dates, trailers), shows native Windows
       notifications for anything new, then exits (~10–20 s). Nothing runs between checks (no tray icon).
       Missed checks run on wake. Clicking a notification opens that title. Never repeats an alert; respects
       Windows Focus / Do Not Disturb; skips if Raikō is already open. Turning it off removes the task.
-- [ ] Bonus while Raikō is open or minimized: a red count badge on its taskbar button for new episodes /
+- [x] Bonus while Raikō is open or minimized: a red count badge on its taskbar button for new episodes /
       HD releases etc. (a badge can't exist on a closed app's icon in Windows — the notifications above
       cover the closed case).

@@ -41,6 +41,9 @@ def test_discover_search_shows_catalogue_instantly(qapp, db, monkeypatch):
     assert [t.hit["title"] for t in b._tiles] == ["Vinland Saga"]               # before the network answers
     pump(300)
     assert [t.hit["title"] for t in b._tiles] == ["Vinland Saga"]
+    b.close()
+    b.deleteLater()
+    pump(50)
 
 
 def test_ctrl_k_suggests_titles_not_in_library(db):

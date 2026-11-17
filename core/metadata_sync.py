@@ -102,7 +102,8 @@ class MetadataSync:
     def __init__(self, db: DatabaseManager):
         self.db = db
 
-    def sync(self, statuses=SYNC_STATUSES, only_ids: Optional[List[int]] = None) -> Dict:
+    def sync(self, statuses=SYNC_STATUSES, only_ids: Optional[List[int]] = None,
+             videos: bool = True) -> Dict:
         """Returns {"changed": [anime_id...], "art_changed": [anime_id...],
         "notifications": [due planned-update notifications]}."""
         from core.api import get_metadata_batch
@@ -138,7 +139,7 @@ class MetadataSync:
                 self._notify_planned(old, new, updates, first_sync)
 
         # Promo videos (PVs, teasers, themes) for planned anime, at most daily
-        for a in self.db.get_all_anime(watch_status="planned"):
+        for a in (self.db.get_all_anime(watch_status="planned") if videos else []):
             if only_ids is not None and a["id"] not in only_ids:
                 continue
             if now - (a.get("videos_synced_at") or 0) > 86400:

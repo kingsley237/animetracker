@@ -190,12 +190,15 @@ def test_tour_scrolls_target_into_view(qapp, db, monkeypatch):
         monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
     _library(db, monkeypatch)
     win = MainWindow(db)
-    win.setGeometry(0, 0, 1200, 700)
+    win.setGeometry(0, 0, 900, 520)        # short window: Home has to scroll
     win.show()
     win._navigate("home")
     home = win._home_page
     bar = home.scroll.verticalScrollBar()
-    assert wait_until(lambda: bool(home.hero.slides) and bar.maximum() > 0)
+    assert wait_until(lambda: bool(home.hero.slides))
+    # a long Home (lots on this week): taller than the window, so it scrolls
+    home.scroll.widget().setMinimumHeight(home.scroll.viewport().height() + 700)
+    assert wait_until(lambda: bar.maximum() > 0)
     bar.setValue(bar.maximum())                 # user scrolled down, then replays the tour
     assert bar.value() > 0
     tour = ob.OnboardingOverlay(win, win.centralWidget())
