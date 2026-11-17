@@ -44,6 +44,9 @@
   also suggests titles you don't have yet.
 
 ## Changed
+- **New confirmation toasts** ("Episode 7 marked watched"): a solid card in the Raikō style — coloured
+  icon, clear text, a countdown line that pauses while you hover — instead of the old see-through strip.
+  Click it (or ✕) to dismiss; they stay inside the window and move with it.
 - **Show more** at the end of every Discover list (Miroku and Kinema, including search results) loads
   the next page instead of stopping at the first few dozen.
 - Opening Raikō while it's already open (or clicking a notification) brings the open window forward

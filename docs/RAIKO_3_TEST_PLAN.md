@@ -144,6 +144,7 @@ meantime, it doesn't understand movies).
 - [ ] Detail panel: "★ #N in your … Hall" (menu) on Hall titles, "Induct into Hall of Fame" on finished ones, nothing on others
 - [ ] Rate a finished title 6/6 → offer to induct; "Not now" never asks again for it
 - [ ] Home: Pantheon strip beside the stats → opens the Hall
+- [ ] Toasts: mark an episode watched, rate something, add a title → new solid card bottom-right (no see-through), countdown pauses on hover, click / ✕ dismisses, 3+ stack neatly, move/resize the window → they follow
 - [ ] Home → This week: click an anime / TV / movie entry → popover beside it (flips near the right edge); Open details, Trailer; Esc / click outside / scroll / same entry closes it
 
 ## After 3.0 🕒
