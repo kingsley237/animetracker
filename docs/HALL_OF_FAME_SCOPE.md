@@ -25,6 +25,30 @@ Raikō combines all four strengths, fixes their weaknesses, and connects it to y
 - Your existing **10 Hall of Fame rankings are restored** into the Miroku wing in the same order
   (they were kept in the library file when the old screen was retired).
 
+## 1b. Honours — your own awards (best trilogy, best duology, best finale…)
+
+A third part of the Hall, next to the Pantheon and the wings: **award categories**, each with a winner
+(and optional runners-up), presented like an awards night.
+
+- **Ready-made categories** (pick any, rename, or create your own):
+  - *Groups:* **Best trilogy**, **Best duology**, **Best saga / franchise**, **Best anime season**
+    (one season of a show), **Best TV season**
+  - *Moments:* Best finale · Best opening (anime OP) · Best ending (ED) · Best plot twist ·
+    Best fight · Best episode
+  - *People:* Best villain · Best protagonist · Best character · Best duo · Best director / studio
+  - *Craft:* Best soundtrack · Best animation · Best cinematography
+  - *Time:* Best of a year (e.g. "Best of 2025"), Best newcomer
+- **Seamless group entries:** for "Best trilogy / duology / saga", Raikō proposes groups it already
+  knows — **TMDB collections** (e.g. The Dark Knight Trilogy, the Dune films) and **AniList sequel
+  chains** (e.g. Attack on Titan seasons) — built from what you've watched. You pick one; it shows as a
+  stacked set of posters with the parts in order. You can also assemble a group by hand.
+- **Season / episode / character / OP-ED entries** come from data Raikō already has (seasons, your
+  episode ratings, AniList characters and theme videos, TMDB cast), so picking is a search, not typing.
+- Each award: winner + up to 2 runners-up, your reason, date awarded; category order is yours.
+- Shown as a wall of award cards (category · winner art · reason), and included in the share card.
+- Eligibility follows the same rules (watched / completed parts); a group needs all its parts watched
+  (or you choose "the parts I've seen").
+
 ## 2. Ranking engine — honest and quick
 
 - **Induct → place by "this or that?"**: Raikō asks *"Which do you love more?"* showing the new title
@@ -77,6 +101,9 @@ A plaque shows the title's art (accent colour taken from the artwork), rank + ti
 
 - `hall_of_fame` (existing) gains: `wing`, `tier`, `inducted_at`, `note`, `moment`, `character`,
   `pinned` (Pantheon slot 1–4); new `hof_history` (title, from rank, to rank, when).
+- New `hof_awards` (category, position, title/kind, reason, awarded_at) and `hof_award_entries`
+  (award, place: winner / runner-up, entry kind: title / group / season / episode / character / theme,
+  references + label); category list with your order and names.
 - Eligible: anime/TV **Completed** (TV also with ≥1 finished season), movies **Watched**. Removing a
   title from the library asks whether to keep its plaque.
 
@@ -84,9 +111,11 @@ A plaque shows the title's art (accent colour taken from the artwork), rank + ti
 
 1. Data + migration (restore your 10) · 2. Ranking engine (this-or-that, skip/tie/undo, drag) ·
 3. Hall page (Showcase, List, Tiers, Timeline, Numbers) · 4. Plaques + panel integration ·
-5. Induction ceremony + share card · 6. Tests, screenshots, checklist.
+5. Honours (categories, group detection from TMDB collections / AniList sequels, pickers) ·
+6. Induction ceremony + share card · 7. Tests, screenshots, checklist.
 
-## Decisions for you
-1. Wings: **separate Miroku / Movies / TV + cross-wing Pantheon (recommended)** — or one mixed list?
-2. Ranking: **this-or-that + drag (recommended)** — or drag-only?
-3. Pantheon on Home: **yes, small strip under the spotlight** — or Hall page only?
+## Decided (2026-11-17)
+1. **Three wings (Miroku · Movies · TV) + cross-wing Pantheon**, plus **Honours** (awards like best
+   trilogy / duology).
+2. **This-or-that + drag** ranking.
+3. **Pantheon strip on Home** under the spotlight.
