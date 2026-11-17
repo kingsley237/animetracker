@@ -621,12 +621,100 @@ class _SearchRow(QWidget, _Img):
 
 # ── page ──────────────────────────────────────────────────────────────────────
 
+class _PantheonStrip(QWidget):
+    """Your four Pantheon picks, small, beside the stats. Click: the Hall."""
+    open_hall = pyqtSignal()
+    PW, PH = 40, 60
+
+    def __init__(self, entries: List[Dict], parent=None):
+        super().__init__(parent)
+        self.entries = entries
+        self.pix: Dict[str, QPixmap] = {}
+        self._hover = False
+        self.setFixedSize(16 + 4 * (self.PW + 8) + 88, self.PH + 16)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip("Your Pantheon — open the Hall of Fame")
+        for e in entries:
+            u = (e or {}).get("row", {}).get("cover_url") if e else None
+            if u:
+                w = ImageWorker(u, u)
+                w.signals.result.connect(self._on_img)
+                run_worker(w)
+
+    def _on_img(self, res):
+        try:
+            k, _s, path = res
+            if path:
+                self.pix[k] = QPixmap(str(path))
+                self.update()
+        except RuntimeError:
+            pass
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.open_hall.emit()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        box = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QColor("#f5c451") if self._hover else QColor("#23273a"))
+        p.setBrush(QColor("#12141d"))
+        p.drawRoundedRect(box, 12, 12)
+        f = QFont(self.font())
+        f.setBold(True)
+        f.setPixelSize(9)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        p.setFont(f)
+        p.setPen(QColor("#f5c451"))
+        p.drawText(QRectF(14, 12, 80, 14), Qt.AlignmentFlag.AlignLeft, "★ YOUR")
+        p.drawText(QRectF(14, 26, 80, 14), Qt.AlignmentFlag.AlignLeft, "PANTHEON")
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
+        f.setPixelSize(11)
+        p.setFont(f)
+        p.setPen(QColor("#7f87a3"))
+        p.drawText(QRectF(14, 44, 80, 16), Qt.AlignmentFlag.AlignLeft, "Hall of Fame →")
+        x = 96
+        for e in self.entries:
+            r = QRectF(x, 8, self.PW, self.PH)
+            path = QPainterPath()
+            path.addRoundedRect(r, 6, 6)
+            u = (e or {}).get("row", {}).get("cover_url") if e else None
+            pm = self.pix.get(u) if u else None
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            if pm and not pm.isNull():
+                p.save()
+                p.setClipPath(path)
+                sc = pm.scaled(self.PW, self.PH, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+                p.drawPixmap(int(r.x()), int(r.y()), sc, (sc.width() - self.PW) // 2, 0, self.PW, self.PH)
+                p.restore()
+                p.setPen(QColor(245, 196, 81, 150))
+                p.drawPath(path)
+            else:
+                p.setPen(QPen(QColor("#2e3348"), 1, Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawPath(path)
+            x += self.PW + 8
+        p.end()
+
+
 class HomePage(QWidget):
     open_title = pyqtSignal(int)
     changed = pyqtSignal(int)
     search_online = pyqtSignal(str, str)
     open_pick = pyqtSignal(dict)           # a recommendation -> its Discover preview
     play_trailer = pyqtSignal(str, str, str)
+    open_hall = pyqtSignal()
     _PICKS: Dict = {"at": 0, "hits": []}   # shared cache: picks are slow (network)
 
     def __init__(self, db, parent=None):
@@ -797,6 +885,8 @@ class HomePage(QWidget):
                                 (len(ready), "movies in HD", "#fbbf24")):
             self.stats.addWidget(_Stat(str(v), label, color))
         self.stats.addStretch()
+        self._pantheon_strip = None
+        self.refresh_pantheon()
 
         # this week: 7 day columns + Later
         self._clear(self.week)
@@ -1021,6 +1111,29 @@ class HomePage(QWidget):
                     QTimer.singleShot(0, lambda p=pop: p.isVisible() and p.close_popover()
                                       if getattr(self, "_popover", None) is p else None)
         return False
+
+    def refresh_pantheon(self):
+        """The Pantheon strip at the end of the stats row (hidden when empty)."""
+        old = getattr(self, "_pantheon_strip", None)
+        if old is not None:
+            try:
+                old.deleteLater()
+            except RuntimeError:
+                pass
+            self._pantheon_strip = None
+        try:
+            from core.hall import Hall
+            h = Hall(self.db)
+            h.auto_pantheon()
+            slots = h.pantheon()
+        except Exception:
+            return
+        if not any(slots):
+            return
+        strip = _PantheonStrip(slots)
+        strip.open_hall.connect(self.open_hall.emit)
+        self.stats.addWidget(strip)
+        self._pantheon_strip = strip
 
     def _mark(self, item: Dict):
         from core import up_next as un

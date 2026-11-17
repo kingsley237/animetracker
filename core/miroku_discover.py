@@ -150,8 +150,13 @@ def recommend(db, limit: int = 36) -> List[Dict]:
     except Exception:
         pass
     seeds = []
+    from core.hall import boosts
+    hof = boosts(db)
     for r in rows:
         if not r.get("anilist_id"):
+            continue
+        if r["id"] in hof:
+            seeds.append((hof[r["id"]], r))
             continue
         ws = r.get("watch_status")
         if ws == "completed":

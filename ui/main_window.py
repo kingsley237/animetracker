@@ -30,7 +30,7 @@ from ui.update_banner import UpdateBanner
 # Raikō: one sidebar, a section per library. Each library keeps its own
 # tools under its own name.
 NAV_SECTIONS = [
-    ("", [("Home", "⌂", "home")]),
+    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall")]),
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
@@ -199,12 +199,13 @@ class MainWindow(QMainWindow):
         self._discover_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(7):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home
+        for _ in range(8):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
         self._kinema_discover = None
         self._home_page = None
+        self._hall_page = None
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -222,6 +223,7 @@ class MainWindow(QMainWindow):
 
         from ui.detail_panel import DetailPanel
         self.detail_panel = DetailPanel(self.db, self._content_host)
+        self.detail_panel.hall_changed.connect(self._on_hall_changed)
         self.detail_panel.setFixedWidth(390)
         self.detail_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.detail_panel.setStyleSheet(
@@ -781,11 +783,23 @@ class MainWindow(QMainWindow):
                 page.search_online.connect(self._search_online)
                 page.open_pick.connect(self._open_pick)
                 page.play_trailer.connect(self._play_trailer)
+                page.open_hall.connect(lambda: self._navigate("hall"))
                 self._home_page = page
                 self.stack.removeWidget(self.stack.widget(7))
                 self.stack.insertWidget(7, page)
             self.stack.setCurrentIndex(7)
             self._home_page.load()
+        elif page_id == "hall":
+            if self._hall_page is None:
+                from ui.hall_page import HallPage
+                page = HallPage(self.db, self)
+                page.open_title.connect(self._open_title)
+                page.changed.connect(self._on_hall_changed)
+                self._hall_page = page
+                self.stack.removeWidget(self.stack.widget(8))
+                self.stack.insertWidget(8, page)
+            self.stack.setCurrentIndex(8)
+            self._hall_page.load()
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
@@ -1518,6 +1532,13 @@ class MainWindow(QMainWindow):
         if row and card is not None:
             card.update_data(row)
         self._update_stats_strip()
+
+    def _on_hall_changed(self):
+        """The Hall changed: refresh what shows Hall of Fame state elsewhere."""
+        if self._home_page is not None:
+            self._home_page.refresh_pantheon()
+        if self._hall_page is not None and self.current_page == "hall" and self.sender() is not self._hall_page:
+            self._hall_page.load()
 
     def _open_title(self, anime_id: int):
         anime = self.db.get_anime_by_id(anime_id)

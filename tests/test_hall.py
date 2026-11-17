@@ -97,3 +97,141 @@ def test_insertion_skip_tie_undo():
             break
         s.answer("skip")
     assert s.done and 1 <= s.position <= 6
+
+
+# ── Honours ───────────────────────────────────────────────────────────────────
+
+def test_honours_awards_places_and_compaction(db):
+    from core.honours import Honours
+    h = Honours(db)
+    a, b, c = _done(db, "A"), _done(db, "B"), _done(db, "C")
+    aid = h.add_category("soundtrack")
+    assert h.category(aid)["label"] == "Best soundtrack" and h.category(aid)["kind"] == "title"
+    for place, x in enumerate((a, b, c)):
+        h.set_entry(aid, place, h.title_entry(x))
+    h.set_reason(aid, 0, "goosebumps")
+    assert [e["lib_ids"] for e in h.entries(aid)] == [[a], [b], [c]]
+    h.swap(aid, 0, 2)
+    assert h.entries(aid)[0]["lib_ids"] == [c] and h.entries(aid)[2]["reason"] == "goosebumps"
+    h.clear_entry(aid, 0)                              # runners-up move up
+    assert [e["lib_ids"] if e else None for e in h.entries(aid)] == [[b], [a], None]
+    assert h.count() == 1
+    yid = h.add_category("year", "Best of 2024")
+    assert h.category(yid)["label"] == "Best of 2024"
+    h.move_category(yid, -1)
+    assert [x["id"] for x in h.categories()] == [yid, aid]
+    h.remove_category(aid)
+    assert [x["id"] for x in h.categories()] == [yid]
+
+
+def test_groups_from_titles_sequels_and_collections(db):
+    from core.honours import Honours
+    h = Honours(db)
+    s1 = add_anime(db, "Shingeki no Kyojin", "completed", anilist_id=10, start_ts=1)
+    s2 = add_anime(db, "Shingeki no Kyojin Season 2", "completed", anilist_id=11, start_ts=2)
+    s3 = add_anime(db, "Shingeki no Kyojin Season 3", "watching", anilist_id=12, start_ts=3)
+    x1 = add_anime(db, "Kizumonogatari I", "completed", anilist_id=20, start_ts=1)
+    x2 = add_anime(db, "Owarimonogatari", "completed", anilist_id=21, start_ts=2)   # different name: needs AniList
+    tri = h.groups(3)
+    assert [p["lib_id"] for p in tri[0]["parts"]] == [s1, s2, s3] and tri[0]["name"] == "Shingeki no Kyojin"
+    assert not any({x1, x2} <= {p["lib_id"] for p in g["parts"]} for g in h.groups())
+    h._set_meta("anime_sequels", {"20": [21]})
+    assert any({x1, x2} == {p["lib_id"] for p in g["parts"]} for g in h.groups(2))
+    m1 = add_anime(db, "Dune", "completed", media_type="movie", tmdb_id=438631)
+    h._set_meta("movie_collections", {"726871": {"name": "Dune Collection", "parts": [
+        {"id": 438631, "title": "Dune", "release_date": "2021-09-15"},
+        {"id": 693134, "title": "Dune: Part Two", "release_date": "2024-02-27"}]}})
+    duo = [g for g in h.groups(2) if g["media"] == "movie"][0]
+    assert duo["name"] == "Dune Collection" and duo["parts"][0]["lib_id"] == m1 and duo["parts"][1]["lib_id"] is None
+    e = h.group_entry(duo)
+    assert e["kind"] == "group" and e["lib_ids"] == [m1] and "1 watched" in e["sub"]
+
+
+def test_entry_builders(db, monkeypatch):
+    from core.honours import Honours
+    h = Honours(db)
+    a = add_anime(db, "Show", "completed", characters=[{"name": "Light Yagami", "role": "Main", "image": "x"}])
+    assert h.episode_entry(a, 25)["label"] == "Episode 25"
+    assert h.character_entry(a, db.get_anime_by_id(a)["characters"][0])["label"] == "Light Yagami"
+    m = add_anime(db, "Film", "completed", media_type="movie")
+    ch = h.character_entry(m, {"name": "Matt Damon", "role": "Odysseus"})
+    assert ch["label"] == "Odysseus" and ch["sub"].startswith("Matt Damon")
+    assert h.theme_entry(a, "Unravel")["label"] == "Unravel"
+    assert "Studio" in h.studios()
+
+
+# ── integration ───────────────────────────────────────────────────────────────
+
+def test_for_you_boost_and_data_doctor_tidy(db):
+    from core.data_health import Scanner
+    from core.hall import Hall, boosts, problems
+    h = Hall(db)
+    a, b = _done(db, "A"), _done(db, "B")
+    h.insert_at(a, 1)
+    h.insert_at(b, 2)
+    w = boosts(db)
+    assert w[a] > w[b] > 3.0                        # above any 6/6 rating (3.0)
+    db._get_conn().execute("DELETE FROM anime WHERE id=?", (a,))
+    db._get_conn().commit()
+    assert problems(db) == {"missing": 1, "gaps": 0}
+    issue = next(i for i in Scanner(db).scan(quick=True) if i.issue_id == "hall_tidy")
+    issue.fix_fn()
+    assert problems(db) == {"missing": 0, "gaps": 0} and h.entries("anime")[0]["rank"] == 1
+
+
+def test_hall_ui_smoke(qapp, db):
+    """Every view, wing, dialog and the share card build without errors."""
+    from tests.conftest import pump
+    from ui.hall_page import HallPage, PlaqueDialog
+    from ui.hall_rank import RankDialog
+    from ui.hall_share import render
+    from core.honours import Honours
+    ids = [_done(db, f"T{i}") for i in range(5)]
+    mv = _done(db, "Film", "movie")
+    page = HallPage(db)
+    page.resize(1400, 1000)
+    page.show()
+    page.load()
+    assert "Induct" in "".join(w.text() for w in page.findChildren(type(page.share_btn)))   # empty wing
+    for i, x in enumerate(ids):
+        page.hall.insert_at(x, i + 1)
+    page.hall.insert_at(mv, 1)
+    Honours(db).add_category("trilogy")
+    for wing in ("anime", "movie", "tv", "honours"):
+        page._set_wing(wing)
+        for view in ("showcase", "list", "tiers", "timeline", "numbers"):
+            page._set_view(view)
+            pump(20)
+    assert page.hall.pantheon()[0]["lib_id"] == ids[0]           # auto-pinned #1s
+    # re-rank through the dialog: the last one becomes #1
+    d = RankDialog(page.hall, ids[4], page)
+    while d.pages.currentIndex() == 0:
+        d._answer("new")
+    assert d.position == 1 and page.hall.entries("anime")[0]["lib_id"] == ids[4]
+    d.close()
+    p = PlaqueDialog(page.hall, ids[0], page)
+    p.note.setPlainText("best ever")
+    p._set_tier("S")
+    p.done(0)
+    assert page.hall.entry(ids[0])["note"] == "best ever" and page.hall.entry(ids[0])["tier"] == "S"
+    for m in ("pantheon", "top", "tiers", "honours"):
+        assert not render(page.hall, m, "anime", {}).isNull()
+    page.close()
+
+
+def test_detail_panel_hall_button(qapp, db):
+    from core.hall import Hall
+    from ui.detail_panel import DetailPanel
+    a = _done(db, "Done")
+    w = add_anime(db, "Watching", "watching")
+    panel = DetailPanel(db)
+    panel.load_anime(db.get_anime_by_id(w))
+    assert panel.hof_btn.isHidden()
+    panel.load_anime(db.get_anime_by_id(a))
+    assert not panel.hof_btn.isHidden() and "Induct" in panel.hof_btn.text()
+    Hall(db).insert_at(a, 1)
+    panel.load_anime(db.get_anime_by_id(a))
+    assert "#1" in panel.hof_btn.text()
+    h = Hall(db)
+    h.decline_offer(a)
+    assert h.offer_declined(a) and not h.offer_declined(w)

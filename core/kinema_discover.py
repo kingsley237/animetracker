@@ -149,8 +149,13 @@ def recommend(db, limit: int = 30, kind: str = "movie") -> List[Dict]:
     rows = db.get_all_anime(media_type=kind)
     in_library = {r["tmdb_id"] for r in rows if r.get("tmdb_id")}
     seeds = []
+    from core.hall import boosts
+    hof = boosts(db)
     for r in rows:
         if not r.get("tmdb_id"):
+            continue
+        if r["id"] in hof:
+            seeds.append((hof[r["id"]], r))
             continue
         if r.get("watch_status") == "completed":
             mine = db.get_overall_rating(r["id"])

@@ -191,6 +191,21 @@ class Hall:
         c.commit()
         return new
 
+    def offer_declined(self, lib_id: int) -> bool:
+        try:
+            return lib_id in json.loads(self._meta("declined") or "[]")
+        except ValueError:
+            return False
+
+    def decline_offer(self, lib_id: int):
+        try:
+            d = json.loads(self._meta("declined") or "[]")
+        except ValueError:
+            d = []
+        if lib_id not in d:
+            d.append(lib_id)
+        self._set_meta("declined", json.dumps(d))
+
     def remove(self, lib_id: int):
         e = self.entry(lib_id)
         if not e:
@@ -275,7 +290,7 @@ class Hall:
     def numbers(self, wing: str) -> Dict:
         es = self.entries(wing)
         genres, studios, decades = Counter(), Counter(), Counter()
-        minutes = []
+        minutes = 0
         for e in es:
             r = e["row"]
             for g in r.get("genres") or []:
@@ -285,11 +300,9 @@ class Hall:
             y = r.get("season_year")
             if y:
                 decades[f"{int(y) // 10 * 10}s"] += 1
-            if r.get("duration"):
-                total = r.get("total_episodes") or 1
-                minutes.append(int(r["duration"]) * (1 if wing == "movie" else int(total)))
+            minutes += int(self.story(e["lib_id"]).get("minutes") or 0)
         return {"count": len(es), "genres": genres.most_common(5), "studios": studios.most_common(3),
-                "decades": sorted(decades.items()), "hours": round(sum(minutes) / 60) if minutes else 0}
+                "decades": sorted(decades.items()), "hours": round(minutes / 60)}
 
     def story(self, lib_id: int) -> Dict:
         """What the plaque says from your real history."""
@@ -322,9 +335,47 @@ class Hall:
                 b = max(rated, key=lambda e: e["rating"])
                 out["best"] = f"S{b['season_number']:02d}E{b['episode_number']:02d} · {int(b['rating'])}/6"
         else:
-            out["minutes"] = int(row.get("duration") or 0) * (1 + (out["rewatches"] or 0))
+            out["minutes"] = int(row.get("duration") or 120) * (1 + (out["rewatches"] or 0))
             out["first"] = row.get("completed_at")
         return out
+
+
+def boosts(db) -> Dict[int, float]:
+    """For-you weights: Hall of Fame titles count more than any rating
+    (a 6/6 is 3.0; your #1 is 4.0, gently less down the ranking)."""
+    try:
+        rows = db._get_conn().execute("SELECT lib_id, rank FROM hof_entries").fetchall()
+    except Exception:
+        return {}
+    return {lib: max(3.2, 4.0 - 0.08 * (rank - 1)) for lib, rank in rows}
+
+
+def cleanup(db) -> int:
+    """Drop entries whose title is gone and close the rank gaps."""
+    h = Hall(db)
+    c = h.conn
+    gone = [r[0] for r in c.execute("SELECT lib_id FROM hof_entries WHERE lib_id NOT IN (SELECT id FROM anime)")]
+    c.execute("DELETE FROM hof_entries WHERE lib_id NOT IN (SELECT id FROM anime)")
+    for wing in WINGS:
+        ids = [r[0] for r in c.execute("SELECT lib_id FROM hof_entries WHERE wing=? ORDER BY rank", (wing,))]
+        for i, lib in enumerate(ids, start=1):
+            c.execute("UPDATE hof_entries SET rank=? WHERE lib_id=?", (i, lib))
+    c.commit()
+    return len(gone)
+
+
+def problems(db) -> Dict[str, int]:
+    """For the Data Doctor: missing titles and rank gaps."""
+    c = db._get_conn()
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE name='hof_entries'").fetchone():
+        return {"missing": 0, "gaps": 0}
+    missing = c.execute("SELECT COUNT(*) FROM hof_entries WHERE lib_id NOT IN (SELECT id FROM anime)").fetchone()[0]
+    gaps = 0
+    for wing in WINGS:
+        ranks = [r[0] for r in c.execute("SELECT rank FROM hof_entries WHERE wing=? ORDER BY rank", (wing,))]
+        if ranks != list(range(1, len(ranks) + 1)):
+            gaps += 1
+    return {"missing": missing, "gaps": gaps}
 
 
 # ── "Which do you love more?" ─────────────────────────────────────────────────

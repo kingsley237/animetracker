@@ -61,6 +61,7 @@ class DetailPanel(QWidget):
     dropped_removed  = pyqtSignal()
     rewatch_changed  = pyqtSignal(int)
     movie_changed    = pyqtSignal(int)
+    hall_changed     = pyqtSignal()
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -289,6 +290,13 @@ class DetailPanel(QWidget):
         drop_btn.clicked.connect(self._drop)
         arl.addWidget(drop_btn)
 
+        self.hof_btn = QPushButton("★  Hall of Fame")
+        self.hof_btn.setObjectName("hofBtn")
+        self.hof_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.hof_btn.clicked.connect(self._hall_action)
+        self.hof_btn.hide()
+        arl.addWidget(self.hof_btn)
+
         del_btn = QPushButton("Delete")
         del_btn.setObjectName("dangerBtn")
         del_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -375,6 +383,7 @@ class DetailPanel(QWidget):
     def load_anime(self, anime: Dict):
         self._anime = anime
         aid = anime["id"]
+        self._refresh_hall()
 
         self.title_lbl.setText(anime.get("romaji_title", ""))
         eng = anime.get("english_title", "")
@@ -662,6 +671,10 @@ class DetailPanel(QWidget):
         self.db.update_anime(aid, {"watch_status": new})
         self._anime["watch_status"] = new
         self.watch_status_changed.emit(aid, new)
+        if new == "completed":
+            self._maybe_offer_induct(aid)
+        else:
+            self._refresh_hall()
         self.stats_changed.emit()
         self.load_anime(self.db.get_anime_by_id(aid) or self._anime)
         from ui.toast import Toast
@@ -886,6 +899,109 @@ class DetailPanel(QWidget):
 
     def _on_overall_rated(self, aid: int):
         self.episode_changed.emit(aid)
+        self._maybe_offer_induct(aid)
+
+    # ── Hall of Fame ───────────────────────────────────────────────────────────
+
+    def _hall(self):
+        from core.hall import Hall
+        return Hall(self.db)
+
+    def _refresh_hall(self):
+        a = self._anime or {}
+        if not a.get("id") or a["id"] <= 0:
+            self.hof_btn.hide()
+            return
+        try:
+            h = self._hall()
+            e = h.entry(a["id"])
+            from core.hall import WING_NAMES
+            if e:
+                self.hof_btn.setText(f"★  #{e['rank']} in your {WING_NAMES[e['wing']]} Hall")
+                self.hof_btn.setToolTip("Open its plaque, re-rank it, or take it out")
+                self.hof_btn.setProperty("inHall", "true")
+                self.hof_btn.show()
+            elif h.eligible(a):
+                self.hof_btn.setText("★  Induct into Hall of Fame")
+                self.hof_btn.setToolTip("Find its place among your all-time favourites")
+                self.hof_btn.setProperty("inHall", "false")
+                self.hof_btn.show()
+            else:
+                self.hof_btn.hide()
+            self.hof_btn.style().unpolish(self.hof_btn)
+            self.hof_btn.style().polish(self.hof_btn)
+        except Exception:
+            self.hof_btn.hide()
+
+    def _hall_action(self):
+        a = self._anime or {}
+        if not a.get("id"):
+            return
+        h = self._hall()
+        if h.entry(a["id"]):
+            from PyQt6.QtWidgets import QMenu
+            m = QMenu(self)
+            m.addAction("Open its plaque", lambda: self._open_plaque(a["id"]))
+            m.addAction("Re-rank (which do you love more?)", lambda: self._rank(a["id"]))
+            m.addSeparator()
+            m.addAction("Remove from Hall of Fame", lambda: (h.remove(a["id"]), self._after_hall()))
+            m.exec(self.hof_btn.mapToGlobal(self.hof_btn.rect().bottomLeft()))
+        else:
+            self._rank(a["id"])
+
+    def _rank(self, lib_id: int):
+        from ui.hall_rank import RankDialog
+        RankDialog(self._hall(), lib_id, self.window()).exec()
+        self._after_hall()
+
+    def _open_plaque(self, lib_id: int):
+        from ui.hall_page import PlaqueDialog
+        d = PlaqueDialog(self._hall(), lib_id, self.window())
+        d.exec()
+        if d.action == "rerank":
+            self._rank(lib_id)
+        elif d.action == "remove":
+            self._hall().remove(lib_id)
+        elif d.action in ("pin", "unpin"):
+            h = self._hall()
+            if d.action == "unpin":
+                h.unpin(lib_id)
+            else:
+                free = next((i + 1 for i, s in enumerate(h.pantheon()) if s is None), None)
+                if free:
+                    h.pin(lib_id, free)
+        self._after_hall()
+
+    def _after_hall(self):
+        self._refresh_hall()
+        self.hall_changed.emit()
+
+    def _maybe_offer_induct(self, aid: int):
+        """A finished title rated 6/6 (Masterpiece): offer it a place - once."""
+        try:
+            rating = self.db.get_overall_rating(aid)
+            row = self.db.get_anime_by_id(aid) or {}
+            h = self._hall()
+            if (rating or 0) < 6 or h.entry(aid) or not h.eligible(row) or h.offer_declined(aid):
+                self._refresh_hall()
+                return
+        except Exception:
+            return
+        from PyQt6.QtWidgets import QMessageBox
+        title = row.get("english_title") or row.get("romaji_title") or "This title"
+        box = QMessageBox(self.window())
+        box.setWindowTitle("A masterpiece")
+        box.setText(f"<b>{title}</b> — 6/6.")
+        box.setInformativeText("Does it belong in your Hall of Fame? Raikō will ask a few "
+                               "“which do you love more?” questions to find its place.")
+        yes = box.addButton("★  Induct it", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is yes:
+            self._rank(aid)
+        else:
+            h.decline_offer(aid)
+            self._refresh_hall()
 
     # ── Actions ────────────────────────────────────────────────────────────────
 
@@ -957,6 +1073,10 @@ class DetailPanel(QWidget):
         self._anime["watch_status"] = new
         self.status_btn.setText(WATCH_STATUS_LABELS.get(new, new.title()))
         self.watch_status_changed.emit(aid, new)
+        if new == "completed":
+            self._maybe_offer_induct(aid)
+        else:
+            self._refresh_hall()
         self.stats_changed.emit()
         if (new == "planned") != (cur == "planned"):
             self.load_anime(self.db.get_anime_by_id(aid) or self._anime)

@@ -100,6 +100,7 @@ class Scanner:
         self._check_movies(conn, issues)
         self._check_tv(conn, issues)
         self._check_library(conn, issues)
+        self._check_hall(issues)
         self._check_errors(issues)
         return issues
 
@@ -426,6 +427,25 @@ class Scanner:
             ON e.anime_id = r.anime_id AND e.episode_num = r.episode_num
             JOIN anime a ON a.id = r.anime_id AND COALESCE(a.media_type,'anime')='anime'
             WHERE r.episode_num > 0 AND COALESCE(e.watched,0) = 0)""")
+
+    def _check_hall(self, issues):
+        try:
+            from core.hall import cleanup, problems
+            p = problems(self.db)
+        except Exception:
+            return
+        if p["missing"] or p["gaps"]:
+            bits = []
+            if p["missing"]:
+                bits.append(f"{p['missing']} Hall of Fame entr{'y points' if p['missing'] == 1 else 'ies point'} "
+                            "at titles no longer in your library")
+            if p["gaps"]:
+                bits.append("a ranking has gaps")
+            issues.append(Issue(
+                "hall_tidy", "info", "Hall of Fame needs a tidy-up",
+                "; ".join(bits).capitalize() + ". Fix removes the missing entries and closes the gaps "
+                "(the order stays the same).",
+                None, "Hall of Fame", "Tidy the Hall of Fame", lambda: cleanup(self.db), area="Library"))
 
     def _fix_orphans(self):
         for t in ("episodes", "tv_episodes", "tv_seasons"):
