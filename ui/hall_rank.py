@@ -407,8 +407,8 @@ class InductDialog(QDialog):
         top.addStretch()
         self.search = QLineEdit()
         self.search.setObjectName("homeSearch")
-        self.search.setPlaceholderText("Filter by title")
-        self.search.setFixedSize(240, 36)
+        self.search.setPlaceholderText("Search your library — or anything online")
+        self.search.setFixedSize(300, 36)
         self.search.textChanged.connect(lambda _t: self._fill())
         top.addWidget(self.search)
         lay.addLayout(top)
@@ -416,6 +416,17 @@ class InductDialog(QDialog):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         lay.addWidget(self.scroll, 1)
+        self.container = QWidget()
+        self._cv = QVBoxLayout(self.container)
+        self._cv.setContentsMargins(0, 0, 0, 0)
+        self._cv.setSpacing(22)
+        self.lib_host = QWidget()
+        self._cv.addWidget(self.lib_host)
+        self.finder = OnlineFinder(hall.db)
+        self.finder.added.connect(self._pick)
+        self._cv.addWidget(self.finder)
+        self._cv.addStretch()
+        self.scroll.setWidget(self.container)
         self.wing = wing
         self._set_wing(wing)
 
@@ -431,13 +442,11 @@ class InductDialog(QDialog):
         rows: List[Dict] = [r for r in self.hall.candidates(self.wing)
                             if not q or q in _title(r).lower() or q in (r.get("romaji_title") or "").lower()]
         host = QWidget()
-        host.setObjectName("contentArea")
         if not rows:
             v = QVBoxLayout(host)
-            e = QLabel("Nothing here yet — finish something you love and it can join."
-                       if not q else "No finished title matches that.")
+            v.setContentsMargins(0, 0, 0, 0)
+            e = QLabel("Nothing finished here yet." if not q else "Nothing finished in your library matches that.")
             e.setObjectName("homeEmpty")
-            e.setAlignment(Qt.AlignmentFlag.AlignCenter)
             v.addWidget(e)
         else:
             flow = FlowLayout(host, 14, 14)
@@ -445,11 +454,154 @@ class InductDialog(QDialog):
                 t = _PickTile(r, WING_COLORS[self.wing])
                 t.picked.connect(self._pick)
                 flow.addWidget(t)
-        self.scroll.setWidget(host)
+        self._cv.replaceWidget(self.lib_host, host)
+        self.lib_host.deleteLater()
+        self.lib_host = host
+        self.finder.set_query(self.wing, q)
 
     def _pick(self, lib_id: int):
         self.chosen = lib_id
         self.accept()
+
+
+class OnlineFinder(QWidget):
+    """'Not in your library yet': online results for what you typed, with
+    Show more. Picking one adds it to its library as watched, then emits
+    `added(lib_id)`."""
+    added = pyqtSignal(int)
+    LIB = {"anime": "Miroku", "movie": "Kinema · Movies", "tv": "Kinema · TV shows"}
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.kind = "anime"
+        self.q = ""
+        self.page = 1
+        self.hits: List[Dict] = []
+        self._tok = 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        self.head = QLabel()
+        self.head.setObjectName("hallKicker")
+        self.head.setStyleSheet(f"color:{GOLD};")
+        lay.addWidget(self.head)
+        self.status = QLabel()
+        self.status.setObjectName("hallAskSub")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.grid_host = QWidget()
+        self.flow = FlowLayout(self.grid_host, 14, 14)
+        lay.addWidget(self.grid_host)
+        self.more = QPushButton("Show more")
+        self.more.setObjectName("hallGhost")
+        self.more.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.more.clicked.connect(self._more)
+        self.more.hide()
+        lay.addWidget(self.more, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._run)
+        self.set_query("anime", "")
+
+    def set_query(self, kind: str, q: str):
+        self.kind, self.q = kind, (q or "").strip()
+        self.head.setText(f"NOT IN {self.LIB[kind].upper()} YET?")
+        if len(self.q) < 2:
+            self._tok += 1
+            self._clear()
+            self.status.setText("Watched something Raikō doesn't know about? Type its name above — "
+                                f"pick it and it's added to {self.LIB[kind]} as watched.")
+            self.more.hide()
+            return
+        self.status.setText(f"Searching online for “{self.q}”…")
+        self._timer.start(380)
+
+    def _clear(self):
+        while self.flow.count():
+            it = self.flow.takeAt(0)
+            if it and it.widget():
+                it.widget().deleteLater()
+        self.hits = []
+
+    def _run(self, page: int = 1):
+        from workers.workers import Worker, run_worker
+        self._tok += 1
+        tok, kind, q = self._tok, self.kind, self.q
+        self.page = page
+
+        def work():
+            from core.quick_add import search
+            return search(kind, q, page)
+
+        w = Worker(work)
+        w.signals.result.connect(lambda hits, t=tok, p=page: self._show(hits, t, p))
+        w.signals.error.connect(lambda _e, t=tok: t == self._tok and self.status.setText(
+            "Couldn't search online. Check your connection."))
+        run_worker(w)
+
+    def _show(self, hits, tok, page):
+        from PyQt6 import sip
+        if sip.isdeleted(self) or tok != self._tok:
+            return
+        from core.quick_add import in_library
+        fresh = [h for h in (hits or []) if h.get("provider_id") and not in_library(self.db, h)
+                 and h.get("provider_id") not in {x.get("provider_id") for x in self.hits}]
+        if page == 1:
+            self._clear()
+        start = len(self.hits)
+        self.hits += fresh
+        for i, h in enumerate(fresh, start=start):
+            row = {"id": i, "cover_url": h.get("poster_url") or "", "english_title": h.get("title") or "",
+                   "season_year": h.get("year") or ""}
+            t = _PickTile(row, WING_COLORS.get(self.kind, GOLD))
+            t.setToolTip(f"{h.get('title')} — add to {self.LIB[self.kind]} as watched")
+            t.picked.connect(self._pick)
+            self.flow.addWidget(t)
+        if not self.hits:
+            self.status.setText(f"Nothing online called “{self.q}”.")
+        else:
+            self.status.setText(f"Pick one to add it to {self.LIB[self.kind]} as watched.")
+        self.more.setVisible(bool(fresh))
+
+    def _more(self):
+        self.more.hide()
+        self._run(self.page + 1)
+
+    def _pick(self, i: int):
+        h = self.hits[i]
+        from PyQt6.QtWidgets import QMessageBox
+        lib = self.LIB[self.kind]
+        if QMessageBox.question(self, "Add to your library",
+                                f"Add “{h.get('title')}” to {lib} as watched?\n\n"
+                                "It's saved to your library with its details, then you carry on here."
+                                ) != QMessageBox.StandardButton.Yes:
+            return
+        self.status.setText(f"Adding “{h.get('title')}” to {lib}…")
+        self.setEnabled(False)
+        from workers.workers import Worker, run_worker
+        path = self.db.db_path
+
+        def work():
+            from core.database import DatabaseManager
+            from core.quick_add import add_watched
+            return add_watched(DatabaseManager(path), h)
+
+        def done(lib_id):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+            self.setEnabled(True)
+            if not lib_id:
+                self.status.setText("Couldn't reach the server — try again in a moment.")
+                return
+            self.status.setText(f"Added to {lib}.")
+            self.added.emit(int(lib_id))
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e: done(None))
+        run_worker(w)
 
 
 def induct(hall: Hall, parent, wing: str = "anime", lib_id: Optional[int] = None) -> int:

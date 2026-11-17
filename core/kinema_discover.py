@@ -64,12 +64,13 @@ def _hits(results: List[Dict], kind: str = "movie") -> List[Dict]:
     return out
 
 
-def _discover(params: Dict, pages: int = 2, kind: str = "movie") -> List[Dict]:
+def _discover(params: Dict, pages: int = 2, kind: str = "movie", batch: int = 1) -> List[Dict]:
     base = {"region": tmdb.region(), "include_adult": "false", **params}
     if kind == "tv":
         base.pop("region")
         base["watch_region"] = tmdb.region()
-    res = tmdb.get_many([(f"/discover/{kind}", {**base, "page": p}) for p in range(1, pages + 1)])
+    first = (batch - 1) * pages + 1
+    res = tmdb.get_many([(f"/discover/{kind}", {**base, "page": p}) for p in range(first, first + pages)])
     rows = []
     for page in res:
         rows += (page or {}).get("results") or []
@@ -85,52 +86,55 @@ def genres(kind: str = "movie") -> List[Dict]:
 _TV_NOISE = "10767,10763,10764,10766"
 
 
-def _load_tv(source: str) -> List[Dict]:
+def _load_tv(source: str, batch: int = 1) -> List[Dict]:
     today = datetime.now().date()
     if source == "airing":
-        res = tmdb.get_many([("/tv/on_the_air", {"page": p}) for p in (1, 2)])
+        res = tmdb.get_many([("/tv/on_the_air", {"page": p}) for p in (batch * 2 - 1, batch * 2)])
         rows = sum(((r or {}).get("results") or [] for r in res), [])
         rows = [r for r in rows if not set(r.get("genre_ids") or []) & {10767, 10763, 10764, 10766}]
     elif source == "upcoming":
         rows = _discover({"first_air_date.gte": today.isoformat(),
                           "sort_by": "popularity.desc", "without_genres": _TV_NOISE},
-                         pages=3, kind="tv")
+                         pages=3, kind="tv", batch=batch)
     elif source == "trending":
-        rows = (tmdb.get("/trending/tv/week", ttl=1800) or {}).get("results") or []
+        rows = (tmdb.get("/trending/tv/week", {"page": batch}, ttl=1800) or {}).get("results") or []
     elif source == "top_rated":
         rows = _discover({"sort_by": "vote_average.desc", "vote_count.gte": 500,
-                          "without_genres": _TV_NOISE + ",16"}, pages=2, kind="tv")
+                          "without_genres": _TV_NOISE + ",16"}, pages=2, kind="tv", batch=batch)
     elif source == "popular":
         rows = _discover({"sort_by": "popularity.desc", "without_genres": _TV_NOISE,
-                          "vote_count.gte": 50}, pages=2, kind="tv")
+                          "vote_count.gte": 50}, pages=2, kind="tv", batch=batch)
     else:
         rows = []
     return rows
 
 
-def load_source(source: str, db=None, kind: str = "movie") -> List[Dict]:
+def load_source(source: str, db=None, kind: str = "movie", page: int = 1) -> List[Dict]:
+    """`page` is a batch number: 2 loads the next batch of the same list."""
     today = datetime.now().date()
+    b = max(1, int(page))
     if source == "for_you":
-        return recommend(db, kind=kind) if db is not None else []
+        return recommend(db, limit=30 * b, kind=kind) if db is not None else []
     if kind == "tv":
-        rows = _load_tv(source)
+        rows = _load_tv(source, b)
     elif source == "upcoming":
         rows = _discover({"primary_release_date.gte": today.isoformat(),
-                          "sort_by": "popularity.desc", "with_release_type": "2|3"}, pages=3)
+                          "sort_by": "popularity.desc", "with_release_type": "2|3"}, pages=3, batch=b)
     elif source == "trending":
-        rows = (tmdb.get("/trending/movie/week", ttl=1800) or {}).get("results") or []
+        rows = (tmdb.get("/trending/movie/week", {"page": b}, ttl=1800) or {}).get("results") or []
     elif source == "hd":
         rows = _discover({"with_release_type": "4",
                           "release_date.gte": (today - timedelta(days=45)).isoformat(),
                           "release_date.lte": today.isoformat(),
-                          "sort_by": "popularity.desc"}, pages=3)
+                          "sort_by": "popularity.desc"}, pages=3, batch=b)
     elif source == "cinemas":
-        res = tmdb.get_many([("/movie/now_playing", {"region": tmdb.region(), "page": p}) for p in (1, 2)])
+        res = tmdb.get_many([("/movie/now_playing", {"region": tmdb.region(), "page": p})
+                             for p in (b * 2 - 1, b * 2)])
         rows = sum(((r or {}).get("results") or [] for r in res), [])
     elif source == "top_rated":
         # Rated highly by MANY people, not a handful of early votes
         rows = _discover({"sort_by": "vote_average.desc", "vote_count.gte": 1000,
-                          "without_genres": "99,10770"}, pages=2)
+                          "without_genres": "99,10770"}, pages=2, batch=b)
     else:
         rows = []
     seen, out = set(), []

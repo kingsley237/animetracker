@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QCompleter, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.honours import PLACES, TEMPLATES, Honours
-from ui.hall_rank import GOLD, WING_COLORS, _PickTile, _title, _year
+from ui.hall_rank import GOLD, WING_COLORS, OnlineFinder, _PickTile, _title, _year
 from ui.layout_helpers import FlowLayout
 from workers.workers import ImageWorker, Worker, run_worker
 
@@ -474,46 +474,181 @@ class PickDialog(QDialog):
         size = self.award.get("size") or 0
         word = {2: "duology", 3: "trilogy"}.get(size, "saga or franchise")
         self.heading.setText(f"Which {word} wins?")
-        self.sub.setText("Found from your library: AniList sequel chains and TMDB collections. "
-                         "Can't see it? Look online, or put one together by hand.")
+        self.sub.setText("Search any series or collection — it doesn't need to be in your library (parts you've "
+                         "seen can be added as watched). Or pick one Raikō found in your library, or put one "
+                         "together by hand.")
         self.extra_btn.setText("Assemble by hand…")
         self.extra_btn.show()
         self.extra_btn.clicked.connect(self._assemble)
-        self.online = QPushButton("Look online for more")
+        self.gsearch = QLineEdit()
+        self.gsearch.setObjectName("homeSearch")
+        self.gsearch.setPlaceholderText("Search any series or collection — e.g. The Lord of the Rings")
+        self.gsearch.setFixedHeight(36)
+        self.gsearch.returnPressed.connect(self._search_groups)
+        self._gtimer = QTimer(self)
+        self._gtimer.setSingleShot(True)
+        self._gtimer.timeout.connect(self._search_groups)
+        self.gsearch.textChanged.connect(lambda _t: self._gtimer.start(600))
+        self.top.addWidget(self.gsearch, 1)
+        self.online = QPushButton("Refresh from your library")
         self.online.setObjectName("hallGhost")
         self.online.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.online.clicked.connect(self._refresh_online)
-        self.top.addStretch()
         self.top.addWidget(self.online)
+        self._online_groups: List[Dict] = []
+        self._gtok = 0
         self._fill_groups()
+        self._refresh_online(force=False)
 
     def _fill_groups(self):
         size = self.award.get("size") or 0
-        gs = self.h.groups(size)
+        mine = self.h.groups()
+        exact = [g for g in mine if not size or len(g["parts"]) == size]
+        other = [g for g in mine if size and len(g["parts"]) != size]
+        online = sorted(self._online_groups, key=lambda g: (bool(size) and len(g["parts"]) != size))
         inner = QWidget()
         v = QVBoxLayout(inner)
         v.setSpacing(8)
-        if not gs:
-            e = QLabel("No matching groups in your library yet." +
-                       (" Try “Look online for more”." if size else ""))
-            e.setObjectName("homeEmpty")
-            v.addWidget(e)
-        for g in gs:
+
+        def section(text):
+            lab = QLabel(text)
+            lab.setObjectName("hallKicker")
+            lab.setStyleSheet(f"color:{GOLD};padding-top:8px;")
+            v.addWidget(lab)
+
+        def rows(gs, limit=None):
+            shown = gs if limit is None else gs[:limit]
+            for g in shown:
+                r = _GroupRow(g)
+                r.chosen.connect(self._choose_group)
+                v.addWidget(r)
+            if limit is not None and len(gs) > limit:
+                more = QPushButton(f"Show {len(gs) - limit} more")
+                more.setObjectName("hallGhost")
+                more.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                more.clicked.connect(lambda: (more.hide(), [v.insertWidget(v.indexOf(more), _row(g))
+                                                            for g in gs[limit:]]))
+                v.addWidget(more, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        def _row(g):
             r = _GroupRow(g)
-            r.chosen.connect(lambda g: self._finish(self.h.group_entry(g)))
-            v.addWidget(r)
+            r.chosen.connect(self._choose_group)
+            return r
+
+        word = {2: "duologies", 3: "trilogies"}.get(size, "groups")
+        if self.gsearch.text().strip():
+            section(f"ONLINE · “{self.gsearch.text().strip().upper()}”")
+            if online:
+                rows(online, 6)
+            else:
+                e = QLabel("Searching…" if self._gtok and not getattr(self, "_gdone", True)
+                           else "Nothing found online for that.")
+                e.setObjectName("homeEmpty")
+                v.addWidget(e)
+        section(f"{word.upper()} IN YOUR LIBRARY" if size else "IN YOUR LIBRARY")
+        if exact:
+            rows(exact, 8)
+        else:
+            e = QLabel(f"No {word} found in your library yet — search for one above "
+                       "(it doesn't need to be in your library).")
+            e.setObjectName("homeEmpty")
+            e.setWordWrap(True)
+            v.addWidget(e)
+        if other:
+            section("OTHER GROUPS IN YOUR LIBRARY")
+            rows(other, 4)
         v.addStretch()
         self._set_page(0, self._scroll(inner))
         self._go(0)
 
-    def _refresh_online(self):
+    def _search_groups(self):
+        q = self.gsearch.text().strip()
+        self._gtok += 1
+        tok = self._gtok
+        self._online_groups = []
+        if not q:
+            self._fill_groups()
+            return
+        self._gdone = False
+        self._fill_groups()
+        path = self.h.db.db_path
+
+        def job():
+            from core.database import DatabaseManager
+            return Honours(DatabaseManager(path)).search_groups(q)
+
+        def done(gs, t=tok):
+            from PyQt6 import sip
+            if sip.isdeleted(self) or t != self._gtok:
+                return
+            self._gdone = True
+            self._online_groups = gs or []
+            self._fill_groups()
+
+        w = Worker(job)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e, t=tok: done([], t))
+        run_worker(w)
+
+    def _choose_group(self, g: Dict):
+        missing = [p for p in g["parts"] if not p.get("lib_id") and (p.get("tmdb_id") or p.get("anilist_id"))]
+        if not missing:
+            return self._finish(self.h.group_entry(g))
+        lib = "Miroku" if g["media"] == "anime" else "Kinema"
+        box = QMessageBox(self)
+        box.setWindowTitle(g["name"])
+        n = len(missing)
+        box.setText(f"{n} of its {len(g['parts'])} parts {'is' if n == 1 else 'are'} not in your library.")
+        box.setInformativeText("Seen them? Raikō can add them to " + lib + " as watched, so they count everywhere "
+                               "(and can join the Hall of Fame too).")
+        add = box.addButton(f"Add {n} to {lib} as watched", QMessageBox.ButtonRole.AcceptRole)
+        just = box.addButton("Just award it", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is just:
+            return self._finish(self.h.group_entry(g))
+        if box.clickedButton() is not add:
+            return
+        self.heading.setText(f"Adding {n} to {lib}…")
+        self.setEnabled(False)
+        path = self.h.db.db_path
+        media = "anime" if g["media"] == "anime" else "movie"
+
+        def job():
+            from core.database import DatabaseManager
+            from core.quick_add import add_watched
+            dbx = DatabaseManager(path)
+            out = {}
+            for p in missing:
+                pid = p.get("anilist_id") if media == "anime" else p.get("tmdb_id")
+                out[pid] = add_watched(dbx, {"media_type": media, "provider_id": pid})
+            return out
+
+        def done(ids):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+            self.setEnabled(True)
+            for p in g["parts"]:
+                pid = p.get("anilist_id") if media == "anime" else p.get("tmdb_id")
+                if not p.get("lib_id") and (ids or {}).get(pid):
+                    p["lib_id"] = ids[pid]
+                    p["watched"] = True
+            self._finish(self.h.group_entry(g))
+
+        w = Worker(job)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e: done({}))
+        run_worker(w)
+
+    def _refresh_online(self, force: bool = True):
         self.online.setEnabled(False)
         self.online.setText("Looking…")
         h = self.h
 
         def job():
             from core.database import DatabaseManager
-            return Honours(DatabaseManager(h.db.db_path)).refresh_groups(max_age_days=0)
+            return Honours(DatabaseManager(h.db.db_path)).refresh_groups(max_age_days=0 if force else 7)
         w = Worker(job)
         w.signals.result.connect(lambda _r: self._online_done())
         w.signals.error.connect(lambda _e: self._online_done())
@@ -521,7 +656,7 @@ class PickDialog(QDialog):
 
     def _online_done(self):
         try:
-            self.online.setText("Look online for more")
+            self.online.setText("Refresh from your library")
             self.online.setEnabled(True)
             self._fill_groups()
         except RuntimeError:
@@ -635,10 +770,21 @@ class PickDialog(QDialog):
         self.top.addStretch()
         self.search = QLineEdit()
         self.search.setObjectName("homeSearch")
-        self.search.setPlaceholderText("Filter by title")
-        self.search.setFixedSize(240, 36)
+        self.search.setPlaceholderText("Search your library — or anything online")
+        self.search.setFixedSize(300, 36)
         self.search.textChanged.connect(lambda _t: self._fill_titles())
         self.top.addWidget(self.search)
+        self._tcontainer = QWidget()
+        self._tcv = QVBoxLayout(self._tcontainer)
+        self._tcv.setContentsMargins(0, 0, 0, 0)
+        self._tcv.setSpacing(22)
+        self._tlib = QWidget()
+        self._tcv.addWidget(self._tlib)
+        self.finder = OnlineFinder(self.db)
+        self.finder.added.connect(self._title_chosen)
+        self._tcv.addWidget(self.finder)
+        self._tcv.addStretch()
+        self._set_page(0, self._scroll(self._tcontainer))
         self._set_media(self._media)
 
     def _set_media(self, m: str):
@@ -662,17 +808,20 @@ class PickDialog(QDialog):
         inner = QWidget()
         if not rows:
             v = QVBoxLayout(inner)
-            e = QLabel("Nothing matches." if q or year else "Nothing watched here yet.")
+            v.setContentsMargins(0, 0, 0, 0)
+            e = QLabel("Nothing in your library matches." if q or year else "Nothing watched here yet.")
             e.setObjectName("homeEmpty")
             v.addWidget(e)
-            v.addStretch()
         else:
             flow = FlowLayout(inner, 14, 14)
             for r in rows:
                 t = _PickTile(r, WING_COLORS[self._media])
                 t.picked.connect(self._title_chosen)
                 flow.addWidget(t)
-        self._set_page(0, self._scroll(inner))
+        self._tcv.replaceWidget(self._tlib, inner)
+        self._tlib.deleteLater()
+        self._tlib = inner
+        self.finder.set_query(self._media, q)
         self._go(0)
 
     def _title_chosen(self, lib_id: int):

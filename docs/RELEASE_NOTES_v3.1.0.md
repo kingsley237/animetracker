@@ -18,6 +18,10 @@
     chains and TMDB collections, or put together by hand), best saga, best season, best finale, best
     episode, best fight, best opening/ending, best villain, best character, best studio, best
     soundtrack, best of a year, or your own — each with a winner, two runners-up and your reason.
+  - **Not in your library? Not a problem.** Every Hall picker searches online too: pick a film, show or
+    anime you've watched and Raikō adds it to Kinema / Miroku as watched, then carries on. The trilogy /
+    duology / saga picker searches any series or collection (e.g. *The Lord of the Rings*) and offers
+    to add the parts you've seen.
   - **Share card:** a PNG of your Pantheon, a Top 10, a tier list or your Honours (save or copy).
   - Detail panels show *★ #3 in your Miroku Hall* (or *Induct into Hall of Fame* for finished titles);
     rating a finished title 6/6 offers to induct it (once). Hall of Fame titles weigh most in *For you*.
@@ -38,5 +42,7 @@
   also suggests titles you don't have yet.
 
 ## Changed
+- **Show more** at the end of every Discover list (Miroku and Kinema, including search results) loads
+  the next page instead of stopping at the first few dozen.
 - Opening Raikō while it's already open (or clicking a notification) brings the open window forward
   instead of starting a second copy.

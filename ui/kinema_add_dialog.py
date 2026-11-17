@@ -42,6 +42,10 @@ def _cat(kind: str):
     return m
 
 
+def kind_key(kind: str) -> str:
+    return kind or "movie"
+
+
 def _in_library(db, kind: str, pid) -> Optional[Dict]:
     if kind == "anime":
         return db.get_anime_by_anilist_id(pid)
@@ -296,6 +300,9 @@ class MovieBrowser(QWidget):
         self._source = start_source
         self._cache: Dict[str, List[Dict]] = {}
         self._raw: List[Dict] = []
+        self._shown = 60               # tiles on screen; Show more reveals / fetches more
+        self._pages: Dict[str, int] = {}   # list key -> batches loaded
+        self._exhausted: set = set()
         self._build()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -390,10 +397,18 @@ class MovieBrowser(QWidget):
         self.grid = FlowLayout(self.grid_host, h_spacing=14, v_spacing=16)
         self.scroll.setWidget(self.grid_host)
         lv.addWidget(self.scroll, 1)
+        foot = QHBoxLayout()
         self.status = QLabel("")
         self.status.setObjectName("plannedReleaseHint")
         self.status.setWordWrap(True)
-        lv.addWidget(self.status)
+        foot.addWidget(self.status, 1)
+        self.more_btn = QPushButton("Show more")
+        self.more_btn.setObjectName("secondaryBtn")
+        self.more_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.more_btn.clicked.connect(self._more)
+        self.more_btn.hide()
+        foot.addWidget(self.more_btn)
+        lv.addLayout(foot)
         root.addWidget(left, 1)
 
         # preview pane
@@ -560,6 +575,7 @@ class MovieBrowser(QWidget):
             b.style().unpolish(b)
             b.style().polish(b)
         self.section.setText(dict(sources(kind)).get(key, "").upper())
+        self._shown = 60
         if ck in self._cache:
             self._show(self._cache[ck], self._next_token())
             return
@@ -597,6 +613,8 @@ class MovieBrowser(QWidget):
             b.style().unpolish(b)
             b.style().polish(b)
         self.section.setText(f"RESULTS FOR “{q.upper()}”")
+        self._shown = 60
+        self._pages.pop(f"search:{kind_key(self.kind)}:{q}", None)
         tok = self._next_token()
         kind = self.kind
         # 1) instant: the local catalogue understands partial words ("vin" → Vinland Saga)
@@ -673,13 +691,83 @@ class MovieBrowser(QWidget):
                                     .get(self.kind, "No movies found."))
             return
         self.status.setText("")
-        for h in hits[:60]:
+        for h in hits[:self._shown]:
             in_lib = bool(_in_library(self.db, h.get("media_type") or self.kind, h["provider_id"]))
             t = _PosterTile(h, in_lib)
             t.clicked.connect(self._select)
             t.set_selected(bool(self._selected) and self._selected.get("provider_id") == h["provider_id"])
             self.grid.addWidget(t)
             self._tiles.append(t)
+        self._update_more(len(hits))
+
+    # ── Show more ─────────────────────────────────────────────────────────────
+
+    def _list_key(self) -> str:
+        q = self.search.text().strip()
+        return f"search:{kind_key(self.kind)}:{q}" if q else f"{self.kind}:{self._source}"
+
+    def _update_more(self, n_hits: int):
+        key = self._list_key()
+        more_here = n_hits > self._shown
+        can_fetch = key not in self._exhausted
+        self.more_btn.setVisible(bool(n_hits) and (more_here or can_fetch))
+        self.more_btn.setEnabled(True)
+        self.more_btn.setText("Show more")
+
+    def _more(self):
+        """Reveal what's already loaded, else ask the source for its next page."""
+        apply = _cat(self.kind).apply
+        hits = apply(self._raw, self.genre.currentData() or 0, self.sort.currentData() or "default",
+                     "" if self.search.text() else self._source)
+        if len(hits) > self._shown:
+            self._shown += 60
+            pos = self.scroll.verticalScrollBar().value()
+            self._render()
+            QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(pos))
+            return
+        key = self._list_key()
+        page = self._pages.get(key, 1) + 1
+        q = self.search.text().strip()
+        kind, source = self.kind, self._source
+        self.more_btn.setEnabled(False)
+        self.more_btn.setText("Loading…")
+        tok = self._token
+
+        def work():
+            if q:
+                if kind == "anime":
+                    from core.api import search_anime
+                    from core.miroku_discover import _hits
+                    return _hits(search_anime(q, page=page, per_page=30) or [])
+                from core import tmdb
+                from core.kinema_discover import _hits
+                return _hits(tmdb.search(q, kind, page=page), kind)
+            return _cat(kind).load_source(source, self.db, kind=kind, page=page)
+
+        def done(new, t=tok, k=key, p=page):
+            if self._gone() or t != self._token:
+                return
+            seen = {h.get("provider_id") for h in self._raw}
+            fresh = [h for h in (new or []) if h.get("provider_id") not in seen]
+            self._pages[k] = p
+            if not fresh:
+                self._exhausted.add(k)
+                self.more_btn.hide()
+                self.status.setText("That's everything in this list.")
+                return
+            self._raw = self._raw + fresh
+            if not q:
+                self._cache[f"{kind}:{source}"] = self._raw
+            self._shown += 60
+            pos = self.scroll.verticalScrollBar().value()
+            self._render()
+            QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(pos))
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e: (not self._gone()) and (self.more_btn.setEnabled(True),
+                                                                  self.more_btn.setText("Show more")))
+        run_worker(w, PRIORITY_INTERACTIVE)
 
     # ── preview ───────────────────────────────────────────────────────────────
 

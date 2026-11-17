@@ -137,6 +137,9 @@ meantime, it doesn't understand movies).
 - [ ] Plaque: write why / moment / character, set tier, Re-rank, Pin, Remove; reopen → saved
 - [ ] Honours: starter set; choose winners for trilogy/duology (Look online for more), finale (episode), villain (character), opening (song), studio (name), best of a year; runners-up; Make it the winner; reason; rename / move / delete award; custom award
 - [ ] Share card: Pantheon / Top 10 / Tier list / Honours → Save PNG… and Copy image
+- [ ] Best trilogy: search "lord of the rings" → the 3 films appear → choose → "Add 3 to Kinema as watched" (or Just award it); the films then show in Kinema → Movies
+- [ ] Induct a title / any award picker: type a film you haven't added → "Not in Kinema yet?" results → Show more → pick → added to Kinema as watched → continues (ranking / award)
+- [ ] Discover (Miroku and Kinema, each list and a search): Show more at the bottom loads more; at the end it says "That's everything"
 - [ ] Detail panel: "★ #N in your … Hall" (menu) on Hall titles, "Induct into Hall of Fame" on finished ones, nothing on others
 - [ ] Rate a finished title 6/6 → offer to induct; "Not now" never asks again for it
 - [ ] Home: Pantheon strip beside the stats → opens the Hall

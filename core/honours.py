@@ -254,8 +254,9 @@ class Honours:
         return {"kind": "group", "lib_ids": ids, "label": group["name"],
                 "sub": f"{len(parts)} parts" + (f" · {seen} watched" if seen < len(parts) else ""),
                 "image": next((p.get("poster") for p in parts if p.get("poster")), ""),
-                "extra": {"parts": [{k: p.get(k) for k in ("lib_id", "title", "year", "poster", "watched")}
-                                    for p in parts]}}
+                "extra": {"media": group.get("media"),
+                          "parts": [{k: p.get(k) for k in ("lib_id", "title", "year", "poster", "watched",
+                                                           "tmdb_id", "anilist_id")} for p in parts]}}
 
     def studios(self) -> List[str]:
         names = {}
@@ -283,7 +284,8 @@ class Honours:
         y = row.get("season_year") or (row.get("start_date") or row.get("cinema_date") or "")[:4]
         return {"lib_id": row["id"], "title": self._title(row), "year": str(y or ""),
                 "poster": row.get("cover_url") or "", "watched": row.get("watch_status") == "completed",
-                "sort": (row.get("start_ts") or 0, str(y or ""))}
+                "sort": (row.get("start_ts") or 0, str(y or "")),
+                "tmdb_id": row.get("tmdb_id"), "anilist_id": row.get("anilist_id")}
 
     def groups(self, size: int = 0) -> List[Dict]:
         """Groups found from what's already known (no network). size 0 = any (2+)."""
@@ -356,6 +358,7 @@ class Honours:
                 else:
                     part = {"lib_id": None, "title": p.get("title") or "", "year": (p.get("release_date") or "")[:4],
                             "poster": p.get("poster") or "", "watched": False}
+                part["tmdb_id"] = p.get("id")
                 part["sort"] = (p.get("release_date") or "9999",)
                 parts.append(part)
             parts = [p for p in parts if p["year"] or p["lib_id"]]      # drop unannounced placeholders
@@ -364,6 +367,73 @@ class Honours:
             parts.sort(key=lambda p: p["sort"])
             out.append({"key": f"movie:{cid}", "name": c.get("name") or "Collection", "media": "movie",
                         "parts": parts, "source": "TMDB"})
+        return out
+
+    def search_groups(self, query: str) -> List[Dict]:
+        """Network: series and collections matching `query`, whether or not
+        they're in your library - TMDB collections (films) and AniList
+        sequel chains (anime)."""
+        q = (query or "").strip()
+        out: List[Dict] = []
+        if not q:
+            return out
+        try:
+            from core import tmdb
+            res = (tmdb.get("/search/collection", {"query": q}, ttl=3600) or {}).get("results") or []
+            by_tmdb = {r.get("tmdb_id"): r for r in self.db.get_all_anime(media_type="movie") if r.get("tmdb_id")}
+            for c in res[:6]:
+                full = tmdb.collection(c["id"]) or {}
+                parts = []
+                for p in sorted(full.get("parts") or [], key=lambda p: p.get("release_date") or "9999"):
+                    if not p.get("release_date"):
+                        continue                      # not even dated yet
+                    row = by_tmdb.get(p.get("id"))
+                    part = self._part(row) if row else {
+                        "lib_id": None, "title": p.get("title") or "", "year": (p.get("release_date") or "")[:4],
+                        "poster": tmdb.image_url(p.get("poster_path"), "w342") if p.get("poster_path") else "",
+                        "watched": False}
+                    part["tmdb_id"] = p.get("id")
+                    parts.append(part)
+                if len(parts) >= 2:
+                    out.append({"key": f"movie:{c['id']}", "name": full.get("name") or c.get("name") or "",
+                                "media": "movie", "parts": parts, "source": "TMDB"})
+        except Exception:
+            pass
+        try:
+            from core.api import get_sequels, search_anime
+            seen = set()
+            for m in (search_anime(q, per_page=6) or [])[:3]:
+                if m.get("id") in seen or (m.get("format") or "TV") not in ("TV", "TV_SHORT", "ONA", "MOVIE"):
+                    continue
+                chain = [m]
+                seen.add(m["id"])
+                for _ in range(8):
+                    nxt = (get_sequels([chain[-1]["id"]]).get(chain[-1]["id"]) or [])
+                    nxt = [n for n in nxt if n.get("id") not in seen]
+                    if not nxt:
+                        break
+                    chain.append(nxt[0])
+                    seen.add(nxt[0]["id"])
+                if len(chain) < 2:
+                    continue
+                parts = []
+                for n in chain:
+                    row = self.db.get_anime_by_anilist_id(n["id"])
+                    if row:
+                        part = self._part(row)
+                    else:
+                        t = n.get("title") or {}
+                        part = {"lib_id": None, "title": t.get("english") or t.get("romaji") or "",
+                                "year": str(n.get("seasonYear") or (n.get("startDate") or {}).get("year") or ""),
+                                "poster": (n.get("coverImage") or {}).get("large") or "", "watched": False}
+                    part["anilist_id"] = n["id"]
+                    parts.append(part)
+                name = parts[0]["title"]
+                name = re.split(r":| Season| Part| 2nd| \d", name)[0].strip() or name
+                out.append({"key": f"anime:al{chain[0]['id']}", "name": name, "media": "anime", "parts": parts,
+                            "source": "AniList"})
+        except Exception:
+            pass
         return out
 
     def refresh_groups(self, max_age_days: int = 7) -> bool:

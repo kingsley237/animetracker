@@ -930,14 +930,15 @@ class HallPage(QWidget):
         t.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         v.addWidget(t)
         n = len(self.hall.candidates(self.wing))
-        s = QLabel(f"{n} finished title{'s' if n != 1 else ''} can join. Pick one and Raikō will ask a few "
-                   "“which do you love more?” questions to find its place." if n else
-                   "Finish something you love and it can join.")
+        s = QLabel((f"{n} finished title{'s' if n != 1 else ''} in your library can join — or search for "
+                    "anything you've watched, even if it isn't in Raikō yet. " if n else
+                    "Search for anything you've watched — it's added to your library and joins the Hall. ")
+                   + "Raikō then asks a few “which do you love more?” questions to find its place.")
         s.setObjectName("homeDate")
         s.setWordWrap(True)
         s.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         v.addWidget(s)
-        if n:
+        if True:
             b = QPushButton("+  Induct a title")
             b.setObjectName("hallPrimary")
             b.setStyleSheet(f"QPushButton#hallPrimary{{background:{WING_COLORS[self.wing]};}}")

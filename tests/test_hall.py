@@ -235,3 +235,98 @@ def test_detail_panel_hall_button(qapp, db):
     h = Hall(db)
     h.decline_offer(a)
     assert h.offer_declined(a) and not h.offer_declined(w)
+
+
+# ── finding things that aren't in the library ─────────────────────────────────
+
+def _movie_hit(i, title):
+    return {"media_type": "movie", "provider_id": i, "title": title, "year": 2001, "poster_url": "",
+            "score": 80, "overview": "", "raw": {}}
+
+
+def test_search_groups_finds_collections_outside_library(db, monkeypatch):
+    from core import api, tmdb
+    from core.honours import Honours
+    mine = add_anime(db, "The Fellowship of the Ring", "completed", media_type="movie", tmdb_id=120)
+    monkeypatch.setattr(tmdb, "get", lambda path, params=None, **k:
+                        {"results": [{"id": 119, "name": "The Lord of the Rings Collection"}]}
+                        if path == "/search/collection" else None)
+    monkeypatch.setattr(tmdb, "collection", lambda cid: {"name": "The Lord of the Rings Collection", "parts": [
+        {"id": 122, "title": "The Return of the King", "release_date": "2003-12-01"},
+        {"id": 120, "title": "The Fellowship of the Ring", "release_date": "2001-12-18"},
+        {"id": 121, "title": "The Two Towers", "release_date": "2002-12-18"},
+        {"id": 999, "title": "Untitled", "release_date": ""}]})
+    monkeypatch.setattr(api, "search_anime", lambda q, page=1, per_page=10: [])
+    gs = Honours(db).search_groups("lord of the rings")
+    assert len(gs) == 1 and gs[0]["name"] == "The Lord of the Rings Collection"
+    parts = gs[0]["parts"]
+    assert [p["tmdb_id"] for p in parts] == [120, 121, 122]          # in release order, undated dropped
+    assert parts[0]["lib_id"] == mine and parts[1]["lib_id"] is None
+    e = Honours(db).group_entry(gs[0])
+    assert e["extra"]["parts"][1]["tmdb_id"] == 121
+
+
+def test_quick_add_movie_as_watched_then_induct(db, monkeypatch):
+    from core import providers
+    from core.hall import Hall
+    from core.quick_add import add_watched, in_library
+    monkeypatch.setattr(providers.get_provider("movie"), "details",
+                        lambda pid: {"media_type": "movie", "tmdb_id": pid, "romaji_title": "The Two Towers",
+                                     "english_title": "The Two Towers", "status": "FINISHED"})
+    lib_id = add_watched(db, _movie_hit(121, "The Two Towers"))
+    row = db.get_anime_by_id(lib_id)
+    assert row["media_type"] == "movie" and row["watch_status"] == "completed"
+    assert in_library(db, _movie_hit(121, "x"))["id"] == lib_id
+    assert add_watched(db, _movie_hit(121, "again")) == lib_id        # no duplicate
+    h = Hall(db)
+    assert h.eligible(row)
+    h.insert_at(lib_id, 1)
+    assert h.entries("movie")[0]["title"] == "The Two Towers"
+
+
+def test_online_finder_adds_and_emits(qapp, db, monkeypatch):
+    from tests.conftest import pump, wait_until
+    from PyQt6.QtWidgets import QMessageBox
+    from core import quick_add
+    from ui.hall_rank import OnlineFinder
+    monkeypatch.setattr(quick_add, "search", lambda kind, q, page=1:
+                        [_movie_hit(page * 10 + i, f"Film {page}-{i}") for i in range(3)])
+    monkeypatch.setattr(quick_add, "add_watched", lambda dbx, hit: 777)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    f = OnlineFinder(db)
+    got = []
+    f.added.connect(got.append)
+    f.set_query("movie", "f")
+    assert not f.hits                                  # one letter: just the hint
+    f.set_query("movie", "film")
+    assert wait_until(lambda: len(f.hits) == 3)
+    f._more()
+    assert wait_until(lambda: len(f.hits) == 6)        # Show more appends the next page
+    f._pick(4)
+    assert wait_until(lambda: got == [777])
+    f.deleteLater()
+    pump(20)
+
+
+def test_discover_show_more_loads_next_page(qapp, db, monkeypatch):
+    from tests.conftest import pump, wait_until
+    from core import kinema_discover as kd
+    from ui.kinema_add_dialog import MovieBrowser
+    calls = []
+
+    def load(source, db=None, kind="movie", page=1):
+        calls.append(page)
+        return [] if page > 2 else [_movie_hit(page * 100 + i, f"P{page} {i}") for i in range(20)]
+    monkeypatch.setattr(kd, "load_source", load)
+    monkeypatch.setattr(kd, "genres", lambda kind="movie": [])
+    b = MovieBrowser(db, kind="movie", start_source="trending")
+    b.show()
+    assert wait_until(lambda: len(b._tiles) == 20)
+    assert b.more_btn.isVisible()
+    b._more()
+    assert wait_until(lambda: len(b._tiles) == 40) and calls[-1] == 2
+    b._more()
+    assert wait_until(lambda: b.more_btn.isHidden()) and "everything" in b.status.text()
+    b.close()
+    b.deleteLater()
+    pump(50)
