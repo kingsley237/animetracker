@@ -26,7 +26,9 @@ each gets tested by you before shipping.
       as you type from (1) your library (partial titles), (2) a local catalogue of the most popular anime
       (a few thousand titles, refreshed weekly in the background), (3) AniList / TMDB results as they
       arrive; grouped in a dropdown (In your library · Anime · Movies · TV). Applies to Discover, Add and
-      Ctrl+K. Test: type "vin", "frie", "dex" → sensible suggestions immediately.
+      Ctrl+K. TMDB does answer partial words but ranks them poorly ("oppen" → Oppenheimer 3rd, "dex" →
+      Dexter 4th, "sev" → no Severance): re-rank by how well the title's start matches + popularity.
+      Test: type "vin", "frie", "dex", "sev", "oppen" in each Discover → the right title first, instantly.
 
 ## Proposed feature (own release, after hardening): notifications when Raikō is closed
 
@@ -36,3 +38,6 @@ each gets tested by you before shipping.
       notifications for anything new, then exits (~10–20 s). Nothing runs between checks (no tray icon).
       Missed checks run on wake. Clicking a notification opens that title. Never repeats an alert; respects
       Windows Focus / Do Not Disturb; skips if Raikō is already open. Turning it off removes the task.
+- [ ] Bonus while Raikō is open or minimized: a red count badge on its taskbar button for new episodes /
+      HD releases etc. (a badge can't exist on a closed app's icon in Windows — the notifications above
+      cover the closed case).
