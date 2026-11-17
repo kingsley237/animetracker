@@ -293,3 +293,28 @@ def test_trailer_playlist_switching(qapp, monkeypatch):
     dlg._step(-2)
     assert dlg._index == 2                        # wraps around
     dlg.done(0)
+
+
+def test_toasts_stack_inside_the_window(qapp):
+    """Toasts are painted inside the window (no separate OS window), stack
+    bottom-right without overlapping, cap at 3, and dismiss on click."""
+    from PyQt6.QtWidgets import QWidget
+    from tests.conftest import pump, wait_until
+    from ui.toast import Toast, _ToastManager
+    win = QWidget()
+    win.resize(900, 600)
+    win.show()
+    ts = [Toast.show(win, f"Toast {i}", kind=k, duration=60000)
+          for i, k in enumerate(("info", "error", "success", "warning"))]
+    pump(400)
+    live = [t for t in _ToastManager.get()._toasts if t.parentWidget() is win]
+    assert len(live) == 3 and ts[0] not in live                  # oldest dropped
+    assert all(not t.isWindow() for t in live)                    # child widgets, no OS frame
+    ys = [t.geometry().translated(0, 0) for t in live]
+    for a, b in zip(ys, ys[1:]):
+        assert a.bottom() - 14 < b.top() + 14                    # cards don't overlap (shadow margins aside)
+    assert all(win.rect().contains(t.geometry().adjusted(14, 14, -14, -14)) for t in live)
+    live[-1]._dismiss()
+    assert wait_until(lambda: len([t for t in _ToastManager.get()._toasts if t.parentWidget() is win]) == 2)
+    win.close()
+    pump(50)
