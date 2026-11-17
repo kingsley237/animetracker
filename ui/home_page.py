@@ -339,6 +339,7 @@ class _Rail(QScrollArea):
 
 class _MiniItem(QWidget, _Img):
     open = pyqtSignal(int)
+    picked = pyqtSignal(object)            # the item widget itself: the popover anchors to it
     PW, PH = 40, 58
 
     def __init__(self, item: Dict, parent=None):
@@ -360,7 +361,7 @@ class _MiniItem(QWidget, _Img):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self.open.emit(self.item["id"])
+            self.picked.emit(self)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -820,7 +821,7 @@ class HomePage(QWidget):
             if placed[id(col)] >= 5:
                 continue
             mi = _MiniItem(item)
-            mi.open.connect(self.open_title.emit)
+            mi.picked.connect(self._show_popover)
             col.add(mi)
             placed[id(col)] += 1
         for _d, c in cols + [(None, later)]:
@@ -981,6 +982,45 @@ class HomePage(QWidget):
             return p["watched"] / p["aired"] if p["aired"] else 0
         total = row.get("total_episodes") or 0
         return self.db.get_watched_count(row["id"]) / total if total else 0
+
+    # ── This week popover ─────────────────────────────────────────────────────
+
+    def _show_popover(self, mini):
+        from ui.home_popover import EpisodePopover
+        old = getattr(self, "_popover", None)
+        if old is not None:
+            from PyQt6 import sip
+            same = not sip.isdeleted(old) and old.item is mini.item
+            if not sip.isdeleted(old):
+                old.close_popover()
+            if same:
+                return                                  # clicking the same entry again closes it
+        pop = EpisodePopover(mini.item, self.db, self)
+        pop.open_details.connect(self.open_title.emit)
+        pop.play_trailer.connect(self.play_trailer.emit)
+        pop.closed.connect(lambda: setattr(self, "_popover", None))
+        self._popover = pop
+        pop.show_at(mini)
+        if not getattr(self, "_pop_filter", False):
+            self.scroll.viewport().installEventFilter(self)
+            self.installEventFilter(self)
+            self._pop_filter = True
+
+    def eventFilter(self, obj, ev):
+        """Close the popover on scroll or a click outside it."""
+        from PyQt6.QtCore import QEvent
+        pop = getattr(self, "_popover", None)
+        if pop is not None:
+            t = ev.type()
+            if t == QEvent.Type.Wheel:
+                pop.close_popover()
+            elif t == QEvent.Type.MouseButtonPress:
+                gp = ev.globalPosition().toPoint()
+                if not pop.geometry().contains(self.mapFromGlobal(gp)):
+                    # let a click on another entry reopen it there
+                    QTimer.singleShot(0, lambda p=pop: p.isVisible() and p.close_popover()
+                                      if getattr(self, "_popover", None) is p else None)
+        return False
 
     def _mark(self, item: Dict):
         from core import up_next as un

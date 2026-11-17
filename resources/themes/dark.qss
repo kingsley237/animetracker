@@ -1999,3 +1999,24 @@ QPushButton#spotArrow {
     border-radius: 18px; font-size: 18px; font-weight: 700; padding: 0 0 3px 0;
 }
 QPushButton#spotArrow:hover { background: rgba(255,255,255,0.16); }
+
+/* ── This week popover ───────────────────────────────────────────────────── */
+QPushButton#popClose {
+    background: rgba(8,9,14,0.7); color: #c7cbe0; border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 13px; font-size: 11px; padding: 0;
+}
+QPushButton#popClose:hover { color: #ffffff; background: rgba(255,255,255,0.12); }
+QLabel#popTitle { color: #f4f5fa; font-size: 17px; font-weight: 800; background: transparent; }
+QLabel#popHeadline { font-size: 13px; font-weight: 700; background: transparent; }
+QLabel#popCountdown { color: #e8eaf2; font-size: 22px; font-weight: 800; background: transparent; }
+QLabel#popFactKey { color: #6b7391; font-size: 9px; font-weight: 800; letter-spacing: 1.2px; background: transparent; }
+QLabel#popFactValue { color: #dfe2ee; font-size: 12px; background: transparent; }
+QLabel#popBlurb { color: #9da5c0; font-size: 12px; background: transparent; }
+QPushButton#popPrimary {
+    border: none; border-radius: 10px; padding: 9px 18px; font-size: 12px; font-weight: 800;
+}
+QPushButton#popSecondary {
+    background: rgba(255,255,255,0.08); color: #f0f1f6; border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 10px; padding: 9px 16px; font-size: 12px; font-weight: 700;
+}
+QPushButton#popSecondary:hover { background: rgba(255,255,255,0.16); }
