@@ -492,6 +492,66 @@ class _PosterCard(QWidget, _Img):
         p.end()
 
 
+class _SuggestRow(QWidget, _Img):
+    """A title you don't have yet: opens its Discover preview to add it."""
+    open = pyqtSignal(dict)
+
+    def __init__(self, hit: Dict, parent=None):
+        super().__init__(parent)
+        self.hit = hit
+        self._hover = False
+        self.setFixedHeight(64)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._load_img(hit.get("poster_url") or "")
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.open.emit(self.hit)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        tag, color = LIB[self.hit["media_type"]]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 14 if self._hover else 6))
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 10, 10)
+        pr = QRectF(10, 6, 36, 52)
+        path = QPainterPath()
+        path.addRoundedRect(pr, 5, 5)
+        p.save()
+        p.setClipPath(path)
+        self._draw_cover(p, pr)
+        p.restore()
+        f = QFont(self.font())
+        f.setPointSizeF(10)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#eef0f7"))
+        p.drawText(QRectF(58, 12, self.width() - 260, 20), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(self.hit.get("title") or "", Qt.TextElideMode.ElideRight,
+                                              self.width() - 260))
+        f.setPointSizeF(8)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        year = self.hit.get("year")
+        p.drawText(QRectF(58, 34, 320, 16), Qt.AlignmentFlag.AlignLeft, tag + (f"  ·  {year}" if year else ""))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        p.drawText(QRectF(self.width() - 190, 0, 176, self.height()),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "Preview & add  →")
+        p.end()
+
+
 class _SearchRow(QWidget, _Img):
     open = pyqtSignal(int)
 
@@ -960,11 +1020,22 @@ class HomePage(QWidget):
                 self.res_lay.addWidget(sr)
         if not rows:
             self.res_lay.addWidget(self._muted(f"Nothing called “{q}” in your library yet."))
+        # suggestions you don't have yet (local catalogue: instant, partial words work)
+        sugg = self.suggest(self.db, q)
+        if sugg:
+            h = QLabel(f"Not in your library yet   {len(sugg)}")
+            h.setObjectName("homeSection")
+            self.res_lay.addSpacing(10)
+            self.res_lay.addWidget(h)
+            for hit in sugg:
+                sr = _SuggestRow(hit)
+                sr.open.connect(self.open_pick.emit)
+                self.res_lay.addWidget(sr)
         host = QWidget()
         online = QHBoxLayout(host)
         online.setContentsMargins(0, 14, 0, 0)
         online.setSpacing(8)
-        for text, where in (("Find anime on AniList", "anime"), ("Find movies & shows on TMDB", "kinema")):
+        for text, where in (("Find anime on AniList", "anime"), ("Find movies && shows on TMDB", "kinema")):
             b = QPushButton(text + "  →")
             b.setObjectName("secondaryBtn")
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -993,6 +1064,20 @@ class HomePage(QWidget):
                                           for k in ("english_title", "romaji_title")),
                                  (r.get("english_title") or r.get("romaji_title") or "").lower()))
         return rows
+
+    @staticmethod
+    def suggest(db, q: str, limit: int = 8) -> List[Dict]:
+        """Popular titles matching what's typed that aren't in your library."""
+        from core import catalog
+        out = []
+        for kind in ("anime", "tv", "movie"):
+            for h in catalog.search(kind, q, limit=6):
+                pid = h.get("provider_id")
+                mine = (db.get_anime_by_anilist_id(pid) if kind == "anime"
+                        else db.get_title_by_tmdb(kind, pid))
+                if not mine:
+                    out.append(dict(h, media_type=kind))
+        return catalog.rank(out, q)[:limit]
 
     def _open_first(self):
         if self._last_results:

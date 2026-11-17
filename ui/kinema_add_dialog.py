@@ -350,7 +350,7 @@ class MovieBrowser(QWidget):
         self.search = QLineEdit()
         self.search.setObjectName("searchBar")
         self.search.setFixedHeight(40)
-        self.search.textChanged.connect(lambda _t: self._timer.start(350))
+        self.search.textChanged.connect(lambda _t: self._timer.start(220))
         lv.addWidget(self.search)
 
         # list chips
@@ -597,26 +597,43 @@ class MovieBrowser(QWidget):
             b.style().unpolish(b)
             b.style().polish(b)
         self.section.setText(f"RESULTS FOR “{q.upper()}”")
-        self._show_loading(f"Searching for “{q}”…")
         tok = self._next_token()
         kind = self.kind
+        # 1) instant: the local catalogue understands partial words ("vin" → Vinland Saga)
+        from core import catalog
+        local = catalog.search(kind, q)
+        if local:
+            self._raw = local
+            self._render()
+            self.status.setText("Searching online for more…")
+        else:
+            self._show_loading(f"Searching for “{q}”…")
 
+        # 2) online results, merged and ranked by how well the title starts with what you typed
         def work():
             from core.providers import get_provider
             if kind == "anime":
                 from core.miroku_discover import _hits
                 from core.api import search_anime
-                return _hits(search_anime(q, per_page=30) or [])
-            hits = get_provider(kind).search(q)
-            for h in hits:
-                raw = h.get("raw") or {}
-                h["release_date"] = raw.get("release_date") or raw.get("first_air_date") or ""
-                h["popularity"] = raw.get("popularity") or 0
-                h["genre_ids"] = raw.get("genre_ids") or []
-            return hits
+                online = _hits(search_anime(q, per_page=30) or [])
+            else:
+                online = get_provider(kind).search(q)
+                for h in online:
+                    raw = h.get("raw") or {}
+                    h["release_date"] = raw.get("release_date") or raw.get("first_air_date") or ""
+                    h["popularity"] = raw.get("popularity") or 0
+                    h["genre_ids"] = raw.get("genre_ids") or []
+            return catalog.rank(catalog.merge(local, online), q)
+
+        def done(hits, t=tok):
+            if self._gone() or t != self._token:
+                return
+            self.status.setText("")
+            self._show(hits, t)
 
         w = Worker(work)
-        w.signals.result.connect(lambda hits, t=tok: self._show(hits, t))
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e, t=tok: done(local, t))
         run_worker(w, PRIORITY_INTERACTIVE)
 
     def _show_loading(self, text: str):

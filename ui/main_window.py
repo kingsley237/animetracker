@@ -1796,6 +1796,12 @@ class MainWindow(QMainWindow):
         self._meta_timer.start(3 * 3600 * 1000)
         QTimer.singleShot(12000, self._sync_metadata)
 
+        # Search catalogue (popular titles, for partial-word search): weekly, in the background
+        QTimer.singleShot(45000, self._refresh_catalog)
+        self._catalog_timer = QTimer(self)
+        self._catalog_timer.timeout.connect(self._refresh_catalog)
+        self._catalog_timer.start(12 * 3600 * 1000)
+
         # Data Doctor: quick health check shortly after start, then every 6h
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._health_check)
@@ -2030,6 +2036,10 @@ class MainWindow(QMainWindow):
     def _after_doctor_fix(self):
         self._load_library()
         self._update_stats_strip()
+
+    def _refresh_catalog(self):
+        from core import catalog
+        run_worker(Worker(catalog.refresh_stale))
 
     def _health_check(self):
         """Quick, offline scan; problems that need you raise ONE alert with
