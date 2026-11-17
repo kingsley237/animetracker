@@ -128,6 +128,20 @@ meantime, it doesn't understand movies).
 - [ ] On "ship it": version 3.0.0 → merge to main → tag v3.0.0 → build (tests must pass) → Raiko-v3.0.0-Windows.zip
       → GitHub release with docs/RELEASE_NOTES_v3.0.0.md → installs to Programs\Raiko + "Raikō" Desktop shortcut.
 
+## 3.1.0 — Hall of Fame & This week popover (built 2026-11-17, awaiting your test) 🧪
+- [ ] Hall of Fame (sidebar ★): your 10 old rankings are there in order with their S/A tiers
+- [ ] + Induct a title → pick → "Which do you love more?": click / ← →, Too close, Skip, Undo, result screen; Undo there takes it back
+- [ ] List view: drag a row → order and ▲▼ update; Tiers view: drag a poster to another tier; Rename tiers…
+- [ ] Showcase, Timeline, Numbers look right for Miroku / Movies / TV shows
+- [ ] Pantheon: auto-filled with each wing's #1; empty slot → pick; right-click → change slot / unpin
+- [ ] Plaque: write why / moment / character, set tier, Re-rank, Pin, Remove; reopen → saved
+- [ ] Honours: starter set; choose winners for trilogy/duology (Look online for more), finale (episode), villain (character), opening (song), studio (name), best of a year; runners-up; Make it the winner; reason; rename / move / delete award; custom award
+- [ ] Share card: Pantheon / Top 10 / Tier list / Honours → Save PNG… and Copy image
+- [ ] Detail panel: "★ #N in your … Hall" (menu) on Hall titles, "Induct into Hall of Fame" on finished ones, nothing on others
+- [ ] Rate a finished title 6/6 → offer to induct; "Not now" never asks again for it
+- [ ] Home: Pantheon strip beside the stats → opens the Hall
+- [ ] Home → This week: click an anime / TV / movie entry → popover beside it (flips near the right edge); Open details, Trailer; Esc / click outside / scroll / same entry closes it
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).
