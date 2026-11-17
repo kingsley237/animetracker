@@ -258,6 +258,70 @@ class Honours:
                           "parts": [{k: p.get(k) for k in ("lib_id", "title", "year", "poster", "watched",
                                                            "tmdb_id", "anilist_id")} for p in parts]}}
 
+    def character_page(self, lib_id: int, page: int = 1, order: str = "loved"):
+        """Network: one page of a title's cast -> (characters, has_more).
+        Anime pages hold 25 AniList characters; TMDB returns the whole cast
+        at once (in billing order). order: 'loved' = most-favourited first
+        (big villains and fan favourites surface on page 1), 'role' = main
+        characters first."""
+        row = self.db.get_anime_by_id(lib_id) or {}
+        media = row.get("media_type") or "anime"
+        out: List[Dict] = []
+        if media == "anime" and row.get("anilist_id"):
+            from core.api import _post
+            sort = "[ROLE, FAVOURITES_DESC]" if order == "role" else "[FAVOURITES_DESC]"
+            gql = """query ($id: Int, $page: Int) { Media(id: $id, type: ANIME) {
+                characters(page: $page, perPage: 25, sort: SORT) {
+                    pageInfo { hasNextPage }
+                    edges { role node { name { full } image { large } } } } } }""".replace("SORT", sort)
+            data = _post(gql, {"id": int(row["anilist_id"]), "page": int(page)}, timeout=15)
+            if data is None:
+                raise RuntimeError("AniList unreachable")
+            ch = ((data or {}).get("Media") or {}).get("characters") or {}
+            for e in ch.get("edges") or []:
+                n = e.get("node") or {}
+                name = (n.get("name") or {}).get("full")
+                if name:
+                    out.append({"name": name, "role": (e.get("role") or "").title(),
+                                "image": (n.get("image") or {}).get("large") or ""})
+            return out, bool((ch.get("pageInfo") or {}).get("hasNextPage"))
+        if media in ("movie", "tv") and row.get("tmdb_id") and page == 1:
+            from core import tmdb
+            path = f"/movie/{int(row['tmdb_id'])}/credits" if media == "movie" \
+                else f"/tv/{int(row['tmdb_id'])}/aggregate_credits"
+            data = tmdb.get(path, ttl=7 * 86400)
+            if data is None:
+                raise RuntimeError("TMDB unreachable")
+            for c in data.get("cast") or []:
+                if media == "tv":
+                    roles = c.get("roles") or []
+                    role = (roles[0].get("character") if roles else "") or ""
+                else:
+                    role = c.get("character") or ""
+                out.append({"name": c.get("name") or "", "role": role.strip(),
+                            "image": tmdb.image_url(c.get("profile_path"), "w185") if c.get("profile_path") else ""})
+        return out, False
+
+    def all_characters(self, lib_id: int, max_pages: int = 12) -> List[Dict]:
+        """Network: the WHOLE cast of a title (the library keeps only the top
+        few), as {name, role, image}."""
+        out: List[Dict] = []
+        for page in range(1, max_pages + 1):
+            try:
+                chars, more = self.character_page(lib_id, page)
+            except RuntimeError:
+                break
+            out += chars
+            if not more:
+                break
+        seen, uniq = set(), []
+        for c in out:
+            k = (c["name"], c.get("role"))
+            if k not in seen:
+                seen.add(k)
+                uniq.append(c)
+        return uniq
+
     def studios(self) -> List[str]:
         names = {}
         for media in ("anime", "movie", "tv"):

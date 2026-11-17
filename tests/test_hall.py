@@ -330,3 +330,64 @@ def test_discover_show_more_loads_next_page(qapp, db, monkeypatch):
     b.close()
     b.deleteLater()
     pump(50)
+
+
+def test_full_cast_for_character_awards(qapp, db, monkeypatch):
+    from tests.conftest import pump, wait_until
+    from core import api, tmdb
+    from core.honours import Honours
+    from ui.hall_honours import _CharPicker
+
+    def post(q, v, timeout=10, retries=3):
+        page = v["page"]
+        edges = [{"role": "BACKGROUND", "node": {"name": {"full": f"C{page}-{i}"}, "image": {"large": ""}}}
+                 for i in range(25)]
+        return {"Media": {"characters": {"pageInfo": {"hasNextPage": page < 3}, "edges": edges}}}
+    monkeypatch.setattr(api, "_post", post)
+    a = add_anime(db, "Big Cast", "completed", anilist_id=5,
+                  characters=[{"name": "C1-0", "role": "Background", "image": ""}])
+    h = Honours(db)
+    assert len(h.all_characters(a)) == 75                       # every page, not just the top few
+    monkeypatch.setattr(tmdb, "get", lambda path, params=None, **k: {"cast": [
+        {"name": "Actor", "roles": [{"character": "The Villain"}], "profile_path": None}]}
+        if "aggregate_credits" in path else None)
+    t = add_anime(db, "Show", "completed", media_type="tv", tmdb_id=9)
+    assert h.all_characters(t) == [{"name": "Actor", "role": "The Villain", "image": ""}]
+    p = _CharPicker(h, a, "anime", db.get_anime_by_id(a)["characters"])
+    assert wait_until(lambda: len(p.chars) == 75)
+    assert not p.more.isHidden()                                # 48 shown, Show more for the rest
+    p._more()
+    assert p.more.isHidden()
+    p.filter.setText("c2-1")
+    assert len(p._matches()) == 11                              # C2-1, C2-10..C2-19
+    p.deleteLater()
+    pump(20)
+
+
+def test_character_order_and_role_filter(qapp, db, monkeypatch):
+    from tests.conftest import pump, wait_until
+    from core import api
+    from core.honours import Honours
+    from ui.hall_honours import _CharPicker
+    sorts = []
+
+    def post(q, v, timeout=10, retries=3):
+        sorts.append(q.split("sort:")[1].split(")")[0].strip())
+        edges = [{"role": r, "node": {"name": {"full": n}, "image": {"large": ""}}}
+                 for n, r in (("Aizen", "SUPPORTING"), ("Ichigo", "MAIN"), ("Extra", "BACKGROUND"))]
+        return {"Media": {"characters": {"pageInfo": {"hasNextPage": False}, "edges": edges}}}
+    monkeypatch.setattr(api, "_post", post)
+    a = add_anime(db, "Bleach", "completed", anilist_id=269)
+    h = Honours(db)
+    assert [c["name"] for c in h.character_page(a, 1)[0]] == ["Aizen", "Ichigo", "Extra"]
+    assert sorts[-1] == "[FAVOURITES_DESC]"                       # villains etc.: most-loved first
+    h.character_page(a, 1, order="role")
+    assert sorts[-1] == "[ROLE, FAVOURITES_DESC]"                 # protagonist: main characters first
+    p = _CharPicker(h, a, "anime", [])
+    assert wait_until(lambda: len(p.chars) == 3)
+    p._set_role("Main")
+    assert [c["name"] for c in p._matches()] == ["Ichigo"]
+    p._set_role("")
+    assert len(p._matches()) == 3
+    p.deleteLater()
+    pump(20)

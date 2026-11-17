@@ -22,6 +22,8 @@
     anime you've watched and Raikō adds it to Kinema / Miroku as watched, then carries on. The trilogy /
     duology / saga picker searches any series or collection (e.g. *The Lord of the Rings*) and offers
     to add the parts you've seen.
+  - **Character awards use the full cast** (every AniList character, the whole TMDB cast) — most-loved
+    first, so the big villains and fan favourites are on top; filter by name or by Main / Supporting.
   - **Share card:** a PNG of your Pantheon, a Top 10, a tier list or your Honours (save or copy).
   - Detail panels show *★ #3 in your Miroku Hall* (or *Induct into Hall of Fame* for finished titles);
     rating a finished title 6/6 offers to induct it (once). Hall of Fame titles weigh most in *For you*.

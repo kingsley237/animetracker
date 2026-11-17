@@ -139,6 +139,7 @@ meantime, it doesn't understand movies).
 - [ ] Share card: Pantheon / Top 10 / Tier list / Honours → Save PNG… and Copy image
 - [ ] Best trilogy: search "lord of the rings" → the 3 films appear → choose → "Add 3 to Kinema as watched" (or Just award it); the films then show in Kinema → Movies
 - [ ] Induct a title / any award picker: type a film you haven't added → "Not in Kinema yet?" results → Show more → pick → added to Kinema as watched → continues (ranking / award)
+- [ ] Best villain / character / protagonist: the FULL cast loads page by page (anime: most-loved first, protagonist: main first; Main / Supporting / Background chips; movies & TV: billing order); filter box, Show more, "Someone else…"
 - [ ] Discover (Miroku and Kinema, each list and a search): Show more at the bottom loads more; at the end it says "That's everything"
 - [ ] Detail panel: "★ #N in your … Hall" (menu) on Hall titles, "Induct into Hall of Fame" on finished ones, nothing on others
 - [ ] Rate a finished title 6/6 → offer to induct; "Not now" never asks again for it

@@ -450,6 +450,13 @@ class PickDialog(QDialog):
     def _go(self, i: int):
         self.pages.setCurrentIndex(i)
         self.back.setVisible(i == 1)
+        for k in range(self.top.count()):
+            w = self.top.itemAt(k).widget()
+            if w is not None and self.award["kind"] != "group":
+                w.setVisible(i == 0)
+        if i == 0 and self.award["kind"] != "group":
+            for m, b in getattr(self, "_tabs", {}).items():
+                b.setVisible(True)
 
     def _set_page(self, i: int, w: QWidget):
         old = self.pages.widget(i)
@@ -853,19 +860,10 @@ class PickDialog(QDialog):
                          for n in range(int(total), 0, -1)]
             return self._list_step(f"Which episode of {_title(row)}?", items)
         if kind == "character":
-            chars = row.get("characters") or []
-            if not chars:
-                name, ok = QInputDialog.getText(self, "Character", f"Character from {_title(row)}:")
-                if ok and name.strip():
-                    self._finish(self.h.character_entry(lib_id, {"name": name.strip()}))
-                return
-            inner = QWidget()
-            flow = FlowLayout(inner, 14, 14)
-            for ch in chars:
-                b = _CharTile(ch, media)
-                b.chosen.connect(lambda ch: self._finish(self.h.character_entry(lib_id, ch)))
-                flow.addWidget(b)
-            self._set_page(1, self._scroll(inner))
+            picker = _CharPicker(self.h, lib_id, media, row.get("characters") or [],
+                                 order="role" if self.award.get("key") == "protagonist" else "loved")
+            picker.chosen.connect(lambda ch: self._finish(self.h.character_entry(lib_id, ch)))
+            self._set_page(1, picker)
             self.heading.setText(f"Who from {_title(row)}?")
             return self._go(1)
         if kind == "theme":
@@ -884,6 +882,154 @@ class PickDialog(QDialog):
         self._set_page(1, lst)
         self.heading.setText(heading)
         self._go(1)
+
+
+class _CharPicker(QWidget):
+    """Every character of a title: the few the library knows show at once,
+    then the full cast arrives from AniList / TMDB. Filter, Show more, or
+    type a name."""
+    chosen = pyqtSignal(dict)
+    STEP = 48
+
+    def __init__(self, h: Honours, lib_id: int, media: str, known: List[Dict], parent=None,
+                 order: str = "loved"):
+        super().__init__(parent)
+        self.h, self.lib_id, self.media, self.order = h, lib_id, media, order
+        self.chars: List[Dict] = list(known)
+        self.shown = self.STEP
+        self.role = ""                     # '' = everyone, else Main / Supporting / Background
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        bar = QHBoxLayout()
+        self.filter = QLineEdit()
+        self.filter.setObjectName("homeSearch")
+        self.filter.setPlaceholderText("Filter by character or actor")
+        self.filter.setFixedHeight(36)
+        self.filter.textChanged.connect(lambda _t: self._reset())
+        bar.addWidget(self.filter, 1)
+        other = QPushButton("Someone else…")
+        other.setObjectName("hallGhost")
+        other.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        other.clicked.connect(self._type_name)
+        bar.addWidget(other)
+        lay.addLayout(bar)
+        self.role_btns: Dict[str, QPushButton] = {}
+        if media == "anime":
+            chips = QHBoxLayout()
+            chips.setSpacing(6)
+            for key, label in (("", "Everyone"), ("Main", "Main"), ("Supporting", "Supporting"),
+                               ("Background", "Background")):
+                b = QPushButton(label)
+                b.setObjectName("hallSeg")
+                b.setCheckable(True)
+                b.setChecked(key == "")
+                b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                b.clicked.connect(lambda _=False, k=key: self._set_role(k))
+                self.role_btns[key] = b
+                chips.addWidget(b)
+            chips.addStretch()
+            lay.addLayout(chips)
+        self.status = QLabel("Loading the full cast…")
+        self.status.setObjectName("hallAskSub")
+        lay.addWidget(self.status)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        lay.addWidget(self.scroll, 1)
+        self.more = QPushButton("Show more")
+        self.more.setObjectName("hallGhost")
+        self.more.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.more.clicked.connect(self._more)
+        lay.addWidget(self.more, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._render()
+        self._online: List[Dict] = []
+        self._fetch(1)
+
+    def _fetch(self, page: int):
+        path = self.h.db.db_path
+        lib_id = self.lib_id
+
+        order = self.order
+
+        def job():
+            from core.database import DatabaseManager
+            return Honours(DatabaseManager(path)).character_page(lib_id, page, order)
+
+        w = Worker(job)
+        w.signals.result.connect(lambda res, p=page: self._got(p, *res))
+        w.signals.error.connect(lambda _e, p=page: self._got(p, None, False))
+        run_worker(w)
+
+    def _got(self, page: int, chars, more: bool):
+        """A page of the cast arrived: show it right away, keep loading."""
+        from PyQt6 import sip
+        if sip.isdeleted(self):
+            return
+        if chars is None and not self._online:
+            self.status.setText("Couldn't load the full cast — showing what Raikō already knows."
+                                if self.chars else "No cast found — use “Someone else…” to type a name.")
+            return
+        self._online += chars or []
+        have = {(c.get("name"), c.get("role")) for c in self._online}
+        known = [c for c in self.chars if (c.get("name"), c.get("role")) not in have and c not in self._online]
+        self.chars = self._online + known
+        loading = bool(more) and page < 20
+        how = ("main characters first" if self.order == "role" else "most-loved first") \
+            if self.media == "anime" else "in billing order"
+        self.status.setText(f"{len(self.chars)} characters, {how}" + (" — loading more…" if loading else ""))
+        pos = self.scroll.verticalScrollBar().value()
+        self._render()
+        QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(pos))
+        if loading:
+            self._fetch(page + 1)
+
+    def _set_role(self, key: str):
+        self.role = key
+        for k, b in self.role_btns.items():
+            b.setChecked(k == key)
+        self._reset()
+
+    def _matches(self) -> List[Dict]:
+        q = self.filter.text().strip().lower()
+        out = self.chars
+        if self.role:
+            out = [c for c in out if (c.get("role") or "").lower() == self.role.lower()]
+        if q:
+            out = [c for c in out if q in (c.get("name") or "").lower() or q in (c.get("role") or "").lower()]
+        return out
+
+    def _reset(self):
+        self.shown = self.STEP
+        self._render()
+
+    def _more(self):
+        self.shown += self.STEP
+        pos = self.scroll.verticalScrollBar().value()
+        self._render()
+        QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(pos))
+
+    def _render(self):
+        items = self._matches()
+        inner = QWidget()
+        flow = FlowLayout(inner, 14, 14)
+        for ch in items[:self.shown]:
+            b = _CharTile(ch, self.media)
+            b.chosen.connect(self.chosen.emit)
+            flow.addWidget(b)
+        if not items and self.filter.text().strip():
+            v = QLabel(f"No one called “{self.filter.text().strip()}” — use “Someone else…” to type it.")
+            v.setObjectName("homeEmpty")
+            flow.addWidget(v)
+        self.scroll.setWidget(inner)
+        left = len(items) - self.shown
+        self.more.setVisible(left > 0)
+        self.more.setText(f"Show more ({left})")
+
+    def _type_name(self):
+        name, ok = QInputDialog.getText(self, "Character", "Character's name:", text=self.filter.text().strip())
+        if ok and name.strip():
+            self.chosen.emit({"name": name.strip(), "role": ""})
 
 
 class _CharTile(QWidget):
