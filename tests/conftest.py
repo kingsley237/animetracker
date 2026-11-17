@@ -56,6 +56,16 @@ def isolated_settings(monkeypatch, tmp_path):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_catalog(monkeypatch, tmp_path):
+    """The search catalogue lives in a throwaway folder too."""
+    import core.catalog as cat
+    monkeypatch.setattr(cat, "DIR", tmp_path / "catalog")
+    cat._mem.clear()
+    cat._index.clear()
+    yield
+
+
 # ── Database ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture

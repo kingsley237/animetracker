@@ -190,12 +190,15 @@ def test_tour_scrolls_target_into_view(qapp, db, monkeypatch):
         monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
     _library(db, monkeypatch)
     win = MainWindow(db)
-    win.setGeometry(0, 0, 1200, 700)
+    win.setGeometry(0, 0, 900, 520)        # short window: Home has to scroll
     win.show()
     win._navigate("home")
     home = win._home_page
     bar = home.scroll.verticalScrollBar()
-    assert wait_until(lambda: bool(home.hero.slides) and bar.maximum() > 0)
+    assert wait_until(lambda: bool(home.hero.slides))
+    # a long Home (lots on this week): taller than the window, so it scrolls
+    home.scroll.widget().setMinimumHeight(home.scroll.viewport().height() + 700)
+    assert wait_until(lambda: bar.maximum() > 0)
     bar.setValue(bar.maximum())                 # user scrolled down, then replays the tour
     assert bar.value() > 0
     tour = ob.OnboardingOverlay(win, win.centralWidget())
@@ -211,3 +214,35 @@ def test_tour_scrolls_target_into_view(qapp, db, monkeypatch):
     pump(50)
     import core.anilist_auth as auth
     auth._auth_instance = None
+
+
+def test_this_week_popover_per_library(qapp, db, monkeypatch):
+    """Clicking a This week entry opens a popover beside it (not the library)."""
+    import time as _t
+    from ui.home_page import HomePage, _MiniItem
+    from ui.home_popover import EpisodePopover
+    _library(db, monkeypatch)                       # anime airing in 2-3 days, TV ep in 5 days
+    page = HomePage(db)
+    page.resize(1400, 1100)
+    page.show()
+    opened = []
+    page.open_title.connect(opened.append)
+    page.load()
+    assert wait_until(lambda: len(page.findChildren(_MiniItem)) >= 2)
+    minis = page.findChildren(_MiniItem)
+    tv = next(m for m in minis if m.item["media"] == "tv")
+    page._show_popover(tv)
+    pop = page._popover
+    assert isinstance(pop, EpisodePopover) and pop.isVisible() and opened == []
+    assert pop.headline.text().startswith("S01E03")
+    assert page.rect().contains(pop.geometry().adjusted(18, 18, -18, -18))   # inside Home
+    anime = next(m for m in minis if m.item["media"] == "anime")
+    page._show_popover(anime)                       # another entry: replaces it
+    pump(50)
+    assert page._popover is not pop and page._popover.headline.text().startswith("Episode")
+    assert page._popover.countdown.text().startswith("In ")
+    page._popover.open_details.emit(anime.item["id"])
+    assert opened == [anime.item["id"]]
+    page._show_popover(anime)                       # same entry again: closes
+    pump(50)
+    page.close()

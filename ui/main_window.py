@@ -30,7 +30,7 @@ from ui.update_banner import UpdateBanner
 # Raikō: one sidebar, a section per library. Each library keeps its own
 # tools under its own name.
 NAV_SECTIONS = [
-    ("", [("Home", "⌂", "home")]),
+    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall")]),
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
@@ -199,12 +199,13 @@ class MainWindow(QMainWindow):
         self._discover_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(7):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home
+        for _ in range(8):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
         self._kinema_discover = None
         self._home_page = None
+        self._hall_page = None
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -222,6 +223,7 @@ class MainWindow(QMainWindow):
 
         from ui.detail_panel import DetailPanel
         self.detail_panel = DetailPanel(self.db, self._content_host)
+        self.detail_panel.hall_changed.connect(self._on_hall_changed)
         self.detail_panel.setFixedWidth(390)
         self.detail_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.detail_panel.setStyleSheet(
@@ -781,11 +783,23 @@ class MainWindow(QMainWindow):
                 page.search_online.connect(self._search_online)
                 page.open_pick.connect(self._open_pick)
                 page.play_trailer.connect(self._play_trailer)
+                page.open_hall.connect(lambda: self._navigate("hall"))
                 self._home_page = page
                 self.stack.removeWidget(self.stack.widget(7))
                 self.stack.insertWidget(7, page)
             self.stack.setCurrentIndex(7)
             self._home_page.load()
+        elif page_id == "hall":
+            if self._hall_page is None:
+                from ui.hall_page import HallPage
+                page = HallPage(self.db, self)
+                page.open_title.connect(self._open_title)
+                page.changed.connect(self._on_hall_changed)
+                self._hall_page = page
+                self.stack.removeWidget(self.stack.widget(8))
+                self.stack.insertWidget(8, page)
+            self.stack.setCurrentIndex(8)
+            self._hall_page.load()
         elif page_id == "kinema_discover":
             if self._kinema_discover is None:
                 from ui.kinema_add_dialog import MovieBrowser
@@ -1458,6 +1472,23 @@ class MainWindow(QMainWindow):
             # No banner — show solid color placeholder
             self.detail_panel.clear_banner()
 
+    def handle_external(self, message: str):
+        """From a second launch or a clicked Windows notification."""
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if message.startswith("open:"):
+            try:
+                lib_id = int(message.split(":", 1)[1])
+            except ValueError:
+                return
+            if lib_id > 0 and self.db.get_anime_by_id(lib_id):
+                self._open_title(lib_id)
+            else:
+                self._navigate("home")
+
     def _open_search(self):
         """Ctrl+K: one search across anime, shows and movies."""
         if self.current_page != "home":
@@ -1501,6 +1532,13 @@ class MainWindow(QMainWindow):
         if row and card is not None:
             card.update_data(row)
         self._update_stats_strip()
+
+    def _on_hall_changed(self):
+        """The Hall changed: refresh what shows Hall of Fame state elsewhere."""
+        if self._home_page is not None:
+            self._home_page.refresh_pantheon()
+        if self._hall_page is not None and self.current_page == "hall" and self.sender() is not self._hall_page:
+            self._hall_page.load()
 
     def _open_title(self, anime_id: int):
         anime = self.db.get_anime_by_id(anime_id)
@@ -1796,6 +1834,22 @@ class MainWindow(QMainWindow):
         self._meta_timer.start(3 * 3600 * 1000)
         QTimer.singleShot(12000, self._sync_metadata)
 
+        # Search catalogue (popular titles, for partial-word search): weekly, in the background
+        QTimer.singleShot(45000, self._refresh_catalog)
+        self._catalog_timer = QTimer(self)
+        self._catalog_timer.timeout.connect(self._refresh_catalog)
+        self._catalog_timer.start(12 * 3600 * 1000)
+
+        # Closed-app notifications: keep the scheduled check pointing at this Raikō
+        QTimer.singleShot(20000, lambda: run_worker(Worker(
+            __import__("core.background_check", fromlist=["x"]).refresh_registration)))
+
+        # Taskbar badge: unread alerts, kept fresh
+        self._badge_timer = QTimer(self)
+        self._badge_timer.timeout.connect(self._update_badge)
+        self._badge_timer.start(60 * 1000)
+        QTimer.singleShot(3000, self._update_badge)
+
         # Data Doctor: quick health check shortly after start, then every 6h
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._health_check)
@@ -1985,6 +2039,7 @@ class MainWindow(QMainWindow):
         run_worker(worker)
 
     def _on_notifications_ready(self, notifications):
+        QTimer.singleShot(0, self._update_badge)
         if notifications:
             self.notification_banner.show_notifications(notifications)
         else:
@@ -2030,6 +2085,10 @@ class MainWindow(QMainWindow):
     def _after_doctor_fix(self):
         self._load_library()
         self._update_stats_strip()
+
+    def _refresh_catalog(self):
+        from core import catalog
+        run_worker(Worker(catalog.refresh_stale))
 
     def _health_check(self):
         """Quick, offline scan; problems that need you raise ONE alert with
@@ -2087,7 +2146,56 @@ class MainWindow(QMainWindow):
             if self.detail_panel.isVisible():
                 self.notification_banner.pause_for_detail()
 
+    # ── taskbar badge ─────────────────────────────────────────────────────────
+
+    def _unread_count(self) -> int:
+        from core.background_check import OS_KINDS
+        return sum(len(self.db.get_active_notifications(k)) for k in OS_KINDS)
+
+    def _update_badge(self):
+        """Red count on Raikō's taskbar button while it's open (Windows shows
+        the window icon there). Clears when nothing new is waiting."""
+        from PyQt6 import sip
+        if sip.isdeleted(self):
+            return
+        n = self._unread_count()
+        if n == getattr(self, "_badge_n", None):
+            return
+        self._badge_n = n
+        base = getattr(self, "_base_icon", None)
+        if base is None:
+            base = self._base_icon = self.windowIcon()
+        if not n:
+            self.setWindowIcon(base)
+            return
+        from PyQt6.QtGui import QIcon, QPainter, QPixmap, QColor, QFont
+        from PyQt6.QtCore import QRectF
+        icon = QIcon()
+        for size in (16, 24, 32, 48, 64, 256):
+            px = base.pixmap(size, size)
+            if px.isNull():
+                px = QPixmap(size, size)
+                px.fill(QColor("#11131c"))
+            p = QPainter(px)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            d = size * 0.58
+            r = QRectF(size - d, 0, d, d)
+            p.setPen(QColor("#0b0d12"))
+            p.setBrush(QColor("#ef4444"))
+            p.drawEllipse(r)
+            if size >= 24:
+                f = QFont("Segoe UI")
+                f.setBold(True)
+                f.setPixelSize(max(7, int(d * (0.62 if n < 10 else 0.5))))
+                p.setFont(f)
+                p.setPen(QColor("#ffffff"))
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, str(n) if n < 100 else "99+")
+            p.end()
+            icon.addPixmap(px)
+        self.setWindowIcon(icon)
+
     def _dismiss_notification(self, notification_id: int):
+        QTimer.singleShot(200, self._update_badge)
         self.db.dismiss_notification(notification_id)
 
     # ── Metadata sync ──────────────────────────────────────────────────────────

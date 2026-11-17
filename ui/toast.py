@@ -1,139 +1,243 @@
 """
-Miroku — Toast Notification System
+Raikō — toasts: short confirmations ("Episode 7 marked watched").
 
-Toasts stack vertically bottom-right, newest at bottom.
-Max 3 visible — oldest auto-dismissed when limit exceeded.
+A solid card, painted in one piece (no see-through gaps): dark surface,
+hairline border, soft shadow, a filled round icon in the kind's colour,
+the message, and a thin countdown line along the bottom that pauses while
+the pointer is over it. Click the card or ✕ to dismiss. Toasts stack
+bottom-right inside the window (just above the status bar), newest at the
+bottom, at most 3.
+
+API (unchanged): Toast.show(parent, message, kind="info"|"success"|"warning"|"error", duration=ms)
 """
 from __future__ import annotations
-from typing import ClassVar
-from PyQt6.QtWidgets import QLabel, QWidget, QHBoxLayout
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 
-_KIND_STYLES: dict[str, tuple[str, str, str, str]] = {
-    "success": ("✓", "#34d399", "#0a1f15", "#1a5c3a"),
-    "error":   ("✕", "#f87171", "#1f0a0a", "#7f1d1d"),
-    "warning": ("⚠", "#fbbf24", "#1f1500", "#92400e"),
-    "info":    ("ℹ", "#a594f9", "#11102a", "#2a2550"),
+from typing import ClassVar
+
+from PyQt6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QPropertyAnimation, QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QWidget
+
+# kind -> (glyph, accent)
+_KINDS: dict[str, tuple[str, str]] = {
+    "success": ("✓", "#34d399"),
+    "error":   ("✕", "#f87171"),
+    "warning": ("!", "#fbbf24"),
+    "info":    ("i", "#8b7bff"),
 }
 _DEFAULT_DURATION_MS: int = 3500
-_MARGIN:              int = 20
-_SPACING:             int = 8
-_MAX_TOASTS:          int = 3
+_MARGIN:   int = 22          # from the window's edge
+_BOTTOM:   int = 34          # clears the status bar
+_SPACING:  int = 10
+_MAX_TOASTS: int = 3
+_SHADOW:   int = 14          # painted shadow around the card
+_MAX_W:    int = 420
+_SURFACE = QColor("#161925")
+_BORDER = QColor(255, 255, 255, 22)
+_TEXT = "#eef0f7"
+
+
+class _Follow(QObject):
+    """Re-stack when the window is resized."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Resize:
+            _ToastManager.get()._reposition_all(animate=False)
+        return False
 
 
 class _ToastManager:
-    """
-    Process-global singleton — owns all live toasts, manages stacking.
-    Toasts stack upward from bottom-right of the parent window.
-    """
-    _instance: ClassVar[_ToastManager | None] = None
-    _toasts:   ClassVar[list[Toast]]          = []
+    """Process-global: owns live toasts and stacks them."""
+    _instance: ClassVar["_ToastManager | None"] = None
+    _toasts: ClassVar[list["Toast"]] = []
 
     @classmethod
-    def get(cls) -> _ToastManager:
+    def get(cls) -> "_ToastManager":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def _prune(self) -> None:
-        """Drop toasts whose window was closed before they faded out
-        (they were destroyed with it and can't be touched any more)."""
+        """Drop toasts whose window closed before they faded out."""
         from PyQt6 import sip
         self._toasts[:] = [t for t in self._toasts if not sip.isdeleted(t)]
 
-    def add(self, toast: Toast) -> None:
+    def add(self, toast: "Toast") -> None:
         self._prune()
         if len(self._toasts) >= _MAX_TOASTS:
             self._toasts[0]._dismiss_immediate()
         self._toasts.append(toast)
         self._reposition_all()
 
-    def remove(self, toast: Toast) -> None:
+    def remove(self, toast: "Toast") -> None:
         if toast in self._toasts:
             self._toasts.remove(toast)
         self._reposition_all()
 
-    def _reposition_all(self) -> None:
+    def target(self, toast: "Toast") -> QPoint:
+        """Where `toast` belongs in its window's stack (window coordinates)."""
         self._prune()
-        for i, t in enumerate(self._toasts):
-            p = t.parent()
-            if p is None:
-                continue
-            global_br = p.mapToGlobal(QPoint(p.width(), p.height()))
-            # Each toast stacks upward; i=0 oldest (top), last = newest (bottom)
-            above_height = sum(
-                self._toasts[j].height() + _SPACING
-                for j in range(i + 1, len(self._toasts))
-            )
-            t.move(
-                global_br.x() - _MARGIN - t.width(),
-                global_br.y() - _MARGIN - t.height() - above_height,
-            )
+        p = toast.parentWidget()
+        if p is None or toast not in self._toasts:
+            return toast.pos()
+        same = [t for t in self._toasts if t.parentWidget() is p]
+        i = same.index(toast)
+        below = sum(same[j].height() - 2 * _SHADOW + _SPACING for j in range(i + 1, len(same)))
+        return QPoint(p.width() - _MARGIN - toast.width() + _SHADOW,
+                      p.height() - _BOTTOM - toast.height() + _SHADOW - below)
+
+    def _reposition_all(self, animate: bool = True) -> None:
+        self._prune()
+        for t in self._toasts:
+            if animate:
+                t.glide_to(self.target(t))
+            else:
+                t.move(self.target(t))
+
+
+class _Badge(QWidget):
+    """Filled round icon in the kind's colour."""
+
+    def __init__(self, glyph: str, color: str, parent=None):
+        super().__init__(parent)
+        self.glyph, self.color = glyph, QColor(color)
+        self.setFixedSize(26, 26)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        glow = QColor(self.color)
+        glow.setAlpha(46)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(QRectF(0, 0, 26, 26))
+        p.setBrush(self.color)
+        p.drawEllipse(QRectF(3, 3, 20, 20))
+        f = QFont(self.font())
+        f.setBold(True)
+        f.setPixelSize(12 if self.glyph != "i" else 13)
+        p.setFont(f)
+        p.setPen(QColor("#0b0d12"))
+        p.drawText(QRectF(3, 3, 20, 20), Qt.AlignmentFlag.AlignCenter, self.glyph)
+        p.end()
 
 
 class Toast(QWidget):
-    """Auto-dismissing toast, managed by _ToastManager for stacking."""
+    """Auto-dismissing toast, stacked by _ToastManager."""
 
     def __init__(self, parent: QWidget, message: str,
                  kind: str = "info", duration: int = _DEFAULT_DURATION_MS):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.Tool |
-            Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        host = parent.window() if parent is not None else None
+        super().__init__(host)        # drawn inside the window: no OS frame, moves with it
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        if host is not None and not getattr(host, "_toast_follow", None):
+            host._toast_follow = _Follow(host)
+            host.installEventFilter(host._toast_follow)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        glyph, self.accent = _KINDS.get(kind, _KINDS["info"])
+        self.kind = kind
+        self.duration = max(800, int(duration))
+        self._left = float(self.duration)        # ms remaining (pauses on hover)
+        self._hover = False
+        self._closing = False
 
-        icon_ch, fg, bg, border = _KIND_STYLES.get(kind, _KIND_STYLES["info"])
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 18, 10)
-        layout.setSpacing(8)
-
-        icon_lbl = QLabel(icon_ch)
-        icon_lbl.setStyleSheet(
-            f"font-size:14px;color:{fg};background:transparent;font-weight:700;"
-        )
-        layout.addWidget(icon_lbl)
-
-        msg_lbl = QLabel(message)
-        msg_lbl.setStyleSheet(
-            f"font-size:12px;color:{fg};background:transparent;font-weight:500;"
-        )
-        msg_lbl.setWordWrap(False)
-        layout.addWidget(msg_lbl)
-
-        self.setStyleSheet(
-            f"QWidget{{background:{bg};"
-            f"border-radius:10px;}}"
-        )
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(_SHADOW + 14, _SHADOW + 12, _SHADOW + 10, _SHADOW + 14)
+        lay.setSpacing(12)
+        lay.addWidget(_Badge(glyph, self.accent), alignment=Qt.AlignmentFlag.AlignTop)
+        self.msg = QLabel(message)
+        self.msg.setObjectName("toastText")
+        f = QFont(self.font())
+        f.setPixelSize(13)
+        f.setWeight(QFont.Weight.DemiBold)
+        self.msg.setFont(f)
+        self.msg.setStyleSheet(f"color:{_TEXT};background:transparent;")
+        self.msg.setWordWrap(True)
+        from PyQt6.QtGui import QFontMetrics
+        one_line = QFontMetrics(f).horizontalAdvance(message) + 12
+        self.msg.setFixedWidth(min(one_line, _MAX_W - 26 - 12 - 24 - 28))
+        lay.addWidget(self.msg, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.close_btn = QLabel("✕")
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.close_btn.setStyleSheet("color:#6b7391;background:transparent;font-size:11px;")
+        lay.addWidget(self.close_btn, alignment=Qt.AlignmentFlag.AlignTop)
         self.adjustSize()
 
-        _ToastManager.get().add(self)
+        mgr = _ToastManager.get()
+        mgr.add(self)
+        end = mgr.target(self)
+        self.move(end + QPoint(0, 14))
+        self._fx = QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(0.0)
+        self.setGraphicsEffect(self._fx)
+        QWidget.show(self)          # explicit: not the static Toast.show()
+        self.raise_()
+        self._in = QPropertyAnimation(self._fx, b"opacity", self)
+        self._in.setDuration(200)
+        self._in.setStartValue(0.0)
+        self._in.setEndValue(1.0)
+        self._in.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._in.start()
+        self.glide_to(end, 260)
 
-        self.setWindowOpacity(0.0)
-        QWidget.show(self)   # explicit — avoids resolving to Toast.show() static method
-        self._in_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._in_anim.setDuration(180)
-        self._in_anim.setStartValue(0.0)
-        self._in_anim.setEndValue(1.0)
-        self._in_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._in_anim.start()
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._tick = QTimer(self)
+        self._tick.timeout.connect(self._step)
+        self._tick.start(30)
 
-        QTimer.singleShot(duration, self._dismiss)
+    # ── life cycle ───────────────────────────────────────────────────────────
+
+    def glide_to(self, pos: QPoint, ms: int = 180) -> None:
+        if pos == self.pos():
+            return
+        self._slide = QPropertyAnimation(self, b"pos", self)
+        self._slide.setDuration(ms)
+        self._slide.setStartValue(self.pos())
+        self._slide.setEndValue(pos)
+        self._slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._slide.start()
+
+    def _step(self) -> None:
+        dt = self._clock.restart()
+        if not self._hover and not self._closing:
+            self._left -= dt
+            if self._left <= 0:
+                self._left = 0
+                self._dismiss()
+        self.update()
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.close_btn.setStyleSheet("color:#e8eaf2;background:transparent;font-size:11px;")
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.close_btn.setStyleSheet("color:#6b7391;background:transparent;font-size:11px;")
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._dismiss()
 
     def _dismiss(self) -> None:
-        self._out_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._out_anim.setDuration(300)
-        self._out_anim.setStartValue(1.0)
-        self._out_anim.setEndValue(0.0)
-        self._out_anim.setEasingCurve(QEasingCurve.Type.InCubic)
-        self._out_anim.finished.connect(self._on_dismissed)
-        self._out_anim.start()
+        if self._closing:
+            return
+        self._closing = True
+        self._tick.stop()
+        self._out = QPropertyAnimation(self._fx, b"opacity", self)
+        self._out.setDuration(220)
+        self._out.setStartValue(self._fx.opacity())
+        self._out.setEndValue(0.0)
+        self._out.setEasingCurve(QEasingCurve.Type.InCubic)
+        self._out.finished.connect(self._on_dismissed)
+        self._out.start()
+        self.glide_to(self.pos() + QPoint(0, 8), 220)
 
     def _dismiss_immediate(self) -> None:
+        self._closing = True
         _ToastManager.get().remove(self)
         self.close()
 
@@ -141,14 +245,43 @@ class Toast(QWidget):
         _ToastManager.get().remove(self)
         self.close()
 
+    # ── look ─────────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        card = QRectF(self.rect()).adjusted(_SHADOW, _SHADOW, -_SHADOW, -_SHADOW)
+        # soft shadow: stacked translucent rounded rects
+        for i in range(_SHADOW, 0, -2):
+            a = int(34 * (1 - i / _SHADOW) ** 2) + 2
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, a))
+            p.drawRoundedRect(card.adjusted(-i, -i + 3, i, i + 3), 14 + i, 14 + i)
+        path = QPainterPath()
+        path.addRoundedRect(card, 14, 14)
+        p.fillPath(path, QColor("#1b1f2d") if self._hover else _SURFACE)
+        p.setPen(QPen(_BORDER, 1))
+        p.drawPath(path)
+        # countdown line along the bottom, clipped to the card
+        frac = self._left / self.duration if self.duration else 0
+        p.save()
+        p.setClipPath(path)
+        track = QRectF(card.left(), card.bottom() - 3, card.width(), 3)
+        p.fillRect(track, QColor(255, 255, 255, 10))
+        c = QColor(self.accent)
+        c.setAlpha(150 if self._hover else 230)
+        p.fillRect(QRectF(track.left(), track.top(), track.width() * frac, 3), c)
+        p.restore()
+        p.end()
+
+    # ── API ──────────────────────────────────────────────────────────────────
+
     @staticmethod
-    def show(parent: QWidget, message: str,
-             kind: str = "info",
+    def show(parent: QWidget, message: str, kind: str = "info",
              duration: int = _DEFAULT_DURATION_MS) -> "Toast":
         return Toast(parent, message, kind, duration)
 
     @staticmethod
-    def popup(parent: QWidget, message: str,
-              kind: str = "info",
+    def popup(parent: QWidget, message: str, kind: str = "info",
               duration: int = _DEFAULT_DURATION_MS) -> "Toast":
         return Toast(parent, message, kind, duration)

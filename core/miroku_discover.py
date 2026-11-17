@@ -82,9 +82,10 @@ def _clean(txt: str) -> str:
     return re.sub(r"<[^>]+>", "", txt).replace("\n\n", "\n").strip()
 
 
-def _page(args: str, variables: Dict, pages: int = 2) -> List[Dict]:
+def _page(args: str, variables: Dict, pages: int = 2, batch: int = 1) -> List[Dict]:
     out = []
-    for p in range(1, pages + 1):
+    first = (batch - 1) * pages + 1
+    for p in range(first, first + pages):
         gql = f"""query ($page: Int{variables.get('_decl', '')}) {{
             Page(page: $page, perPage: 40) {{
                 media(type: ANIME, isAdult: false, format_in: {_FORMATS}, {args}) {{ {_FIELDS} }}
@@ -95,23 +96,25 @@ def _page(args: str, variables: Dict, pages: int = 2) -> List[Dict]:
     return out
 
 
-def load_source(source: str, db=None, kind: str = "anime") -> List[Dict]:
+def load_source(source: str, db=None, kind: str = "anime", page: int = 1) -> List[Dict]:
+    """`page` is a batch number: 2 loads the next batch of the same list."""
+    b = max(1, int(page))
     if source == "for_you":
-        return recommend(db) if db is not None else []
+        return recommend(db, limit=36 * b) if db is not None else []
     if source == "season":
         s, y = get_current_season()
         media = _page("season: $season, seasonYear: $year, sort: [POPULARITY_DESC]",
-                      {"season": s, "year": y, "_decl": ", $season: MediaSeason, $year: Int"})
+                      {"season": s, "year": y, "_decl": ", $season: MediaSeason, $year: Int"}, batch=b)
     elif source == "next":
         s, y = get_next_season()
         media = _page("season: $season, seasonYear: $year, sort: [POPULARITY_DESC]",
-                      {"season": s, "year": y, "_decl": ", $season: MediaSeason, $year: Int"})
+                      {"season": s, "year": y, "_decl": ", $season: MediaSeason, $year: Int"}, batch=b)
     elif source == "trending":
-        media = _page("sort: [TRENDING_DESC]", {})
+        media = _page("sort: [TRENDING_DESC]", {}, batch=b)
     elif source == "top_rated":
-        media = _page("sort: [SCORE_DESC], popularity_greater: 20000", {})
+        media = _page("sort: [SCORE_DESC], popularity_greater: 20000", {}, batch=b)
     elif source == "popular":
-        media = _page("sort: [POPULARITY_DESC]", {})
+        media = _page("sort: [POPULARITY_DESC]", {}, batch=b)
     else:
         media = []
     return _hits(media)
@@ -150,8 +153,13 @@ def recommend(db, limit: int = 36) -> List[Dict]:
     except Exception:
         pass
     seeds = []
+    from core.hall import boosts
+    hof = boosts(db)
     for r in rows:
         if not r.get("anilist_id"):
+            continue
+        if r["id"] in hof:
+            seeds.append((hof[r["id"]], r))
             continue
         ws = r.get("watch_status")
         if ws == "completed":

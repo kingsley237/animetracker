@@ -82,7 +82,8 @@ def coming_up(db, days: int = 14, now: Optional[float] = None) -> List[Dict]:
             if at and now < at <= end and (r.get("status") or "").upper() not in ("FINISHED", "CANCELLED"):
                 n = (r.get("next_episode_num") or 1) + (r.get("episode_offset") or 0)
                 out.append({"id": r["id"], "media": "anime", "title": _name(r), "row": r, "when": at,
-                            "label": "Premiere" if n == 1 else f"Episode {n}", "exact": True})
+                            "label": "Premiere" if n == 1 else f"Episode {n}", "exact": True,
+                            "episode": r.get("next_episode_num"), "display_ep": n})
             elif ws == "planned" and r.get("start_exact") and r.get("start_ts") and now < r["start_ts"] <= end \
                     and not at:
                 out.append({"id": r["id"], "media": "anime", "title": _name(r), "row": r,
@@ -96,16 +97,18 @@ def coming_up(db, days: int = 14, now: Optional[float] = None) -> List[Dict]:
                 label = (f"Season {up['season_number']} premiere" if up["episode_number"] == 1
                          else f"S{up['season_number']:02d}E{up['episode_number']:02d}")
                 out.append({"id": r["id"], "media": "tv", "title": _name(r), "row": r, "when": ts,
-                            "label": label, "exact": False})
+                            "label": label, "exact": False, "season": up["season_number"],
+                            "episode": up["episode_number"], "ep_name": up.get("name") or "",
+                            "still": up.get("still_url") or "", "runtime": up.get("runtime")})
     from core.kinema_sync import release_state
     for r in db.get_all_anime(watch_status="planned", media_type="movie"):
         rs = release_state(r, int(now))
         if rs["digital_ts"] and now - DAY < rs["digital_ts"] <= now + 30 * DAY:
             out.append({"id": r["id"], "media": "movie", "title": _name(r), "row": r,
-                        "when": rs["digital_ts"], "label": "Out in HD", "exact": False})
+                        "when": rs["digital_ts"], "label": "Out in HD", "exact": False, "rs": rs})
         elif rs["state"] == "unreleased" and rs["cinema_ts"] and now - DAY < rs["cinema_ts"] <= end:
             out.append({"id": r["id"], "media": "movie", "title": _name(r), "row": r,
-                        "when": rs["cinema_ts"], "label": "In cinemas", "exact": False})
+                        "when": rs["cinema_ts"], "label": "In cinemas", "exact": False, "rs": rs})
     out.sort(key=lambda x: x["when"])
     return out
 

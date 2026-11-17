@@ -339,6 +339,7 @@ class _Rail(QScrollArea):
 
 class _MiniItem(QWidget, _Img):
     open = pyqtSignal(int)
+    picked = pyqtSignal(object)            # the item widget itself: the popover anchors to it
     PW, PH = 40, 58
 
     def __init__(self, item: Dict, parent=None):
@@ -360,7 +361,7 @@ class _MiniItem(QWidget, _Img):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self.open.emit(self.item["id"])
+            self.picked.emit(self)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -492,6 +493,66 @@ class _PosterCard(QWidget, _Img):
         p.end()
 
 
+class _SuggestRow(QWidget, _Img):
+    """A title you don't have yet: opens its Discover preview to add it."""
+    open = pyqtSignal(dict)
+
+    def __init__(self, hit: Dict, parent=None):
+        super().__init__(parent)
+        self.hit = hit
+        self._hover = False
+        self.setFixedHeight(64)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._load_img(hit.get("poster_url") or "")
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.open.emit(self.hit)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        tag, color = LIB[self.hit["media_type"]]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 14 if self._hover else 6))
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 10, 10)
+        pr = QRectF(10, 6, 36, 52)
+        path = QPainterPath()
+        path.addRoundedRect(pr, 5, 5)
+        p.save()
+        p.setClipPath(path)
+        self._draw_cover(p, pr)
+        p.restore()
+        f = QFont(self.font())
+        f.setPointSizeF(10)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#eef0f7"))
+        p.drawText(QRectF(58, 12, self.width() - 260, 20), Qt.AlignmentFlag.AlignLeft,
+                   p.fontMetrics().elidedText(self.hit.get("title") or "", Qt.TextElideMode.ElideRight,
+                                              self.width() - 260))
+        f.setPointSizeF(8)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        year = self.hit.get("year")
+        p.drawText(QRectF(58, 34, 320, 16), Qt.AlignmentFlag.AlignLeft, tag + (f"  ·  {year}" if year else ""))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        p.drawText(QRectF(self.width() - 190, 0, 176, self.height()),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "Preview & add  →")
+        p.end()
+
+
 class _SearchRow(QWidget, _Img):
     open = pyqtSignal(int)
 
@@ -560,12 +621,100 @@ class _SearchRow(QWidget, _Img):
 
 # ── page ──────────────────────────────────────────────────────────────────────
 
+class _PantheonStrip(QWidget):
+    """Your four Pantheon picks, small, beside the stats. Click: the Hall."""
+    open_hall = pyqtSignal()
+    PW, PH = 40, 60
+
+    def __init__(self, entries: List[Dict], parent=None):
+        super().__init__(parent)
+        self.entries = entries
+        self.pix: Dict[str, QPixmap] = {}
+        self._hover = False
+        self.setFixedSize(16 + 4 * (self.PW + 8) + 88, self.PH + 16)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip("Your Pantheon — open the Hall of Fame")
+        for e in entries:
+            u = (e or {}).get("row", {}).get("cover_url") if e else None
+            if u:
+                w = ImageWorker(u, u)
+                w.signals.result.connect(self._on_img)
+                run_worker(w)
+
+    def _on_img(self, res):
+        try:
+            k, _s, path = res
+            if path:
+                self.pix[k] = QPixmap(str(path))
+                self.update()
+        except RuntimeError:
+            pass
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.open_hall.emit()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        box = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QColor("#f5c451") if self._hover else QColor("#23273a"))
+        p.setBrush(QColor("#12141d"))
+        p.drawRoundedRect(box, 12, 12)
+        f = QFont(self.font())
+        f.setBold(True)
+        f.setPixelSize(9)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        p.setFont(f)
+        p.setPen(QColor("#f5c451"))
+        p.drawText(QRectF(14, 12, 80, 14), Qt.AlignmentFlag.AlignLeft, "★ YOUR")
+        p.drawText(QRectF(14, 26, 80, 14), Qt.AlignmentFlag.AlignLeft, "PANTHEON")
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
+        f.setPixelSize(11)
+        p.setFont(f)
+        p.setPen(QColor("#7f87a3"))
+        p.drawText(QRectF(14, 44, 80, 16), Qt.AlignmentFlag.AlignLeft, "Hall of Fame →")
+        x = 96
+        for e in self.entries:
+            r = QRectF(x, 8, self.PW, self.PH)
+            path = QPainterPath()
+            path.addRoundedRect(r, 6, 6)
+            u = (e or {}).get("row", {}).get("cover_url") if e else None
+            pm = self.pix.get(u) if u else None
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            if pm and not pm.isNull():
+                p.save()
+                p.setClipPath(path)
+                sc = pm.scaled(self.PW, self.PH, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+                p.drawPixmap(int(r.x()), int(r.y()), sc, (sc.width() - self.PW) // 2, 0, self.PW, self.PH)
+                p.restore()
+                p.setPen(QColor(245, 196, 81, 150))
+                p.drawPath(path)
+            else:
+                p.setPen(QPen(QColor("#2e3348"), 1, Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawPath(path)
+            x += self.PW + 8
+        p.end()
+
+
 class HomePage(QWidget):
     open_title = pyqtSignal(int)
     changed = pyqtSignal(int)
     search_online = pyqtSignal(str, str)
     open_pick = pyqtSignal(dict)           # a recommendation -> its Discover preview
     play_trailer = pyqtSignal(str, str, str)
+    open_hall = pyqtSignal()
     _PICKS: Dict = {"at": 0, "hits": []}   # shared cache: picks are slow (network)
 
     def __init__(self, db, parent=None):
@@ -736,6 +885,8 @@ class HomePage(QWidget):
                                 (len(ready), "movies in HD", "#fbbf24")):
             self.stats.addWidget(_Stat(str(v), label, color))
         self.stats.addStretch()
+        self._pantheon_strip = None
+        self.refresh_pantheon()
 
         # this week: 7 day columns + Later
         self._clear(self.week)
@@ -760,7 +911,7 @@ class HomePage(QWidget):
             if placed[id(col)] >= 5:
                 continue
             mi = _MiniItem(item)
-            mi.open.connect(self.open_title.emit)
+            mi.picked.connect(self._show_popover)
             col.add(mi)
             placed[id(col)] += 1
         for _d, c in cols + [(None, later)]:
@@ -922,6 +1073,68 @@ class HomePage(QWidget):
         total = row.get("total_episodes") or 0
         return self.db.get_watched_count(row["id"]) / total if total else 0
 
+    # ── This week popover ─────────────────────────────────────────────────────
+
+    def _show_popover(self, mini):
+        from ui.home_popover import EpisodePopover
+        old = getattr(self, "_popover", None)
+        if old is not None:
+            from PyQt6 import sip
+            same = not sip.isdeleted(old) and old.item is mini.item
+            if not sip.isdeleted(old):
+                old.close_popover()
+            if same:
+                return                                  # clicking the same entry again closes it
+        pop = EpisodePopover(mini.item, self.db, self)
+        pop.open_details.connect(self.open_title.emit)
+        pop.play_trailer.connect(self.play_trailer.emit)
+        pop.closed.connect(lambda: setattr(self, "_popover", None))
+        self._popover = pop
+        pop.show_at(mini)
+        if not getattr(self, "_pop_filter", False):
+            self.scroll.viewport().installEventFilter(self)
+            self.installEventFilter(self)
+            self._pop_filter = True
+
+    def eventFilter(self, obj, ev):
+        """Close the popover on scroll or a click outside it."""
+        from PyQt6.QtCore import QEvent
+        pop = getattr(self, "_popover", None)
+        if pop is not None:
+            t = ev.type()
+            if t == QEvent.Type.Wheel:
+                pop.close_popover()
+            elif t == QEvent.Type.MouseButtonPress:
+                gp = ev.globalPosition().toPoint()
+                if not pop.geometry().contains(self.mapFromGlobal(gp)):
+                    # let a click on another entry reopen it there
+                    QTimer.singleShot(0, lambda p=pop: p.isVisible() and p.close_popover()
+                                      if getattr(self, "_popover", None) is p else None)
+        return False
+
+    def refresh_pantheon(self):
+        """The Pantheon strip at the end of the stats row (hidden when empty)."""
+        old = getattr(self, "_pantheon_strip", None)
+        if old is not None:
+            try:
+                old.deleteLater()
+            except RuntimeError:
+                pass
+            self._pantheon_strip = None
+        try:
+            from core.hall import Hall
+            h = Hall(self.db)
+            h.auto_pantheon()
+            slots = h.pantheon()
+        except Exception:
+            return
+        if not any(slots):
+            return
+        strip = _PantheonStrip(slots)
+        strip.open_hall.connect(self.open_hall.emit)
+        self.stats.addWidget(strip)
+        self._pantheon_strip = strip
+
     def _mark(self, item: Dict):
         from core import up_next as un
         un.mark_next(self.db, item)
@@ -960,11 +1173,22 @@ class HomePage(QWidget):
                 self.res_lay.addWidget(sr)
         if not rows:
             self.res_lay.addWidget(self._muted(f"Nothing called “{q}” in your library yet."))
+        # suggestions you don't have yet (local catalogue: instant, partial words work)
+        sugg = self.suggest(self.db, q)
+        if sugg:
+            h = QLabel(f"Not in your library yet   {len(sugg)}")
+            h.setObjectName("homeSection")
+            self.res_lay.addSpacing(10)
+            self.res_lay.addWidget(h)
+            for hit in sugg:
+                sr = _SuggestRow(hit)
+                sr.open.connect(self.open_pick.emit)
+                self.res_lay.addWidget(sr)
         host = QWidget()
         online = QHBoxLayout(host)
         online.setContentsMargins(0, 14, 0, 0)
         online.setSpacing(8)
-        for text, where in (("Find anime on AniList", "anime"), ("Find movies & shows on TMDB", "kinema")):
+        for text, where in (("Find anime on AniList", "anime"), ("Find movies && shows on TMDB", "kinema")):
             b = QPushButton(text + "  →")
             b.setObjectName("secondaryBtn")
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -993,6 +1217,20 @@ class HomePage(QWidget):
                                           for k in ("english_title", "romaji_title")),
                                  (r.get("english_title") or r.get("romaji_title") or "").lower()))
         return rows
+
+    @staticmethod
+    def suggest(db, q: str, limit: int = 8) -> List[Dict]:
+        """Popular titles matching what's typed that aren't in your library."""
+        from core import catalog
+        out = []
+        for kind in ("anime", "tv", "movie"):
+            for h in catalog.search(kind, q, limit=6):
+                pid = h.get("provider_id")
+                mine = (db.get_anime_by_anilist_id(pid) if kind == "anime"
+                        else db.get_title_by_tmdb(kind, pid))
+                if not mine:
+                    out.append(dict(h, media_type=kind))
+        return catalog.rank(out, q)[:limit]
 
     def _open_first(self):
         if self._last_results:

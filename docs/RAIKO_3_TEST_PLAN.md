@@ -128,6 +128,25 @@ meantime, it doesn't understand movies).
 - [ ] On "ship it": version 3.0.0 → merge to main → tag v3.0.0 → build (tests must pass) → Raiko-v3.0.0-Windows.zip
       → GitHub release with docs/RELEASE_NOTES_v3.0.0.md → installs to Programs\Raiko + "Raikō" Desktop shortcut.
 
+## 3.1.0 — Hall of Fame & This week popover (built 2026-11-17, awaiting your test) 🧪
+- [ ] Hall of Fame (sidebar ★): your 10 old rankings are there in order with their S/A tiers
+- [ ] + Induct a title → pick → "Which do you love more?": click / ← →, Too close, Skip, Undo, result screen; Undo there takes it back
+- [ ] List view: drag a row → order and ▲▼ update; Tiers view: drag a poster to another tier; Rename tiers…
+- [ ] Showcase, Timeline, Numbers look right for Miroku / Movies / TV shows
+- [ ] Pantheon: auto-filled with each wing's #1; empty slot → pick; right-click → change slot / unpin
+- [ ] Plaque: write why / moment / character, set tier, Re-rank, Pin, Remove; reopen → saved
+- [ ] Honours: starter set; choose winners for trilogy/duology (Look online for more), finale (episode), villain (character), opening (song), studio (name), best of a year; runners-up; Make it the winner; reason; rename / move / delete award; custom award
+- [ ] Share card: Pantheon / Top 10 / Tier list / Honours → Save PNG… and Copy image
+- [ ] Best trilogy: search "lord of the rings" → the 3 films appear → choose → "Add 3 to Kinema as watched" (or Just award it); the films then show in Kinema → Movies
+- [ ] Induct a title / any award picker: type a film you haven't added → "Not in Kinema yet?" results → Show more → pick → added to Kinema as watched → continues (ranking / award)
+- [ ] Best villain / character / protagonist: the FULL cast loads page by page (anime: most-loved first, protagonist: main first; Main / Supporting / Background chips; movies & TV: billing order); filter box, Show more, "Someone else…"
+- [ ] Discover (Miroku and Kinema, each list and a search): Show more at the bottom loads more; at the end it says "That's everything"
+- [ ] Detail panel: "★ #N in your … Hall" (menu) on Hall titles, "Induct into Hall of Fame" on finished ones, nothing on others
+- [ ] Rate a finished title 6/6 → offer to induct; "Not now" never asks again for it
+- [ ] Home: Pantheon strip beside the stats → opens the Hall
+- [ ] Toasts: mark an episode watched, rate something, add a title → new solid card bottom-right (no see-through), countdown pauses on hover, click / ✕ dismisses, 3+ stack neatly, move/resize the window → they follow
+- [ ] Home → This week: click an anime / TV / movie entry → popover beside it (flips near the right edge); Open details, Trailer; Esc / click outside / scroll / same entry closes it
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).
