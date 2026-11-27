@@ -165,6 +165,19 @@ meantime, it doesn't understand movies).
 - [ ] Rankings: Openings & intros / Endings / Soundtracks; + Rank a song → "Which do you love more?" with ▶ Listen on both cards; Too close / Skip / Undo; drag to reorder; ⋯ re-rank / remove
 - [ ] Liking / ranking something anywhere updates the Music page and every ♥ button at once
 
+## Next — Themes (phases 0–4 built 2026-11-27, awaiting your test) 🧪
+- [ ] Default look unchanged (Raikō Night)
+- [ ] Settings → Appearance: click each of the 8 themes (incl. light Sakura Dawn / Studio Watercolor) — whole app recolours live, fonts change; accent swatches; text size 90–125 %
+- [ ] Hover a theme → Preview: walkthrough (Home → Library → detail panel → Settings button), ‹ › / ← →, Apply keeps it, Cancel / Esc restores exactly
+- [ ] Motion Full / Calm / Off; "Follow Windows" (Settings → Accessibility → Animation effects off = still); Rai toggle
+- [ ] Events (run `main.py --date 2026-12-25`, `--date 2026-10-30`, `--date 2026-12-31`, `--date 2026-10-03`):
+  - [ ] default theme → full event look; your own theme → decorations only; banner wording matches
+  - [ ] Keep it / Switch back / Try the other looks; Nice / Go full / No decorations; ✕ → pointer on the Settings button (once)
+  - [ ] greeting ("Merry Christmas"), ornaments (Santa hat, holly, snowcap, bats, pumpkin, lanterns), Rai's outfit, ambient effects in sidebar/header only
+  - [ ] Home spotlight starts with the event: animated centrepiece (tree / jack-o'-lantern / fireworks / sparkles) + picks (your Watchlist first), Preview & add / Next pick
+  - [ ] Settings → Appearance → Event themes: per-event Automatic / Full / Decorations / Off, look, Preview, "Ask me first", "Bring it back"
+  - [ ] after the event (normal date) → "<event> is over — back to <theme>" toast
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).

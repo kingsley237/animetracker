@@ -24,14 +24,27 @@ from typing import Dict, List, Optional, Tuple
 EVENTS: List[Dict] = [
     {"id": "christmas", "name": "Christmas", "category": "holidays", "emoji": "🎄", "anim": "❄️",
      "start": (12, 20), "end": (12, 26), "variants": ["xmas_snow", "xmas_cozy", "xmas_candy", "xmas_golden"],
-     "greeting": "Merry Christmas", "line": "Raikō dressed up for Christmas."},
+     "greeting": "Merry Christmas", "line": "Raikō dressed up for Christmas.",
+     "tagline": "Cosy classics and festive favourites for the holidays."},
     {"id": "new_year", "name": "New Year", "category": "holidays", "emoji": "🎆", "anim": "🎉",
      "start": (12, 31), "end": (1, 2), "variants": ["ny_midnight", "ny_sunrise"],
-     "greeting": "Happy New Year", "line": "Raikō is ready to ring in the new year."},
+     "greeting": "Happy New Year", "line": "Raikō is ready to ring in the new year.",
+     "tagline": "Feel-good films to welcome the new year."},
     {"id": "halloween", "name": "Halloween", "category": "holidays", "emoji": "🎃", "anim": "🎃",
      "start": (10, 25), "end": (10, 31), "variants": ["hw_haunted", "hw_pumpkin", "hw_yokai"],
-     "greeting": "Happy Halloween", "line": "Raikō dressed up for Halloween."},
+     "greeting": "Happy Halloween", "line": "Raikō dressed up for Halloween.",
+     "tagline": "Spooky picks, from cosy chills to proper scares."},
 ]
+# Anime-world: the first week of each anime season (decorations + this season's most anticipated)
+_SEASON_EXTRA = {"ambient": {"kind": "stars", "density": 0.35, "colors": ["#fff3c4", "#c7bfff"]},
+                 "ornaments": [{"anchor": "logo", "kind": "sparkles"}]}
+for _sid, _name, _m, _d in (("season_winter", "Winter", 1, 3), ("season_spring", "Spring", 4, 1),
+                            ("season_summer", "Summer", 7, 1), ("season_fall", "Fall", 10, 1)):
+    EVENTS.append({"id": _sid, "name": f"{_name} Season Premiere Week", "category": "anime", "emoji": "✨",
+                   "anim": "🎉", "start": (_m, _d), "end": (_m, _d + 6), "variants": [], "extra": _SEASON_EXTRA,
+                   "greeting": f"A new {_name.lower()} season", "line": "Premiere week — the most anticipated anime are "
+                                                                         "arriving.",
+                   "tagline": "The new anime everyone is waiting for."})
 BY_ID = {e["id"]: e for e in EVENTS}
 CATEGORIES = {"holidays": "Holidays", "seasons": "Seasons", "anime": "Anime events", "milestones": "Milestones"}
 INTENSITIES = {"auto": "Automatic (recommended)", "full": "Full theme", "decorations": "Decorations only",
@@ -117,6 +130,8 @@ def set_ask_first(on: bool):
 
 
 def variant(ev: Dict) -> str:
+    if not ev.get("variants"):
+        return ""
     v = str(_st().value(f"event_variant/{ev['id']}", "") or "")
     return v if v in ev["variants"] else ev["variants"][0]
 
@@ -144,6 +159,8 @@ def intensity(ev: Dict, user_theme_id: str, d: Optional[date] = None) -> str:
         return s
     if ask_first() and c != "kept":
         return "off"
+    if not ev.get("variants") or ev.get("category") == "anime":
+        return "decorations"                  # one-day / anime events decorate, never reskin
     return "full" if user_theme_id in ("", "raiko_night") else "decorations"
 
 
@@ -157,12 +174,14 @@ def resolve(user_theme, user_theme_id: str, d: Optional[date] = None):
         return user_theme, ev, "off"
     from ui.theme import Theme
     from ui.themes_catalog import build, event_extra
-    vid = variant(ev)
+    if not ev.get("variants"):
+        level = "decorations"
+    vid = variant(ev) if ev.get("variants") else ""
     if level == "full":
         t = build(vid)
         return Theme(t.id, t.name, t.roles, dark=t.dark, fonts=t.fonts,
                      extra={**t.extra, "event": ev["id"], "event_level": "full"}), ev, "full"
-    deco = event_extra(vid)
+    deco = dict(ev.get("extra") or {}) if not vid else event_extra(vid)
     return Theme(user_theme.id, user_theme.name, user_theme.roles, dark=user_theme.dark, fonts=user_theme.fonts,
                  extra={**user_theme.extra, **deco, "event": ev["id"], "event_level": "decorations"}), ev, \
         "decorations"

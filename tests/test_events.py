@@ -13,8 +13,9 @@ def test_windows_and_new_year_wrap():
     assert events.active(date(2026, 11, 27)) is None
     ny = events.BY_ID["new_year"]
     assert events.season_key(ny, date(2027, 1, 1)) == events.season_key(ny, date(2026, 12, 31)) == "new_year-2026"
-    up = events.upcoming(date(2026, 11, 27))
-    assert [e["id"] for e, *_ in up] == ["christmas", "new_year", "halloween"]
+    up = events.upcoming(date(2026, 11, 27), limit=10)
+    assert [e["id"] for e, *_ in up][:3] == ["christmas", "new_year", "season_winter"]
+    assert {e["id"] for e, *_ in up} >= {"halloween", "season_spring", "season_summer", "season_fall"}
 
 
 def test_intensity_respects_an_explicit_theme(monkeypatch):
@@ -84,4 +85,32 @@ def test_banner_flows_and_coach_mark_once(qapp, monkeypatch):
     monkeypatch.delenv("RAIKO_DATE")
     tm.reapply()
     assert tm.event is None
+    pump(20)
+
+
+def test_event_spotlight_slides_and_centrepieces(qapp, db, monkeypatch):
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QImage, QPainter
+    from core import events
+    from ui import decor
+    from ui.home_page import HomePage
+    ev = events.BY_ID["christmas"]
+    page = HomePage(db)
+    picks = [{"media_type": "movie", "provider_id": i, "title": f"Film {i}", "poster_url": "", "raw": {},
+              "year": 1990} for i in range(3)] + [{"media_type": "movie", "provider_id": 9, "title": "Saved",
+                                                    "poster_url": "", "raw": {}, "_lib_id": 42}]
+    slides = page._event_slides(ev, picks)
+    assert slides[0]["kind"] == "event" and slides[0]["title"] == "4 picks for Christmas"
+    assert slides[0]["blurb"] == ev["tagline"] and "Next pick" in slides[0]["secondary"][0]
+    assert [s["badge"] for s in slides[1:]] == ["CHRISTMAS PICK"] * 4
+    assert slides[-1]["primary"][0] == "Open details"                 # already on your Watchlist
+    assert page._event_slides(ev, [])[0]["title"] == "Merry Christmas"  # offline: greeting slide alone
+    img = QImage(400, 300, QImage.Format.Format_ARGB32)
+    p = QPainter(img)
+    for eid in ("christmas", "halloween", "new_year", "season"):
+        decor.draw_hero(p, QRectF(0, 0, 400, 300), 1.3, eid)           # every centrepiece paints
+    p.end()
+    season = events.active(__import__("datetime").date(2026, 10, 3))
+    assert season["category"] == "anime" and events.intensity(season, "raiko_night") == "decorations"
+    page.deleteLater()
     pump(20)

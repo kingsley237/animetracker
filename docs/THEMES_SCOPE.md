@@ -1,5 +1,11 @@
 # Raikō Themes — scope for approval
 
+> **Status (2026-11-27):** phases 0–4 built on `develop` (engine, 8 permanent themes, Appearance + preview,
+> ambient/ornaments/Rai/animated emoji, events with the intensity model, Christmas / New Year / Halloween
+> packs, Season Premiere Week, event spotlight). Still to build: *Farewell to a legend*, *Big premiere day*,
+> *personal milestones*, the phase-5 calendar (Valentine's, Lunar New Year, Hanami, Tanabata, Matsuri,
+> Autumn, Raikō's birthday) and event frames on share cards.
+
 Themes that change **everything you see and feel**, not just colours: palette, fonts, shapes, motion,
 backgrounds, ornaments on real UI elements (bats around the Settings button), a mascot, animated emoji,
 copy, celebrations, and a Home spotlight that *becomes* the event. Two kinds:

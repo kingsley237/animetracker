@@ -325,6 +325,7 @@ class AppearancePage(QWidget):
             lvl.currentIndexChanged.connect(lambda _i, ev=ev, c=lvl: self._set_level(ev, c.currentData()))
             h.addWidget(lvl)
             look = QComboBox()
+            look.setVisible(bool(ev["variants"]))
             for vid in ev["variants"]:
                 look.addItem(info(vid)["name"], vid)
             look.setCurrentIndex(max(0, look.findData(events.variant(ev))))
@@ -333,6 +334,7 @@ class AppearancePage(QWidget):
             look.currentIndexChanged.connect(lambda _i, ev=ev, c=look: self._set_look(ev, c.currentData()))
             h.addWidget(look)
             pv = QPushButton("Preview")
+            pv.setVisible(bool(ev["variants"]))
             pv.setObjectName("secondaryBtn")
             pv.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             pv.clicked.connect(lambda _=False, c=look: self.preview_requested.emit(c.currentData(), ""))

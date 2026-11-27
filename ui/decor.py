@@ -581,3 +581,98 @@ def draw_rai(p: QPainter, r: QRectF, t: float, outfit: str = "", still: bool = F
         p.setBrush(_Raw("#f07a1a"))
         p.drawRect(QRectF(-rad * 0.38, -rad * 0.28, rad * 0.72, rad * 0.12))
         p.restore()
+
+
+# ── event spotlight centrepieces ──────────────────────────────────────────────
+
+def draw_hero(p: QPainter, r: QRectF, t: float, event_id: str):
+    """The animated centrepiece on the event spotlight slide."""
+    if event_id == "christmas":
+        draw_tree(p, r, t)
+    elif event_id == "halloween":
+        draw_pumpkin(p, r.center().x(), r.center().y() + r.height() * 0.12, r.height() * 0.3,
+                     0.55 + 0.45 * abs(math.sin(t * 3.1) * math.sin(t * 1.7)))
+    elif event_id == "new_year":
+        draw_fireworks(p, r, t)
+    else:
+        for i in range(9):
+            a = i * 0.7 + t * 0.4
+            rad = r.height() * (0.15 + 0.25 * ((i * 37) % 10) / 10)
+            s = 4 + 6 * (0.5 + 0.5 * math.sin(t * 2.4 + i))
+            draw_sparkle(p, r.center().x() + math.cos(a) * rad, r.center().y() + math.sin(a) * rad, s,
+                         _Raw("#fff3c4"))
+
+
+def draw_tree(p: QPainter, r: QRectF, t: float):
+    cx = r.center().x()
+    top = r.top() + r.height() * 0.12
+    h = r.height() * 0.72
+    w = h * 0.62
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    glow = QRadialGradient(QPointF(cx, top + h * 0.55), h * 0.75)
+    glow.setColorAt(0, _Raw(255, 214, 120, 60))
+    glow.setColorAt(1, _Raw(255, 214, 120, 0))
+    p.setBrush(glow)
+    p.drawEllipse(QPointF(cx, top + h * 0.55), h * 0.75, h * 0.75)
+    p.setBrush(_Raw("#5b3a22"))
+    p.drawRect(QRectF(cx - w * 0.07, top + h * 0.9, w * 0.14, h * 0.12))
+    tiers = 4
+    for i in range(tiers):
+        y0 = top + h * (0.08 + i * 0.2)
+        tw = w * (0.38 + 0.2 * i)
+        path = QPainterPath()
+        path.moveTo(cx, y0)
+        path.lineTo(cx + tw / 2, y0 + h * 0.32)
+        path.quadTo(cx, y0 + h * 0.37, cx - tw / 2, y0 + h * 0.32)
+        path.closeSubpath()
+        g = QRadialGradient(QPointF(cx - tw * 0.15, y0 + h * 0.12), tw * 0.8)
+        g.setColorAt(0, _Raw("#3fb56a"))
+        g.setColorAt(1, _Raw("#14532d"))
+        p.setBrush(g)
+        p.drawPath(path)
+    colors = ["#ff5a6a", "#ffd166", "#7cc4ff", "#f472b6", "#ffffff"]
+    rnd = random.Random(7)
+    for k in range(26):
+        fy = rnd.uniform(0.2, 0.86)
+        spread = w * (0.12 + 0.5 * fy) / 2
+        x = cx + rnd.uniform(-spread, spread)
+        y = top + h * fy + rnd.uniform(0, h * 0.04)
+        on = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(t * 2.6 + k * 1.9))
+        c = _Raw(colors[k % len(colors)])
+        g = QRadialGradient(QPointF(x, y), 7)
+        c.setAlpha(int(255 * on))
+        g.setColorAt(0, c)
+        c2 = _Raw(c)
+        c2.setAlpha(0)
+        g.setColorAt(1, c2)
+        p.setBrush(g)
+        p.drawEllipse(QPointF(x, y), 7, 7)
+    p.restore()
+    s = 13 + 3 * math.sin(t * 2)
+    draw_sparkle(p, cx, top + h * 0.06, s, _Raw("#ffd166"))
+    draw_sparkle(p, cx, top + h * 0.06, s * 0.5, _Raw("#fff6d5"))
+
+
+def draw_fireworks(p: QPainter, r: QRectF, t: float):
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    colors = ["#ffd36e", "#b18cff", "#ff7ac6", "#7fd8ff"]
+    for b in range(3):
+        period = 2.6
+        tt = (t + b * 0.9) % period
+        rnd = random.Random(int((t + b * 0.9) // period) * 13 + b)
+        cx = r.left() + r.width() * rnd.uniform(0.2, 0.8)
+        cy = r.top() + r.height() * rnd.uniform(0.2, 0.55)
+        prog = min(1.0, tt / 1.6)
+        alpha = max(0.0, 1.0 - tt / period)
+        rad = r.height() * 0.32 * (1 - (1 - prog) ** 3)
+        c = _Raw(colors[(b + int(t // period)) % len(colors)])
+        for k in range(18):
+            a = k / 18 * 6.283
+            x = cx + math.cos(a) * rad
+            y = cy + math.sin(a) * rad + (tt ** 2) * 6
+            c.setAlpha(int(230 * alpha))
+            p.setBrush(c)
+            p.drawEllipse(QPointF(x, y), 2.6, 2.6)
+    p.restore()

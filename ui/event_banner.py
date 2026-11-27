@@ -72,6 +72,9 @@ class EventBanner(QFrame):
             title, sub = ev["line"], f"Showing the “{info(events.variant(ev))['name']}” look until the event ends."
             buttons = [("Keep it", True, self._keep), ("Switch back", False, self._off),
                        ("Try the other looks ▾", False, self._looks)]
+        elif level == "decorations" and not ev.get("variants"):
+            title, sub = ev["line"], "A few details for the occasion — your theme stays as it is."
+            buttons = [("Nice", True, self._keep), ("No decorations", False, self._off)]
         elif level == "decorations":
             title = f"A little {ev['name']} on top of {own}."
             sub = "Your theme stays — the event adds a few festive details."

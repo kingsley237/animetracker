@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from workers.workers import PRIORITY_INTERACTIVE, ImageWorker, Worker, run_worker
 
 LIB = {"anime": ("MIROKU", "#8b7bff"), "tv": ("KINEMA · TV", "#38bdf8"),
-       "movie": ("KINEMA · MOVIE", "#fbbf24")}
+       "movie": ("KINEMA · MOVIE", "#fbbf24"), "event": ("RAIKŌ", "#f5c451")}
 
 
 def _img_url(row: Dict, wide: bool) -> str:
@@ -56,8 +56,14 @@ class _Img:
 
     def _draw_cover(self, p: QPainter, r: QRectF, y_bias: float = 0.5):
         if self._pix and not self._pix.isNull():
-            sc = self._pix.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                  Qt.TransformationMode.SmoothTransformation)
+            key = (self._pix.cacheKey(), int(r.width()), int(r.height()))
+            cached = getattr(self, "_scaled", None)
+            if cached and cached[0] == key:
+                sc = cached[1]
+            else:
+                sc = self._pix.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                      Qt.TransformationMode.SmoothTransformation)
+                self._scaled = (key, sc)
             p.drawPixmap(int(r.x()), int(r.y()), sc, int((sc.width() - r.width()) / 2),
                          int((sc.height() - r.height()) * y_bias), int(r.width()), int(r.height()))
         else:
@@ -157,6 +163,9 @@ class _Spotlight(QWidget, _Img):
         self._clock = QTimer(self)
         self._clock.timeout.connect(self._tick)
         self._clock.start(30_000)
+        self._hero_t0 = datetime.now().timestamp()
+        self._hero_timer = QTimer(self)
+        self._hero_timer.timeout.connect(self._hero_tick)
 
     # compat with the previous single-item hero
     @property
@@ -202,7 +211,21 @@ class _Spotlight(QWidget, _Img):
         self.next.setVisible(many)
         self._load_img(sl.get("img") or "")
         self._tick()
+        from ui.decor import motion_level
+        if sl["kind"] == "event" and motion_level() != "off":
+            self._hero_timer.start(40)
+        else:
+            self._hero_timer.stop()
         self.update()
+
+    def _hero_rect(self) -> QRectF:
+        h = self.height() * 0.86
+        return QRectF(self.width() - h * 0.95 - 40, (self.height() - h) / 2, h * 0.95, h)
+
+    def _hero_tick(self):
+        if not self.isVisible() or self.window().isMinimized():
+            return
+        self.update(self._hero_rect().toAlignedRect().adjusted(-12, -12, 12, 12))
 
     def _run(self, which: int):
         sl = self.slides[self.idx] if self.slides else None
@@ -256,6 +279,10 @@ class _Spotlight(QWidget, _Img):
             p.end()
             return
         sl = self.slides[self.idx]
+        if sl["kind"] == "event":
+            from ui.decor import draw_hero
+            t = datetime.now().timestamp() - self._hero_t0
+            draw_hero(p, self._hero_rect(), t, sl.get("event") or "")
         prog = sl.get("progress")
         if prog is not None and sl["kind"] == "update":
             p.setPen(Qt.PenStyle.NoPen)
@@ -851,6 +878,35 @@ class HomePage(QWidget):
         w.signals.result.connect(self._render)
         run_worker(w, PRIORITY_INTERACTIVE)
         self._load_picks()
+        self._load_event_picks()
+
+    def _load_event_picks(self):
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        ev = getattr(tm, "event", None)
+        if ev is None or tm.event_level == "off":
+            self._event_picks = []
+            self._event = None
+            return
+        self._event = ev
+        ev_id = ev["id"]
+
+        def work():
+            from core.event_picks import picks
+            return picks(ev_id, self.db, limit=5)
+
+        def done(hits):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+            self._event_picks = hits or []
+            if getattr(self, "_updates", None) is not None:
+                self._render_spotlight(keep=True)
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e: done([]))
+        run_worker(w)
 
     def _load_picks(self, force: bool = False):
         import time as _t
@@ -951,6 +1007,9 @@ class HomePage(QWidget):
                 s2 = self._airing_slide(nxt) if nxt["mode"] == "airing" else self._planned_slide(nxt)
                 slides.insert(0, s2)
         slides += [self._pick_slide(h) for h in self._rotated_picks()]
+        ev = getattr(self, "_event", None)
+        if ev is not None:
+            slides = self._event_slides(ev, getattr(self, "_event_picks", [])) + slides
         self.hero.setVisible(bool(slides))
         self.hero_empty.setVisible(not slides)
         if slides:
@@ -1036,6 +1095,41 @@ class HomePage(QWidget):
                 "line": f"{it['label']}   ·   {it['sub']}" if it.get("sub") else it["label"],
                 "badge_color": "#c7cbe0", "item": it,
                 "primary": ("Start watching", lambda i=it["id"]: self.open_title.emit(i))}
+
+    def _event_slides(self, ev: Dict, picks: List[Dict]) -> List[Dict]:
+        """The event leads the spotlight: a centrepiece slide, then its picks."""
+        from core import tmdb
+        first = picks[0] if picks else None
+        img = ""
+        if first:
+            raw = first.get("raw") or {}
+            img = (raw.get("bannerImage") or first.get("poster_url")) if first["media_type"] == "anime" else \
+                (tmdb.image_url(raw.get("backdrop_path"), "w1280") or first.get("poster_url"))
+        what = "anime" if ev.get("category") == "anime" else "picks"
+        head = {"kind": "event", "key": f"ev-{ev['id']}", "event": ev["id"].split("_")[0]
+                if ev["id"].startswith("season") else ev["id"], "badge": ev["greeting"].upper(), "media": "event",
+                "title": ev["greeting"] if not picks else
+                (f"{len(picks)} {what} for {ev['name']}" if what == "picks" else "The season's most anticipated"),
+                "img": img, "reason": "", "progress": None,
+                "line": "   ·   ".join(p.get("title") or "" for p in picks[:3]),
+                "blurb": ev.get("tagline") or ""}
+        if first:
+            head["primary"] = self._pick_action(first)
+            if len(picks) > 1:
+                head["secondary"] = ("Next pick  ›", lambda: self.hero.show_slide(self.hero.idx + 1))
+        out = [head]
+        for h in picks:
+            s = self._pick_slide(h)
+            s["badge"] = f"{ev['name'].upper()} PICK"
+            s["key"] = f"ev{ev['id']}{h['media_type']}{h['provider_id']}"
+            s["primary"] = self._pick_action(h)
+            out.append(s)
+        return out
+
+    def _pick_action(self, h: Dict):
+        if h.get("_lib_id"):
+            return ("Open details", lambda i=h["_lib_id"]: self.open_title.emit(i))
+        return ("Preview && add", lambda h=h: self.open_pick.emit(h))
 
     def _pick_slide(self, h: Dict) -> Dict:
         from core import tmdb
