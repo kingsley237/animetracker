@@ -137,6 +137,13 @@ class MainWindow(QMainWindow):
             decor.register("hall_nav", self._nav_buttons["hall"])
         self._decor = decor.DecorLayer(self.centralWidget())
         QTimer.singleShot(1800, self._event_ended_note)
+        QTimer.singleShot(6000, self._check_anime_event)
+        QTimer.singleShot(4000, self._check_milestones)
+        self._milestone_timer = QTimer(self)
+        self._milestone_timer.setSingleShot(True)
+        self._milestone_timer.timeout.connect(self._check_milestones)
+        self.detail_panel.episode_changed.connect(lambda _i: self._milestone_timer.start(2500))
+        self.detail_panel.watch_status_changed.connect(lambda _i, _s: self._milestone_timer.start(2500))
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
@@ -1828,6 +1835,55 @@ class MainWindow(QMainWindow):
         self._refresh_anilist_user_menu()
         if dlg.preview_request:
             self.start_theme_preview(*dlg.preview_request)
+
+    def _check_milestones(self):
+        """Celebrate a new milestone once: toast + a short confetti burst."""
+        try:
+            from core import milestones
+            hit = milestones.check(self.db)
+        except Exception:
+            return
+        if not hit:
+            return
+        from ui.toast import Toast
+        Toast.show(self, milestones.message(*hit), kind="success", duration=7000)
+        if getattr(self, "_decor", None) is not None:
+            self._decor.burst()
+
+    def _check_anime_event(self):
+        """Once a day: is a big premiere / farewell airing today? (background)"""
+        from core import anime_events, events
+        day = events.today().strftime("%Y-%m-%d")
+        if anime_events.cached(day) is not None or self._anime_event_checked(day):
+            return
+        lib = anime_events.library_index(self.db)          # read here, not in the worker
+
+        def work():
+            from datetime import datetime
+            return anime_events.detect(None, datetime.strptime(day, "%Y-%m-%d"), lib)
+
+        def done(ev):
+            anime_events.store(day, ev)
+            if ev is None:
+                return
+            from ui.theme import ThemeManager
+            tm = ThemeManager.get()
+            tm.reapply()
+            if self._home_page is not None:
+                self._home_page.load()
+
+        from workers.workers import Worker, run_worker
+        w = Worker(work)
+        w.signals.result.connect(done)
+        run_worker(w)
+
+    def _anime_event_checked(self, day: str) -> bool:
+        import json
+        from core.app_settings import app_settings
+        try:
+            return json.loads(str(app_settings().value("anime_event_today", "") or "{}")).get("checked") == day
+        except ValueError:
+            return False
 
     def _event_ended_note(self):
         from ui.theme import ThemeManager

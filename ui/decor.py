@@ -148,6 +148,25 @@ class DecorLayer(QWidget):
 
     # ── particles ────────────────────────────────────────────────────────────
 
+    def burst(self, seconds: float = 3.5):
+        """A short confetti celebration (milestones). Nothing with motion off."""
+        if motion_level() == "off":
+            return
+        self._zones()
+        amb = {"kind": "confetti", "density": 1.0}
+        saved = (self.cfg, self.parts)
+        self.cfg = {**self.cfg, "ambient": amb}
+        self.parts = [self._spawn(amb, initial=True) for _ in range(45)]
+        self.timer.start(40)
+
+        def restore():
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+            self.cfg, self.parts = saved
+            self.refresh()
+        QTimer.singleShot(int(seconds * 1000), restore)
+
     def _zones(self):
         """Where ambient effects live: the sidebar and the band across the top
         of the page - never over artwork, cards or text you're reading."""
@@ -585,8 +604,52 @@ def draw_rai(p: QPainter, r: QRectF, t: float, outfit: str = "", still: bool = F
 
 # ── event spotlight centrepieces ──────────────────────────────────────────────
 
-def draw_hero(p: QPainter, r: QRectF, t: float, event_id: str):
+def draw_portraits(p: QPainter, r: QRectF, t: float, pix: list, color: str = "#8b7bff"):
+    """The show's characters floating in a gentle arc (premieres / farewells)."""
+    n = len(pix)
+    if not n:
+        return
+    ring = _Raw(color)
+    size = min(r.height() * 0.42, r.width() / max(2.2, n * 0.62))
+    cx, cy = r.center().x(), r.center().y()
+    for i, pm in enumerate(pix):
+        a = (i - (n - 1) / 2) * 0.55
+        x = cx + math.sin(a) * r.width() * 0.36
+        y = cy + (1 - math.cos(a)) * r.height() * 0.55 - r.height() * 0.08 + math.sin(t * 1.6 + i) * 5
+        s = size * (1.0 if i == (n - 1) // 2 else 0.78)
+        rect = QRectF(x - s / 2, y - s / 2, s, s)
+        p.save()
+        glow = QRadialGradient(rect.center(), s * 0.75)
+        g = _Raw(ring)
+        g.setAlpha(90)
+        glow.setColorAt(0.6, g)
+        g2 = _Raw(ring)
+        g2.setAlpha(0)
+        glow.setColorAt(1, g2)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(rect.center(), s * 0.75, s * 0.75)
+        path = QPainterPath()
+        path.addEllipse(rect)
+        p.setClipPath(path)
+        if pm is not None and not pm.isNull():
+            sc = pm.scaled(int(s), int(s), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                           Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(int(rect.x()), int(rect.y()), sc, (sc.width() - int(s)) // 2, 0, int(s), int(s))
+        else:
+            p.fillRect(rect, _Raw(30, 32, 46))
+        p.setClipping(False)
+        p.setPen(QPen(ring, 3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(rect)
+        p.restore()
+
+
+def draw_hero(p: QPainter, r: QRectF, t: float, event_id: str, pix: Optional[list] = None, color: str = ""):
     """The animated centrepiece on the event spotlight slide."""
+    if pix:
+        draw_portraits(p, r, t, pix, color or "#8b7bff")
+        return
     if event_id == "christmas":
         draw_tree(p, r, t)
     elif event_id == "halloween":

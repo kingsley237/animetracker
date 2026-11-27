@@ -114,3 +114,76 @@ def test_event_spotlight_slides_and_centrepieces(qapp, db, monkeypatch):
     assert season["category"] == "anime" and events.intensity(season, "raiko_night") == "decorations"
     page.deleteLater()
     pump(20)
+
+
+def _sched(ep, total, pop, mid=500, color="#f1a143", when=None):
+    import time as _t
+    return {"episode": ep, "airingAt": when or int(_t.time()), "media": {
+        "id": mid, "title": {"english": f"Show {mid}", "romaji": ""}, "popularity": pop, "episodes": total,
+        "status": "RELEASING", "format": "TV", "isAdult": False, "averageScore": 84,
+        "coverImage": {"large": "c", "color": color}, "bannerImage": "b", "trailer": {"id": "tr", "site": "youtube"},
+        "characters": {"nodes": [{"name": {"full": f"Hero {i}"}, "image": {"large": f"img{i}"}} for i in range(6)]}}}
+
+
+def test_anime_events_premiere_farewell_and_yours_first(db, monkeypatch):
+    from core import anime_events
+    from tests.conftest import add_anime
+    add_anime(db, "Mine", "watching", anilist_id=7)
+    monkeypatch.setattr(anime_events, "_schedule", lambda a, b: [
+        _sched(1, 12, 300_000, mid=1), _sched(5, 12, 900_000, mid=2),     # big premiere; mid-season episode
+        _sched(24, 24, 40_000, mid=7)])                                   # finale of a show you watch
+    ev = anime_events.detect(db)
+    assert ev["kind"] == "farewell" and ev["anilist_id"] == 7 and ev["lib_id"]   # yours beats more popular
+    assert len(ev["portraits"]) == 5 and ev["greeting"] == "Thank you, Show 7"
+    monkeypatch.setattr(anime_events, "_schedule", lambda a, b: [_sched(1, 12, 300_000, mid=1),
+                                                                 _sched(1, 12, 20_000, mid=3)])
+    ev = anime_events.detect(db)
+    assert ev["kind"] == "premiere" and ev["anilist_id"] == 1
+    monkeypatch.setattr(anime_events, "_schedule", lambda a, b: [_sched(1, 12, 20_000, mid=3)])
+    assert anime_events.detect(db) is None                                # not anticipated, not yours
+
+
+def test_show_event_decorates_and_offers_its_colours(qapp, db, monkeypatch):
+    from core import anime_events, events
+    from ui.theme import ThemeManager, contrast
+    from ui.themes_catalog import build
+    monkeypatch.setattr(anime_events, "_schedule", lambda a, b: [_sched(1, 12, 300_000, mid=1, color="#93281a")])
+    ev = anime_events.detect(db)
+    day = events.today().strftime("%Y-%m-%d")
+    ev["date"] = day
+    anime_events.store(day, ev)
+    assert events.active()["id"] == ev["id"]                              # beats the calendar for its day
+    t, e, level = events.resolve(build("raiko_night"), "raiko_night")
+    assert level == "decorations" and t.roles == build("raiko_night").roles and t.extra.get("event")
+    events.set_choice(e, "full")
+    t, e, level = events.resolve(build("raiko_night"), "raiko_night")
+    acc = t.roles["violet"]
+    assert level == "full" and contrast(acc, "#12141d") >= 3 and contrast("#0b0d12", acc) >= 4.5
+    events.set_choice(e, "")
+    tm = ThemeManager.get()
+    tm.reapply()
+    from ui.event_banner import EventBanner, _Portraits
+    b = EventBanner()
+    b.refresh()
+    assert b.findChildren(_Portraits) and not b.isHidden()
+    from ui.home_page import HomePage
+    page = HomePage(db)
+    s = page._event_slides(ev, [])
+    assert len(s) == 1 and s[0]["badge"] == "PREMIERE DAY" and len(s[0]["portraits"]) == 5
+    assert s[0]["secondary"][0].endswith("Trailer") and s[0]["primary"][0].startswith("Preview")
+    anime_events.store(day, None)
+    tm.reapply()
+    b.deleteLater()
+    page.deleteLater()
+    pump(20)
+
+
+def test_milestones_once_and_quiet_first_time(db):
+    from core import milestones
+    from tests.conftest import add_anime
+    for i in range(9):
+        add_anime(db, f"M{i}", "completed", media_type="movie")
+    assert milestones.check(db) is None                                   # first run: quiet baseline
+    add_anime(db, "M9", "completed", media_type="movie")
+    assert milestones.check(db) == ("movies", 10)
+    assert milestones.check(db) is None                                   # never twice

@@ -42,6 +42,7 @@ class DatabaseManager:
                 str(self.db_path),
                 check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES,
+                timeout=15,             # wait for a background writer instead of failing
             )
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")

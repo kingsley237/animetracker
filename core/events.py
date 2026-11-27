@@ -46,6 +46,11 @@ for _sid, _name, _m, _d in (("season_winter", "Winter", 1, 3), ("season_spring",
                                                                          "arriving.",
                    "tagline": "The new anime everyone is waiting for."})
 BY_ID = {e["id"]: e for e in EVENTS}
+# settings-only rows for the live anime events (no fixed dates)
+LIVE = [{"id": "anime_premiere", "name": "Big premiere days", "emoji": "🎬", "variants": [],
+         "about": "When a highly anticipated show (or one on your list) airs its first episode"},
+        {"id": "anime_farewell", "name": "Farewells", "emoji": "🌸", "variants": [],
+         "about": "When a beloved series (or one you watch) airs its final episode"}]
 CATEGORIES = {"holidays": "Holidays", "seasons": "Seasons", "anime": "Anime events", "milestones": "Milestones"}
 INTENSITIES = {"auto": "Automatic (recommended)", "full": "Full theme", "decorations": "Decorations only",
                "off": "Off"}
@@ -86,11 +91,30 @@ def window_dates(ev: Dict, d: Optional[date] = None) -> Tuple[date, date]:
 
 def season_key(ev: Dict, d: Optional[date] = None) -> str:
     """'christmas-2026' (wrapping events use the year they started in)."""
+    if ev.get("dynamic"):
+        return f"{ev['id']}-{ev.get('date', '')}"
     return f"{ev['id']}-{window_dates(ev, d)[0].year}"
 
 
-def active(d: Optional[date] = None) -> Optional[Dict]:
+def dynamic(d: Optional[date] = None) -> Optional[Dict]:
+    """Today's anime-world event (premiere / farewell), from the daily check."""
     d = d or today()
+    try:
+        from core.anime_events import cached
+        ev = cached(d.strftime("%Y-%m-%d"))
+    except Exception:
+        ev = None
+    if ev and ev.get("date") == d.strftime("%Y-%m-%d"):
+        return ev
+    return None
+
+
+def active(d: Optional[date] = None) -> Optional[Dict]:
+    """The event on today: an anime premiere / farewell (one day) first, then the calendar."""
+    d = d or today()
+    dyn = dynamic(d)
+    if dyn is not None:
+        return dyn
     for ev in EVENTS:
         if _in_window(ev, d):
             return ev
@@ -112,7 +136,12 @@ def _st():
 
 
 def setting(ev_id: str) -> str:
-    """Per-event intensity: auto | full | decorations | off."""
+    """Per-event intensity: auto | full | decorations | off.
+    Premieres and farewells share one setting each ('anime_premiere', 'anime_farewell')."""
+    if ev_id.startswith("premiere-"):
+        ev_id = "anime_premiere"
+    elif ev_id.startswith("farewell-"):
+        ev_id = "anime_farewell"
     v = str(_st().value(f"event_intensity/{ev_id}", "auto") or "auto")
     return v if v in INTENSITIES else "auto"
 
@@ -160,7 +189,7 @@ def intensity(ev: Dict, user_theme_id: str, d: Optional[date] = None) -> str:
     if ask_first() and c != "kept":
         return "off"
     if not ev.get("variants") or ev.get("category") == "anime":
-        return "decorations"                  # one-day / anime events decorate, never reskin
+        return "decorations"                  # anime events decorate by default; "full" is offered
     return "full" if user_theme_id in ("", "raiko_night") else "decorations"
 
 
@@ -174,8 +203,10 @@ def resolve(user_theme, user_theme_id: str, d: Optional[date] = None):
         return user_theme, ev, "off"
     from ui.theme import Theme
     from ui.themes_catalog import build, event_extra
-    if not ev.get("variants"):
+    if not ev.get("variants") and not (ev.get("dynamic") and level == "full"):
         level = "decorations"
+    if ev.get("dynamic") and level == "full":
+        return show_theme(ev, user_theme), ev, "full"
     vid = variant(ev) if ev.get("variants") else ""
     if level == "full":
         t = build(vid)
@@ -185,3 +216,27 @@ def resolve(user_theme, user_theme_id: str, d: Optional[date] = None):
     return Theme(user_theme.id, user_theme.name, user_theme.roles, dark=user_theme.dark, fonts=user_theme.fonts,
                  extra={**user_theme.extra, **deco, "event": ev["id"], "event_level": "decorations"}), ev, \
         "decorations"
+
+
+def readable_accent(color: str) -> str:
+    """The show's colour, nudged until it works as an accent on Raikō's dark
+    surfaces (>= 3:1) and dark text on it stays readable (>= 4.5:1)."""
+    from ui.theme import contrast, hex_rgb, oklab_to_rgb, rgb_hex, rgb_to_oklab
+    try:
+        L, a, b = rgb_to_oklab(*hex_rgb(color))
+    except Exception:
+        return "#8b7bff"
+    for _ in range(40):
+        c = rgb_hex(*oklab_to_rgb(L, a, b))
+        if contrast(c, "#12141d") >= 3 and contrast("#0b0d12", c) >= 4.5:
+            return c
+        L = min(0.97, L + 0.02)
+    return "#8b7bff"
+
+
+def show_theme(ev: Dict, user_theme):
+    """A full look coloured from the show's own key colour."""
+    from ui.theme import Theme
+    acc = readable_accent(ev.get("color") or "#8b7bff")
+    return Theme(f"show-{ev['id']}", ev["name"], {"violet": acc, "gold": acc}, dark=True,
+                 extra={**(ev.get("extra") or {}), "event": ev["id"], "event_level": "full"})

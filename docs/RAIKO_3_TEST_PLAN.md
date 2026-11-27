@@ -177,6 +177,9 @@ meantime, it doesn't understand movies).
   - [ ] Home spotlight starts with the event: animated centrepiece (tree / jack-o'-lantern / fireworks / sparkles) + picks (your Watchlist first), Preview & add / Next pick
   - [ ] Settings → Appearance → Event themes: per-event Automatic / Full / Decorations / Off, look, Preview, "Ask me first", "Bring it back"
   - [ ] after the event (normal date) → "<event> is over — back to <theme>" toast
+  - [ ] anime events: `--date 2026-10-03` (Black Clover S2 premiere, on your list) → banner with its characters, "Wear its colours", spotlight with its art, characters orbiting, Trailer; `--date 2026-09-27` (a finale) → "Thank you, …", Rank its songs; Season Premiere Week shows the season's most anticipated
+  - [ ] Settings → Event themes: "Big premiere days" / "Farewells" rows (Automatic / Full / Decorations / Off)
+  - [ ] milestones: your next one (2,500 episodes / 10 movies / 100 series) → toast + short confetti, once
 
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md

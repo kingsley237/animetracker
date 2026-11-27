@@ -1,10 +1,24 @@
 # Raikō Themes — scope for approval
 
-> **Status (2026-11-27):** phases 0–4 built on `develop` (engine, 8 permanent themes, Appearance + preview,
-> ambient/ornaments/Rai/animated emoji, events with the intensity model, Christmas / New Year / Halloween
-> packs, Season Premiere Week, event spotlight). Still to build: *Farewell to a legend*, *Big premiere day*,
-> *personal milestones*, the phase-5 calendar (Valentine's, Lunar New Year, Hanami, Tanabata, Matsuri,
-> Autumn, Raikō's birthday) and event frames on share cards.
+> **Status (2026-11-27) — built and final for this round.** The event set below is the *recommended
+> minimum*, chosen on evidence rather than the earlier examples:
+>
+> - **Calendar:** New Year, Halloween, Christmas — the three most widely observed, secular-leaning events,
+>   each region-free, individually switchable and never overriding a theme you chose. Other cultural or
+>   religious holidays (Valentine's, Lunar New Year, Hanami…) are *not* switched on by default: inclusive-design
+>   guidance warns against assuming one calendar; they can be added later as opt-ins.
+> - **Anime world, from live data (AniList airing schedule + your library):**
+>   - *Season Premiere Week* (first week of Jan / Apr / Jul / Oct) led by the season's most anticipated shows;
+>   - *Premiere day* — a highly anticipated show or new season (≥ 50k AniList members, or on your list) airs
+>     episode 1: its characters around the banner, its key art in the spotlight, its colour offered as the theme;
+>   - *Farewell* — a beloved series (≥ 100k, or one you watch) airs its final episode: "Thank you, …", its
+>     characters and art, "Rank its songs";
+>   - shows in your library always win over more popular ones you don't follow.
+> - **Personal milestones** (100…10,000 episodes, 10…500 movies, 10…250 series): a toast and a short confetti
+>   burst, once each — never a theme.
+>
+> Anime events decorate by default (your theme stays) and offer "Wear its colours" — a full look built from the
+> show's own colour, adjusted until it passes the contrast checks.
 
 Themes that change **everything you see and feel**, not just colours: palette, fonts, shapes, motion,
 backgrounds, ornaments on real UI elements (bats around the Settings button), a mascot, animated emoji,

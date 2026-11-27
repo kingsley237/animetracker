@@ -64,11 +64,23 @@ class EventBanner(QFrame):
         lay = QHBoxLayout(self._inner)
         lay.setContentsMargins(16, 12, 12, 12)
         lay.setSpacing(14)
-        lay.addWidget(AnimatedEmoji(ev["anim"], 44))
+        if ev.get("portraits"):
+            lay.addWidget(_Portraits(ev["portraits"], ev.get("color") or "#8b7bff"))
+            self._load_art(ev.get("banner") or ev.get("cover") or "")
+        else:
+            self._art = None
+            lay.addWidget(AnimatedEmoji(ev["anim"], 44))
         col = QVBoxLayout()
         col.setSpacing(2)
         own = info(tm.saved_id)["name"]
-        if level == "full":
+        if ev.get("dynamic") and level == "full":
+            title, sub = ev["line"], f"Raikō is wearing {ev['name']}'s colours today."
+            buttons = [("Keep it", True, self._keep), ("Switch back", False, self._off)]
+        elif ev.get("dynamic"):
+            title, sub = ev["line"], ev.get("tagline") or ""
+            buttons = [("Nice", True, self._keep), ("Wear its colours", False, self._full),
+                       ("No decorations", False, self._off)]
+        elif level == "full":
             title, sub = ev["line"], f"Showing the “{info(events.variant(ev))['name']}” look until the event ends."
             buttons = [("Keep it", True, self._keep), ("Switch back", False, self._off),
                        ("Try the other looks ▾", False, self._looks)]
@@ -107,6 +119,55 @@ class EventBanner(QFrame):
         self._inner.show()
         self.setMinimumHeight(max(72, self._inner.sizeHint().height()))
         self.show()
+
+    # ── the show's key art, faintly behind the banner ────────────────────────
+
+    def _load_art(self, url: str):
+        self._art = None
+        if not url:
+            return
+        from workers.workers import ImageWorker, run_worker
+        w = ImageWorker(url, url)
+        w.signals.result.connect(self._on_art)
+        run_worker(w)
+
+    def _on_art(self, result):
+        from PyQt6 import sip
+        from PyQt6.QtGui import QPixmap
+        if sip.isdeleted(self):
+            return
+        _k, _s, path = result
+        if path:
+            self._art = QPixmap(str(path))
+            self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        art = getattr(self, "_art", None)
+        if art is None or art.isNull():
+            return
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QLinearGradient, QPainter, QPainterPath
+        from ui.theme import QColor
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(r, 16, 16)
+        p.setClipPath(path)
+        sc = art.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation)
+        p.setOpacity(0.28)
+        p.drawPixmap(int(r.x()), int(r.y()), sc, (sc.width() - int(r.width())) // 2,
+                     (sc.height() - int(r.height())) // 3, int(r.width()), int(r.height()))
+        p.setOpacity(1.0)
+        g = QLinearGradient(0, 0, r.width(), 0)
+        g.setColorAt(0, QColor(9, 10, 16, 120))
+        g.setColorAt(0.6, QColor(9, 10, 16, 200))
+        g.setColorAt(1, QColor(9, 10, 16, 235))
+        p.fillRect(r, g)
+        p.end()
 
     # ── choices ──────────────────────────────────────────────────────────────
 
@@ -210,3 +271,56 @@ def show_coach_mark(window) -> Optional[CoachMark]:
     st.setValue("event_coach_shown", "true")
     return CoachMark(window, target, "Changed your mind? <b>Settings → Appearance → Event themes</b> lets you switch "
                                      "back, pick another look, or turn events off.")
+
+
+class _Portraits(QWidget):
+    """The show's characters, overlapping circles in its colour."""
+
+    def __init__(self, urls, color: str, parent=None):
+        super().__init__(parent)
+        self.urls = list(urls)[:4]
+        self.color = color
+        self.pix = {}
+        self.setFixedSize(30 + 34 * len(self.urls), 52)
+        from workers.workers import ImageWorker, run_worker
+        for u in self.urls:
+            w = ImageWorker(u, u)
+            w.signals.result.connect(self._on)
+            run_worker(w)
+
+    def _on(self, res):
+        from PyQt6 import sip
+        from PyQt6.QtGui import QPixmap
+        if sip.isdeleted(self):
+            return
+        k, _s, path = res
+        if path:
+            self.pix[k] = QPixmap(str(path))
+            self.update()
+
+    def paintEvent(self, _):
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QPainter, QPainterPath, QPen
+        from core.events import readable_accent
+        from ui.theme import QColor
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        ring = QColor(readable_accent(self.color))
+        for i, u in reversed(list(enumerate(self.urls))):
+            r = QRectF(2 + i * 34, 3, 46, 46)
+            path = QPainterPath()
+            path.addEllipse(r)
+            p.save()
+            p.setClipPath(path)
+            pm = self.pix.get(u)
+            if pm is not None and not pm.isNull():
+                sc = pm.scaled(46, 46, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+                p.drawPixmap(int(r.x()), int(r.y()), sc, (sc.width() - 46) // 2, 0, 46, 46)
+            else:
+                p.fillRect(r, QColor(30, 32, 46))
+            p.restore()
+            p.setPen(QPen(ring, 2.5))
+            p.drawEllipse(r)
+        p.end()
