@@ -136,7 +136,11 @@ class MainWindow(QMainWindow):
         if "hall" in self._nav_buttons:
             decor.register("hall_nav", self._nav_buttons["hall"])
         self._decor = decor.DecorLayer(self.centralWidget())
+        from ui.theme import ThemeManager as _TM
+        _TM.get().changed.connect(self._dress_logo)
+        self._dress_logo()
         QTimer.singleShot(1800, self._event_ended_note)
+        QTimer.singleShot(2600, self._show_event_moments)
         QTimer.singleShot(6000, self._check_anime_event)
         QTimer.singleShot(4000, self._check_milestones)
         self._milestone_timer = QTimer(self)
@@ -323,6 +327,7 @@ class MainWindow(QMainWindow):
                 Qt.TransformationMode.SmoothTransformation
             )
             icon_lbl.setPixmap(px)
+            self._logo_lbl, self._logo_px, self._logo_base = icon_lbl, px, QPixmap(str(icon_path))
             icon_lbl.setObjectName("sidebarLogoMark")
             from ui import decor as _decor
             _decor.register("logo", icon_lbl)
@@ -335,6 +340,7 @@ class MainWindow(QMainWindow):
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ll.addWidget(name, alignment=Qt.AlignmentFlag.AlignHCenter)
         sub = QLabel("Anime · TV · Movies")
+        self._logo_sub = sub
         sub.setObjectName("appLogoSub")
         sub.setWordWrap(False)
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1836,6 +1842,58 @@ class MainWindow(QMainWindow):
         if dlg.preview_request:
             self.start_theme_preview(*dlg.preview_request)
 
+    def _dress_logo(self, *_):
+        """The logo dresses up for the event on today (or goes back to normal)."""
+        from PyQt6 import sip
+        lbl = getattr(self, "_logo_lbl", None)
+        if lbl is None or sip.isdeleted(lbl):
+            return
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        ev = getattr(tm, "event", None)
+        if ev is None or tm.event_level == "off":
+            lbl.setPixmap(self._logo_px)
+            lbl.setToolTip("")
+            self._logo_sub.setText("Anime · TV · Movies")
+            return
+        from core.events import today
+        from ui import event_logo
+        self._logo_sub.setText(event_logo.subtitle(ev, today().year))
+        lbl.setToolTip(ev.get("line") or ev.get("name") or "")
+        lbl.setPixmap(event_logo.render(self._logo_base, ev, portrait=self._logo_portraits.get(ev["id"])))
+        if ev.get("dynamic") and ev.get("portraits") and ev["id"] not in self._logo_portraits:
+            self._logo_portraits[ev["id"]] = None
+            from workers.workers import ImageWorker, run_worker
+            w = ImageWorker(ev["portraits"][0], ev["id"])
+
+            def got(res, self=self):
+                k, _s, path = res
+                if path:
+                    self._logo_portraits[k] = QPixmap(str(path))
+                    self._dress_logo()
+            w.signals.result.connect(got)
+            run_worker(w)
+
+    _logo_portraits: dict = {}
+
+    def _show_event_moments(self, force: bool = False):
+        """Each event on today gets its moment once (letter / ticket / credits),
+        one after the other when two share a day."""
+        from ui.event_message import show_moment
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        if tm.event_level == "off" and not force:
+            return
+        queue = [e for e in (getattr(tm, "events", None) or ([tm.event] if tm.event else []))]
+
+        def nxt():
+            while queue:
+                m = show_moment(self, queue.pop(0), force=force)
+                if m is not None:
+                    m.destroyed.connect(lambda *_: QTimer.singleShot(400, nxt))
+                    return
+        nxt()
+
     def _check_milestones(self):
         """Celebrate a new milestone once: toast + a short confetti burst."""
         try:
@@ -1871,6 +1929,7 @@ class MainWindow(QMainWindow):
             tm.reapply()
             if self._home_page is not None:
                 self._home_page.load()
+            QTimer.singleShot(1200, self._show_event_moments)
 
         from workers.workers import Worker, run_worker
         w = Worker(work)

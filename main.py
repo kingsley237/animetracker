@@ -110,6 +110,10 @@ def _run_check() -> int:
 def _date_override():
     """`--date 2026-12-25` shows Raikō as it will look that day (events)."""
     import os as _os
+    if "--simulate" in sys.argv:              # e.g. --simulate premiere:"One Piece"  /  farewell:Frieren
+        i = sys.argv.index("--simulate")
+        if i + 1 < len(sys.argv):
+            _os.environ["RAIKO_SIMULATE"] = sys.argv[i + 1]
     if "--date" in sys.argv:
         i = sys.argv.index("--date")
         if i + 1 < len(sys.argv):

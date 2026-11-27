@@ -187,3 +187,61 @@ def test_milestones_once_and_quiet_first_time(db):
     add_anime(db, "M9", "completed", media_type="movie")
     assert milestones.check(db) == ("movies", 10)
     assert milestones.check(db) is None                                   # never twice
+
+
+def test_holiday_and_show_share_a_day(qapp, db, monkeypatch):
+    from core import anime_events, events
+    from ui.theme import ThemeManager
+    monkeypatch.setenv("RAIKO_DATE", "2026-10-31")
+    monkeypatch.setattr(anime_events, "_schedule", lambda a, b: [_sched(1, 12, 300_000, mid=1)])
+    monkeypatch.setattr(anime_events, "tmdb_art", lambda *a: {"logo": "", "backdrops": []})
+    monkeypatch.setattr(anime_events, "prefetch", lambda ev: None)
+    ev = anime_events.detect(db)
+    ev["date"] = "2026-10-31"
+    anime_events.store("2026-10-31", ev)
+    evs = events.active_all()
+    assert [e["id"] for e in evs] == ["halloween", ev["id"]]              # the holiday keeps the look
+    tm = ThemeManager.get()
+    tm.reapply()
+    assert tm.event["id"] == "halloween" and len(tm.events) == 2
+    from ui.event_banner import EventBanner
+    b = EventBanner()
+    b.refresh()
+    assert len(b.findChildren(type(b._inner), "eventBannerInner")) == 1
+    from PyQt6.QtWidgets import QFrame
+    assert b.findChildren(QFrame, "eventBannerSep")                       # two rows
+    from ui.home_page import HomePage
+    page = HomePage(db)
+    page._load_event_picks()
+    assert len(page._events) == 2
+    # the logo dresses up and names the day
+    from PyQt6.QtGui import QPixmap
+    from ui import event_logo
+    px = event_logo.render(QPixmap(), tm.event)
+    assert not px.isNull() and event_logo.subtitle(tm.event, 2026) == "Happy Halloween"
+    assert event_logo.subtitle(ev, 2026).startswith("Premiere")
+    anime_events.store("2026-10-31", None)
+    tm.reapply()
+    b.deleteLater()
+    page.deleteLater()
+    pump(20)
+
+
+def test_moments_once_each(qapp, db):
+    from PyQt6.QtWidgets import QMainWindow, QWidget
+    from core import events
+    from ui.event_message import EventMoment, show_moment
+    win = QMainWindow()
+    win.setCentralWidget(QWidget())
+    win.resize(1000, 700)
+    ev = events.EVENTS[0]
+    m = show_moment(win, ev)
+    assert isinstance(m, EventMoment) and m.card.width() > 0
+    m.card.grab()                                                         # paints without error
+    m.close_moment()
+    assert show_moment(win, ev) is None                                   # once
+    m2 = show_moment(win, ev, force=True)                                 # re-open from the banner
+    assert m2 is not None
+    m2.close_moment()
+    win.deleteLater()
+    pump(20)

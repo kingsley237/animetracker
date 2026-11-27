@@ -19,6 +19,20 @@
 >
 > Anime events decorate by default (your theme stays) and offer "Wear its colours" — a full look built from the
 > show's own colour, adjusted until it passes the contrast checks.
+>
+> **Each event's moment (shown once, re-open from the banner):** holidays get a letter from the Raikō team
+> written for the day (centrepiece, display font, Rai in costume, signature); a premiere gets a cinema ticket
+> (the show's backdrop and official title logo, ADMIT ONE · EPISODE 1, date/time, barcode, Watch the trailer);
+> a farewell gets rolling end credits (title logo, "a story in N episodes", starring its cast, "and you" if you
+> watched it, Rank its songs). **The logo dresses up:** the glyph's arcs take the event's colours, it wears the
+> event's hat, the line under the wordmark names the day; for a show, its lead character sits in the glyph's core.
+> **Two events on one day** (e.g. Halloween + a premiere): the holiday keeps the look; the banner gets a row per
+> event, the show leads the spotlight, and the moments play one after the other.
+>
+> **Art sources:** AniList gives character portraits, cover, banner and the show's colour; TMDB gives the
+> official transparent title logos (PNG, a few SVG) and dozens of backdrops per show (a different one each
+> time). Neither offers character vector art (it's copyrighted studio material), so holiday ornaments stay
+> our own vector drawings. Preview any show: `main.py --simulate premiere:"One Piece"` / `farewell:Frieren`.
 
 Themes that change **everything you see and feel**, not just colours: palette, fonts, shapes, motion,
 backgrounds, ornaments on real UI elements (bats around the Settings button), a mascot, animated emoji,

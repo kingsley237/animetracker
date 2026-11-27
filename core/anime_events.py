@@ -112,7 +112,12 @@ def detect(db, day: Optional[datetime] = None, lib: Optional[Dict[int, Dict]] = 
         "score": m.get("averageScore"), "trailer": m.get("trailer") or None,
         "date": d.strftime("%Y-%m-%d"),
         "emoji": "🎬" if kind == "premiere" else "🌸", "anim": "🎉" if kind == "premiere" else "✨",
+        "romaji": (m.get("title") or {}).get("romaji") or "", "years": [m.get("seasonYear")],
+        "lib_status": (mine or {}).get("watch_status"),
     }
+    art = tmdb_art(title, (m.get("title") or {}).get("romaji") or "")
+    ev["logo"] = art["logo"]
+    ev["backdrops"] = art["backdrops"]
     if kind == "premiere":
         ev["greeting"] = "Premiere day"
         ev["line"] = f"{title} starts today" + (f" at {d.strftime('%H:%M')}." if d.hour or d.minute else ".")
@@ -122,10 +127,24 @@ def detect(db, day: Optional[datetime] = None, lib: Optional[Dict[int, Dict]] = 
         ev["greeting"] = f"Thank you, {title}"
         ev["line"] = f"{title} airs its final episode today."
         ev["tagline"] = f"{ev['episodes']} episodes. Thank you for the ride."
+    prefetch(ev)
     ev["extra"] = {"ambient": {"kind": "stars" if kind == "farewell" else "confetti", "density": 0.35,
                                "colors": [color, "#fff3c4", "#ffffff"]},
                    "ornaments": [{"anchor": "logo", "kind": "sparkles"}], "mascot": "party"}
     return ev
+
+
+def prefetch(ev: Dict):
+    """Warm the image cache (we're already off the UI thread) so the banner,
+    logo, ticket and spotlight appear complete, not piece by piece."""
+    try:
+        from core.image_cache import download_image
+        for u in [ev.get("logo"), *(ev.get("backdrops") or [])[:1], ev.get("banner"), ev.get("cover"),
+                  *(ev.get("portraits") or [])]:
+            if u:
+                download_image(u)
+    except Exception:
+        pass
 
 
 # ── daily cache (in settings) ─────────────────────────────────────────────────
@@ -144,3 +163,63 @@ def cached(today: str) -> Optional[Dict]:
 def store(today: str, ev: Optional[Dict]):
     from core.app_settings import app_settings
     app_settings().setValue("anime_event_today", json.dumps({"checked": today, "event": ev, "at": int(time.time())}))
+
+
+# ── TMDB art: the show's transparent title logo + many backdrops ──────────────
+
+def tmdb_art(title: str, alt: str = "") -> Dict:
+    """{'logo': url, 'backdrops': [urls]} for a show (empty when not found)."""
+    import random
+    try:
+        from core import tmdb
+        for q in [t for t in (title, alt) if t]:
+            res = (tmdb.get("/search/tv", {"query": q}, ttl=7 * 86400) or {}).get("results") or []
+            res = [r for r in res if 16 in (r.get("genre_ids") or [])] or res
+            if not res:
+                continue
+            tid = res[0]["id"]
+            im = tmdb.get(f"/tv/{tid}/images", {"include_image_language": "en,null,ja"}, ttl=7 * 86400) or {}
+            logos = sorted(im.get("logos") or [], key=lambda l: (l.get("iso_639_1") != "en",
+                                                                 l.get("file_path", "").endswith(".svg"),
+                                                                 -(l.get("vote_average") or 0)))
+            backs = [b for b in (im.get("backdrops") or []) if (b.get("iso_639_1") in (None, "", "xx"))] or \
+                (im.get("backdrops") or [])
+            backs = sorted(backs, key=lambda b: -(b.get("vote_average") or 0))[:20]
+            random.shuffle(backs)                    # a different look each time
+            return {"logo": tmdb.image_url(logos[0]["file_path"], "w500") if logos else "",
+                    "backdrops": [tmdb.image_url(b["file_path"], "w1280") for b in backs[:6]]}
+    except Exception:
+        pass
+    return {"logo": "", "backdrops": []}
+
+
+_SIM_Q = """query ($s: String) { Media(search: $s, type: ANIME, isAdult: false) {
+    id title { english romaji } popularity episodes status format isAdult season seasonYear averageScore
+    coverImage { extraLarge large color } bannerImage trailer { id site }
+    characters(sort: [FAVOURITES_DESC], perPage: 6) { nodes { name { full } image { large } } } } }"""
+
+
+def simulate(kind: str, query: str, db=None, day: Optional[datetime] = None) -> Optional[Dict]:
+    """Network: a premiere / farewell event for any show, as if it aired today
+    (for previews: main.py --simulate premiere:"One Piece")."""
+    from core.api import _post
+    data = _post(_SIM_Q, {"s": query}, timeout=20) or {}
+    m = data.get("Media")
+    if not m:
+        return None
+    d = day or datetime.now()
+    at = int(datetime(d.year, d.month, d.day, 18, 0).timestamp())
+    ep = 1 if kind == "premiere" else int(m.get("episodes") or 12)
+    lib = library_index(db) if db is not None else {}
+    fake = [{"episode": ep, "airingAt": at, "media": {**m, "popularity": max(int(m.get("popularity") or 0),
+                                                                             PREMIERE_POP + FAREWELL_POP)}}]
+    global _schedule
+    real = _schedule
+    try:
+        _schedule = lambda a, b: fake          # noqa: E731
+        ev = detect(None, d, lib)
+    finally:
+        _schedule = real
+    if ev:
+        ev["simulated"] = True
+    return ev

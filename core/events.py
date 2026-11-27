@@ -96,9 +96,35 @@ def season_key(ev: Dict, d: Optional[date] = None) -> str:
     return f"{ev['id']}-{window_dates(ev, d)[0].year}"
 
 
+_SIM: Dict = {}
+
+
+def _simulated(d: date) -> Optional[Dict]:
+    """RAIKO_SIMULATE='premiere:One Piece' (main.py --simulate ...) previews any show's event."""
+    spec = os.environ.get("RAIKO_SIMULATE", "").strip()
+    if not spec or ":" not in spec:
+        return None
+    key = f"{spec}|{d}"
+    if key not in _SIM:
+        kind, query = spec.split(":", 1)
+        try:
+            from core.anime_events import simulate
+            from datetime import datetime as _dt
+            ev = simulate(kind.strip(), query.strip(), None, _dt(d.year, d.month, d.day))
+        except Exception:
+            ev = None
+        if ev:
+            ev["date"] = d.strftime("%Y-%m-%d")
+        _SIM[key] = ev
+    return _SIM[key]
+
+
 def dynamic(d: Optional[date] = None) -> Optional[Dict]:
     """Today's anime-world event (premiere / farewell), from the daily check."""
     d = d or today()
+    sim = _simulated(d)
+    if sim is not None:
+        return sim
     try:
         from core.anime_events import cached
         ev = cached(d.strftime("%Y-%m-%d"))
@@ -109,16 +135,30 @@ def dynamic(d: Optional[date] = None) -> Optional[Dict]:
     return None
 
 
-def active(d: Optional[date] = None) -> Optional[Dict]:
-    """The event on today: an anime premiere / farewell (one day) first, then the calendar."""
+def calendar_event(d: Optional[date] = None) -> Optional[Dict]:
     d = d or today()
-    dyn = dynamic(d)
-    if dyn is not None:
-        return dyn
     for ev in EVENTS:
         if _in_window(ev, d):
             return ev
     return None
+
+
+def active_all(d: Optional[date] = None) -> List[Dict]:
+    """Everything on today. When a holiday and an anime event share a day, the
+    holiday keeps the look (people expect it all week) and the anime event leads
+    the spotlight with its own banner and moment."""
+    d = d or today()
+    cal = calendar_event(d)
+    dyn = dynamic(d)
+    if cal is not None and dyn is not None and cal.get("category") == "anime":
+        return [dyn]                              # a premiere day outranks premiere *week*
+    return [e for e in (cal, dyn) if e is not None]
+
+
+def active(d: Optional[date] = None) -> Optional[Dict]:
+    """The event that sets today's look (the primary one)."""
+    evs = active_all(d)
+    return evs[0] if evs else None
 
 
 def upcoming(d: Optional[date] = None, limit: int = 6) -> List[Tuple[Dict, date, date]]:

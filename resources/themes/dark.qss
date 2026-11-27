@@ -2203,6 +2203,7 @@ QLabel#eventBannerTitle { color: #f4f5fa; font-size: 14px; background: transpare
 QLabel#eventBannerSub { color: #9da5c0; font-size: 12px; background: transparent; }
 QPushButton#eventBannerClose { background: transparent; color: #8c93ad; border: none; font-size: 13px; }
 QPushButton#eventBannerClose:hover { color: #ffffff; }
+QFrame#eventBannerSep { background: rgba(255,255,255,0.08); border: none; margin: 0 16px; }
 QWidget#coachMark { background: #161925; border: 1px solid #8b7bff; border-radius: 14px; }
 QLabel#coachText { color: #e8eaf2; font-size: 13px; background: transparent; }
 

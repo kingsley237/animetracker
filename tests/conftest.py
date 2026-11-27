@@ -199,7 +199,8 @@ def _reset_theme():
     try:
         from ui.theme import BASE, ThemeManager
         tm = ThemeManager.get()
-        if tm.theme.id != BASE.id or tm.font_scale != 1.0:
+        tm.event, tm.events, tm.event_level = None, [], "off"
+        if tm.theme.id != BASE.id or tm.font_scale != 1.0 or tm.theme.extra:
             tm.apply(BASE, 1.0)
     except Exception:
         pass

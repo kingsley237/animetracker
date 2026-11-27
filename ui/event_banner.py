@@ -42,38 +42,67 @@ class EventBanner(QFrame):
         self.hide()
 
     def refresh(self):
-        """Show the banner if an event is on and you haven't answered yet this year."""
+        """One row per event on today you haven't answered yet (a holiday and a
+        premiere can share a day: the holiday keeps the look, the show still
+        gets its moment)."""
         tm = ThemeManager.get()
-        ev = getattr(tm, "event", None)
         if self.layout() is None:
             outer = QVBoxLayout(self)
             outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(0)
         old = getattr(self, "_inner", None)
         if old is not None:
             self.layout().removeWidget(old)
             old.deleteLater()
             self._inner = None
-        if ev is None or events.choice(ev):
+        evs = [e for e in (getattr(tm, "events", None) or ([tm.event] if tm.event else []))
+               if not events.choice(e)]
+        if tm.event_level == "off" and tm.event is not None and tm.event in evs:
+            evs.remove(tm.event)
+        if not evs:
             self.hide()
             return
-        self.ev = ev
-        level = tm.event_level
+        self.ev = evs[0]
+        self._art = None
         self._inner = QWidget()
         self._inner.setObjectName("eventBannerInner")
         self.layout().addWidget(self._inner)
-        lay = QHBoxLayout(self._inner)
+        col = QVBoxLayout(self._inner)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        for i, ev in enumerate(evs):
+            if i:
+                line = QFrame()
+                line.setObjectName("eventBannerSep")
+                line.setFixedHeight(1)
+                col.addWidget(line)
+            row = QWidget()
+            col.addWidget(row)
+            self._row(row, ev, tm.event_level if ev is tm.event else "secondary")
+        self._inner.show()
+        self.setMinimumHeight(max(72, self._inner.sizeHint().height()))
+        self.show()
+
+    def _row(self, host: QWidget, ev, level: str):
+        tm = ThemeManager.get()
+        lay = QHBoxLayout(host)
         lay.setContentsMargins(16, 12, 12, 12)
         lay.setSpacing(14)
         if ev.get("portraits"):
             lay.addWidget(_Portraits(ev["portraits"], ev.get("color") or "#8b7bff"))
-            self._load_art(ev.get("banner") or ev.get("cover") or "")
+            if self._art is None:
+                self._load_art((ev.get("backdrops") or [""])[0] or ev.get("banner") or ev.get("cover") or "")
         else:
-            self._art = None
             lay.addWidget(AnimatedEmoji(ev["anim"], 44))
         col = QVBoxLayout()
         col.setSpacing(2)
         own = info(tm.saved_id)["name"]
-        if ev.get("dynamic") and level == "full":
+        from ui.event_message import moment_label
+        note = (moment_label(ev), False, lambda _b=None, e=ev: self._moment(e))
+        if level == "secondary":
+            title, sub = ev["line"], (ev.get("tagline") or "") + f"  ·  {tm.event['name']} keeps today's look."
+            buttons = [("Nice", True, self._keep), note]
+        elif ev.get("dynamic") and level == "full":
             title, sub = ev["line"], f"Raikō is wearing {ev['name']}'s colours today."
             buttons = [("Keep it", True, self._keep), ("Switch back", False, self._off)]
         elif ev.get("dynamic"):
@@ -96,6 +125,8 @@ class EventBanner(QFrame):
             title, sub = f"It's {ev['name']}! Dress Raikō up?", "You asked to be asked first."
             buttons = [("Yes, dress up", True, self._full), ("Just decorations", False, self._deco),
                        ("No thanks", False, self._off)]
+        if level != "secondary" and len(buttons) < 4:
+            buttons.insert(1, note)
         t = QLabel(f"<b>{ev['greeting']}</b>  ·  {title}")
         t.setObjectName("eventBannerTitle")
         t.setWordWrap(True)
@@ -107,18 +138,23 @@ class EventBanner(QFrame):
         lay.addLayout(col, 1)
         for text, primary, cb in buttons:
             b = _btn(text, primary)
-            b.clicked.connect(lambda _=False, cb=cb, b=b: cb(b))
+            b.clicked.connect(lambda _=False, cb=cb, b=b, e=ev: self._on(e, cb, b))
             lay.addWidget(b)
         x = QPushButton("✕")
         x.setObjectName("eventBannerClose")
         x.setFixedSize(28, 28)
         x.setToolTip("Close — the event stays as it is")
         x.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        x.clicked.connect(self._close)
+        x.clicked.connect(lambda _=False, e=ev: self._close(e))
         lay.addWidget(x, alignment=Qt.AlignmentFlag.AlignTop)
-        self._inner.show()
-        self.setMinimumHeight(max(72, self._inner.sizeHint().height()))
-        self.show()
+
+    def _on(self, ev, cb, b):
+        self.ev = ev
+        cb(b)
+
+    def _moment(self, ev):
+        from ui.event_message import show_moment
+        show_moment(self.window(), ev, force=True)
 
     # ── the show's key art, faintly behind the banner ────────────────────────
 
@@ -172,7 +208,7 @@ class EventBanner(QFrame):
     # ── choices ──────────────────────────────────────────────────────────────
 
     def _done(self, msg: Optional[str] = None):
-        self.hide()
+        self.refresh()                       # the next event on today (if any) stays
         if msg:
             from ui.toast import Toast
             Toast.show(self.window(), msg, kind="info", duration=6000)
@@ -211,9 +247,9 @@ class EventBanner(QFrame):
         ThemeManager.get().reapply()
         self._done(f"{info(vid)['name']} it is. Change looks any time in Settings → Appearance → Event themes.")
 
-    def _close(self):
-        events.set_choice(self.ev, "kept")
-        self.hide()
+    def _close(self, ev=None):
+        events.set_choice(ev or self.ev, "kept")
+        self.refresh()
         show_coach_mark(self.window())
 
 

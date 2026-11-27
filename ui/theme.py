@@ -230,6 +230,7 @@ class ThemeManager(QObject):
         self.event = None
         self.event_level = "off"
         self.ended_event = None
+        self.events = []
 
     @classmethod
     def get(cls) -> "ThemeManager":
@@ -344,6 +345,7 @@ class ThemeManager(QObject):
             from core import events
             theme, ev, level = events.resolve(theme, tid)
             self.event, self.event_level = ev, level
+            self.events = events.active_all()
             last = str(st.value("event_last", "") or "")
             if ev is not None and level != "off":
                 st.setValue("event_last", ev["id"])

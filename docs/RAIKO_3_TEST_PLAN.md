@@ -179,6 +179,10 @@ meantime, it doesn't understand movies).
   - [ ] after the event (normal date) → "<event> is over — back to <theme>" toast
   - [ ] anime events: `--date 2026-10-03` (Black Clover S2 premiere, on your list) → banner with its characters, "Wear its colours", spotlight with its art, characters orbiting, Trailer; `--date 2026-09-27` (a finale) → "Thank you, …", Rank its songs; Season Premiere Week shows the season's most anticipated
   - [ ] Settings → Event themes: "Big premiere days" / "Farewells" rows (Automatic / Full / Decorations / Off)
+  - [ ] `--simulate premiere:"One Piece"` → ticket moment (logo, backdrop, stub, Watch the trailer / Add to my list), sidebar logo with Luffy in the core + "Premiere · ONE PIECE", banner portraits, spotlight with title logo and orbiting characters
+  - [ ] `--simulate farewell:Frieren` → rolling end credits, Rank its songs
+  - [ ] `--date 2026-10-31 --simulate premiere:"Chainsaw Man"` → Halloween look kept; letter first, then the ticket; banner has two rows; spotlight leads with the premiere
+  - [ ] holiday letters: `--date 2026-12-25`, `2026-10-31`, `2027-01-01`; logo wears Santa / witch / party hat; each letter shows once ("Read our note" re-opens)
   - [ ] milestones: your next one (2,500 episodes / 10 movies / 100 series) → toast + short confetti, once
 
 ## After 3.0 🕒

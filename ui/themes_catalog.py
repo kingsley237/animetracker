@@ -87,7 +87,7 @@ _EVENT_DEFS: Dict[str, Dict] = {
                   "green": "#4caf6e", "pink": "#ef7b6b", "sky": "#7fb7d6"},
         "fonts": {"display": "Fraunces"},
         "extra": {"ambient": {"kind": "embers", "density": 0.45},
-                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "add_button", "kind": "holly"},
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}, {"anchor": "add_button", "kind": "holly"},
                                 {"anchor": "hall_nav", "kind": "sparkles"}], "mascot": "santa"}},
     "xmas_snow": {
         "name": "Snowfall Night", "tagline": "Deep blue night, quiet snow.", "dark": True,
@@ -95,7 +95,7 @@ _EVENT_DEFS: Dict[str, Dict] = {
                   "green": "#4fd1a1", "red": "#ff7a85", "pink": "#ff9fc6", "sky": "#9fdcff"},
         "fonts": {},
         "extra": {"ambient": {"kind": "snow", "density": 0.9},
-                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "settings_button", "kind": "snowcap"},
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}, {"anchor": "settings_button", "kind": "snowcap"},
                                 {"anchor": "add_button", "kind": "holly"}], "mascot": "santa"}},
     "xmas_candy": {
         "name": "Candy Cane", "tagline": "Playful red, peppermint white.", "dark": True,
@@ -104,7 +104,7 @@ _EVENT_DEFS: Dict[str, Dict] = {
         "fonts": {"display": "Quicksand"},
         "extra": {"radius": 1.2, "ambient": {"kind": "confetti", "density": 0.35,
                                              "colors": ["#ff4d6d", "#ffffff", "#3ccf8e"]},
-                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "add_button", "kind": "holly"}],
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}, {"anchor": "add_button", "kind": "holly"}],
                   "mascot": "santa"}},
     "xmas_golden": {
         "name": "Golden Eve", "tagline": "Black tie, warm gold, candlelight.", "dark": True,
@@ -122,7 +122,7 @@ _EVENT_DEFS: Dict[str, Dict] = {
         "fonts": {"display": "Fraunces"},
         "extra": {"ambient": {"kind": "confetti", "density": 0.4,
                               "colors": ["#ffd36e", "#b18cff", "#ff7ac6", "#7fd8ff"]},
-                  "ornaments": [{"anchor": "logo", "kind": "party_hat"}, {"anchor": "settings_button", "kind": "sparkles"}],
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}, {"anchor": "settings_button", "kind": "sparkles"}],
                   "mascot": "party"}},
     "ny_sunrise": {
         "name": "Hatsuhinode", "tagline": "The first sunrise of the year, warm and hopeful.", "dark": True,
@@ -154,7 +154,7 @@ _EVENT_DEFS: Dict[str, Dict] = {
                   "amber": "#ffcf6b", "red": "#ff5a5a", "sky": "#8fb6ff"},
         "fonts": {},
         "extra": {"ambient": {"kind": "fireflies", "density": 0.55, "colors": ["#a6fff0", "#e0fffa"]},
-                  "ornaments": [{"anchor": "settings_button", "kind": "lantern"}, {"anchor": "logo", "kind": "lantern"}],
+                  "ornaments": [{"anchor": "settings_button", "kind": "lantern"}],
                   "mascot": "witch"}},
 }
 
