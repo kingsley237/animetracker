@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
 from workers.workers import PRIORITY_INTERACTIVE, ImageWorker, Worker, run_worker
 
 LIB = {"anime": ("MIROKU", "#8b7bff"), "tv": ("KINEMA · TV", "#38bdf8"),
-       "movie": ("KINEMA · MOVIE", "#fbbf24")}
+       "movie": ("KINEMA · MOVIE", "#fbbf24"), "event": ("RAIKŌ", "#f5c451")}
 
 
 def _img_url(row: Dict, wide: bool) -> str:
@@ -55,8 +56,14 @@ class _Img:
 
     def _draw_cover(self, p: QPainter, r: QRectF, y_bias: float = 0.5):
         if self._pix and not self._pix.isNull():
-            sc = self._pix.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                  Qt.TransformationMode.SmoothTransformation)
+            key = (self._pix.cacheKey(), int(r.width()), int(r.height()))
+            cached = getattr(self, "_scaled", None)
+            if cached and cached[0] == key:
+                sc = cached[1]
+            else:
+                sc = self._pix.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                      Qt.TransformationMode.SmoothTransformation)
+                self._scaled = (key, sc)
             p.drawPixmap(int(r.x()), int(r.y()), sc, int((sc.width() - r.width()) / 2),
                          int((sc.height() - r.height()) * y_bias), int(r.width()), int(r.height()))
         else:
@@ -151,11 +158,14 @@ class _Spotlight(QWidget, _Img):
         self.btn1.clicked.connect(lambda: self._run(1))
         self.btn2.clicked.connect(lambda: self._run(2))
         self._auto = QTimer(self)
-        self._auto.timeout.connect(lambda: self.show_slide(self.idx + 1) if not self._hover else None)
+        self._auto.timeout.connect(self._advance)
         self._auto.start(9000)
         self._clock = QTimer(self)
         self._clock.timeout.connect(self._tick)
         self._clock.start(30_000)
+        self._hero_t0 = datetime.now().timestamp()
+        self._hero_timer = QTimer(self)
+        self._hero_timer.timeout.connect(self._hero_tick)
 
     # compat with the previous single-item hero
     @property
@@ -181,11 +191,20 @@ class _Spotlight(QWidget, _Img):
             (f"color:{color};background:transparent;border:1.5px solid {color};" if pick else
              f"color:#0b0d12;background:{sl.get('badge_color') or color};border:none;")
             + "border-radius:8px;padding:3px 10px;font-size:10px;font-weight:900;letter-spacing:1.4px;")
+        self.badge.ensurePolished()
+        f = self.badge.font()
+        f.setPixelSize(10)
+        f.setBold(True)
+        from PyQt6.QtGui import QFontMetrics
+        # QSS letter-spacing isn't in the size hint: reserve it so the badge never clips
+        self.badge.setMinimumWidth(QFontMetrics(f).horizontalAdvance(sl["badge"]) + int(len(sl["badge"]) * 1.6) + 30)
         self.lib.setText(tag)
         self.lib.setStyleSheet(f"color:{color};font-size:10px;font-weight:800;letter-spacing:1.4px;"
                                "background:rgba(8,9,14,0.6);border-radius:8px;padding:3px 9px;")
         self.reason.setText(sl.get("reason") or "")
         self.reason.setVisible(bool(sl.get("reason")))
+        self.title.setWordWrap(True)
+        self.title.setMinimumHeight(0)
         self.title.setText(sl["title"])
         self.line.setText(sl.get("line") or "")
         self.blurb.setText(sl.get("blurb") or "")
@@ -201,7 +220,72 @@ class _Spotlight(QWidget, _Img):
         self.next.setVisible(many)
         self._load_img(sl.get("img") or "")
         self._tick()
+        if sl.get("logo"):                       # the show's own title art instead of plain text
+            w = ImageWorker(sl["logo"], ("logo", self.idx))
+            w.signals.result.connect(self._on_logo)
+            run_worker(w)
+        self._portraits = []
+        for i, url in enumerate(sl.get("portraits") or []):
+            self._portraits.append(None)
+            w = ImageWorker(url, ("portrait", self.idx, i))
+            w.signals.result.connect(self._on_portrait)
+            run_worker(w)
+        from ui.decor import motion_level
+        if sl["kind"] == "event" and motion_level() != "off":
+            self._hero_timer.start(40)
+        else:
+            self._hero_timer.stop()
         self.update()
+
+    def _on_logo(self, result):
+        try:
+            (_tag, idx), _s, path = result
+            if not path or idx != self.idx:
+                return
+            pm = QPixmap(str(path))
+            if pm.isNull():
+                return
+            dpr = self.devicePixelRatioF()
+            sc = pm.scaled(int(460 * dpr), int(96 * dpr), Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+            sc.setDevicePixelRatio(dpr)
+            self.title.setWordWrap(False)              # word-wrapped labels give pixmaps no height
+            self.title.setMinimumHeight(int(sc.height() / dpr) + 8)
+            self.title.setPixmap(sc)
+            self.title.setToolTip(self.slides[self.idx]["title"])
+        except RuntimeError:
+            pass
+
+    def _on_portrait(self, result):
+        try:
+            (_tag, idx, i), _s, path = result
+        except Exception:
+            return
+        try:
+            if path and idx == self.idx and i < len(self._portraits):
+                self._portraits[i] = QPixmap(str(path))
+                self.update(self._hero_rect().toAlignedRect().adjusted(-20, -20, 20, 20))
+        except RuntimeError:
+            pass
+
+    def _advance(self):
+        """Auto-advance; an event slide stays up twice as long."""
+        if self._hover or not self.slides:
+            return
+        if self.slides[self.idx]["kind"] == "event" and not getattr(self, "_dwelt", False):
+            self._dwelt = True
+            return
+        self._dwelt = False
+        self.show_slide(self.idx + 1)
+
+    def _hero_rect(self) -> QRectF:
+        h = self.height() * 0.86
+        return QRectF(self.width() - h * 0.95 - 40, (self.height() - h) / 2, h * 0.95, h)
+
+    def _hero_tick(self):
+        if not self.isVisible() or self.window().isMinimized():
+            return
+        self.update(self._hero_rect().toAlignedRect().adjusted(-12, -12, 12, 12))
 
     def _run(self, which: int):
         sl = self.slides[self.idx] if self.slides else None
@@ -255,6 +339,12 @@ class _Spotlight(QWidget, _Img):
             p.end()
             return
         sl = self.slides[self.idx]
+        if sl["kind"] == "event":
+            from ui.decor import draw_hero
+            t = datetime.now().timestamp() - self._hero_t0
+            draw_hero(p, self._hero_rect(), t, sl.get("event") or "",
+                      [pm for pm in getattr(self, "_portraits", [])] if sl.get("portraits") else None,
+                      sl.get("ring") or "")
         prog = sl.get("progress")
         if prog is not None and sl["kind"] == "update":
             p.setPen(Qt.PenStyle.NoPen)
@@ -737,6 +827,8 @@ class HomePage(QWidget):
         col.setSpacing(2)
         self.hello = QLabel()
         self.hello.setObjectName("homeHello")
+        from ui import decor as _decor
+        _decor.register("home_greeting", self.hello)
         self.date = QLabel()
         self.date.setObjectName("homeDate")
         col.addWidget(self.hello)
@@ -762,6 +854,9 @@ class HomePage(QWidget):
         self.res_lay.setContentsMargins(0, 0, 0, 0)
         self.res_lay.setSpacing(6)
         self.results.setVisible(False)
+        from ui.event_banner import EventBanner
+        self.event_banner = EventBanner()
+        self.lay.addWidget(self.event_banner)
         self.lay.addWidget(self.results)
 
         self.sections = QWidget()
@@ -828,7 +923,13 @@ class HomePage(QWidget):
     def load(self):
         h = datetime.now().hour
         self.hello.setText("Good morning" if 5 <= h < 12 else "Good afternoon" if h < 18 else "Good evening")
-        d = datetime.now()
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        if getattr(tm, "event", None) is not None and tm.event_level != "off":
+            self.hello.setText(tm.event["greeting"])
+        self.event_banner.refresh()
+        from core.events import today
+        d = today()                                   # follows --date previews too
         self.date.setText(d.strftime("%A, %B ") + str(d.day))
 
         def work():
@@ -840,6 +941,40 @@ class HomePage(QWidget):
         w.signals.result.connect(self._render)
         run_worker(w, PRIORITY_INTERACTIVE)
         self._load_picks()
+        self._load_event_picks()
+
+    def _load_event_picks(self):
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        ev = getattr(tm, "event", None)
+        if ev is None or tm.event_level == "off":
+            self._event_picks = []
+            self._event = None
+            return
+        self._event = ev
+        self._events = [e for e in (getattr(tm, "events", None) or [ev])]
+        cal = [e for e in self._events if not e.get("dynamic")]
+        self._event_picks = []
+        if not cal:                           # the show itself is the event: no list of picks
+            return
+        ev_id = cal[0]["id"]
+
+        def work():
+            from core.event_picks import picks
+            return picks(ev_id, self.db, limit=5)
+
+        def done(hits):
+            from PyQt6 import sip
+            if sip.isdeleted(self):
+                return
+            self._event_picks = hits or []
+            if getattr(self, "_updates", None) is not None:
+                self._render_spotlight(keep=True)
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        w.signals.error.connect(lambda _e: done([]))
+        run_worker(w)
 
     def _load_picks(self, force: bool = False):
         import time as _t
@@ -940,6 +1075,18 @@ class HomePage(QWidget):
                 s2 = self._airing_slide(nxt) if nxt["mode"] == "airing" else self._planned_slide(nxt)
                 slides.insert(0, s2)
         slides += [self._pick_slide(h) for h in self._rotated_picks()]
+        ev = getattr(self, "_event", None)
+        if ev is not None:
+            evs = getattr(self, "_events", None) or [ev]
+            # the one-day show leads; the holiday follows with its picks
+            evs = sorted(evs, key=lambda e: 0 if e.get("dynamic") else 1)
+            lead: List[Dict] = []
+            for e in evs:
+                lead += self._event_slides(e, [] if e.get("dynamic") else getattr(self, "_event_picks", []))
+            slides = lead + slides
+            shown = {s.get("key") for s in getattr(self.hero, "slides", [])}
+            if any(f"ev-{e['id']}" not in shown for e in evs):
+                keep = False                       # an event just arrived: lead with it
         self.hero.setVisible(bool(slides))
         self.hero_empty.setVisible(not slides)
         if slides:
@@ -1025,6 +1172,83 @@ class HomePage(QWidget):
                 "line": f"{it['label']}   ·   {it['sub']}" if it.get("sub") else it["label"],
                 "badge_color": "#c7cbe0", "item": it,
                 "primary": ("Start watching", lambda i=it["id"]: self.open_title.emit(i))}
+
+    def _show_slide(self, ev: Dict) -> Dict:
+        """Premiere / farewell: the show leads the spotlight, its characters around it."""
+        from core.events import readable_accent
+        when = datetime.fromtimestamp(ev["airing_at"])
+        at = when.strftime("%H:%M")
+        bits = ([f"Episode 1 · today at {at}"] if ev["kind"] == "premiere" else
+                [f"Final episode ({ev.get('episode')}) · today at {at}"])
+        if ev.get("score"):
+            bits.append(f"★ {ev['score'] / 10:.1f}")
+        if ev.get("characters"):
+            bits.append(", ".join(ev["characters"][:3]))
+        s = {"kind": "event", "key": f"ev-{ev['id']}", "event": ev["kind"], "media": "event",
+             "badge": "PREMIERE DAY" if ev["kind"] == "premiere" else "FAREWELL",
+             "badge_color": readable_accent(ev.get("color") or "#8b7bff"),
+             "ring": readable_accent(ev.get("color") or "#8b7bff"),
+             "title": ev["name"], "img": (ev.get("backdrops") or [""])[0] or ev.get("banner") or ev.get("cover") or "",
+             "reason": "", "logo": ev.get("logo") or "",
+             "progress": None, "line": "   ·   ".join(bits), "blurb": ev.get("tagline") or "",
+             "portraits": ev.get("portraits") or [], "countdown_to": ev["airing_at"] if ev["kind"] == "premiere" else None,
+             "line_base": bits[0]}
+        if ev.get("lib_id"):
+            s["primary"] = ("Open details", lambda i=ev["lib_id"]: self.open_title.emit(i))
+        else:
+            hit = {"media_type": "anime", "provider_id": ev["anilist_id"], "title": ev["name"],
+                   "poster_url": ev.get("cover") or "", "raw": {}}
+            s["primary"] = ("Preview && add", lambda h=hit: self.open_pick.emit(h))
+        tr = ev.get("trailer") or {}
+        if ev["kind"] == "premiere" and tr.get("id"):
+            s["secondary"] = ("▶  Trailer", lambda: self.play_trailer.emit(tr["id"], tr.get("site") or "youtube",
+                                                                         ev["name"]))
+        elif ev["kind"] == "farewell":
+            s["secondary"] = ("🏆  Rank its songs", lambda: self._rank_songs(ev["name"]))
+        return s
+
+    def _rank_songs(self, title: str):
+        from ui.music_rank import SongFinder, rank_flow
+        f = SongFinder(self.db, "op", self.window(), query=title)
+        if f.exec() and f.chosen:
+            rank_flow(self.db, self.window(), f.lst, f.chosen)
+
+    def _event_slides(self, ev: Dict, picks: List[Dict]) -> List[Dict]:
+        """The event leads the spotlight: a centrepiece slide, then its picks."""
+        if ev.get("dynamic"):
+            return [self._show_slide(ev)]
+        from core import tmdb
+        first = picks[0] if picks else None
+        img = ""
+        if first:
+            raw = first.get("raw") or {}
+            img = (raw.get("bannerImage") or first.get("poster_url")) if first["media_type"] == "anime" else \
+                (tmdb.image_url(raw.get("backdrop_path"), "w1280") or first.get("poster_url"))
+        what = "anime" if ev.get("category") == "anime" else "picks"
+        head = {"kind": "event", "key": f"ev-{ev['id']}", "event": ev["id"].split("_")[0]
+                if ev["id"].startswith("season") else ev["id"], "badge": ev["greeting"].upper(), "media": "event",
+                "title": ev["greeting"] if not picks else
+                (f"{len(picks)} {what} for {ev['name']}" if what == "picks" else "The season's most anticipated"),
+                "img": img, "reason": "", "progress": None,
+                "line": "   ·   ".join(p.get("title") or "" for p in picks[:3]),
+                "blurb": ev.get("tagline") or ""}
+        if first:
+            head["primary"] = self._pick_action(first)
+            if len(picks) > 1:
+                head["secondary"] = ("Next pick  ›", lambda: self.hero.show_slide(self.hero.idx + 1))
+        out = [head]
+        for h in picks:
+            s = self._pick_slide(h)
+            s["badge"] = f"{ev['name'].upper()} PICK"
+            s["key"] = f"ev{ev['id']}{h['media_type']}{h['provider_id']}"
+            s["primary"] = self._pick_action(h)
+            out.append(s)
+        return out
+
+    def _pick_action(self, h: Dict):
+        if h.get("_lib_id"):
+            return ("Open details", lambda i=h["_lib_id"]: self.open_title.emit(i))
+        return ("Preview && add", lambda h=h: self.open_pick.emit(h))
 
     def _pick_slide(self, h: Dict) -> Dict:
         from core import tmdb

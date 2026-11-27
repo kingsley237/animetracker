@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
 from PyQt6.QtGui import QPixmap, QColor, QFont, QIcon, QCursor, QPainterPath, QRegion
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 
 from core.database import DatabaseManager
 from workers.workers import Worker, ImageWorker, AiringRefreshWorker, run_worker
@@ -30,7 +31,7 @@ from ui.update_banner import UpdateBanner
 # Raikō: one sidebar, a section per library. Each library keeps its own
 # tools under its own name.
 NAV_SECTIONS = [
-    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall")]),
+    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall"), ("Music", "♪", "music")]),
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
@@ -128,6 +129,26 @@ class MainWindow(QMainWindow):
         self._load_theme()
         self._build_ui()
         self._setup_timers()
+        # Living themes: ambient effects, ornaments, Rai (click-through overlay)
+        from ui import decor
+        decor.register("settings_button", self._settings_btn)
+        decor.register("add_button", self._add_btn)
+        if "hall" in self._nav_buttons:
+            decor.register("hall_nav", self._nav_buttons["hall"])
+        self._decor = decor.DecorLayer(self.centralWidget())
+        from ui.theme import ThemeManager as _TM
+        _TM.get().changed.connect(self._dress_logo)
+        self._dress_logo()
+        QTimer.singleShot(1800, self._event_ended_note)
+        QTimer.singleShot(2600, self._show_event_moments)
+        QTimer.singleShot(6000, self._check_anime_event)
+        QTimer.singleShot(4000, self._check_milestones)
+        QTimer.singleShot(3200, self._sweep_finished)
+        self._milestone_timer = QTimer(self)
+        self._milestone_timer.setSingleShot(True)
+        self._milestone_timer.timeout.connect(self._check_milestones)
+        self.detail_panel.episode_changed.connect(lambda _i: self._milestone_timer.start(2500))
+        self.detail_panel.watch_status_changed.connect(lambda _i, _s: self._milestone_timer.start(2500))
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
@@ -157,7 +178,8 @@ class MainWindow(QMainWindow):
         if not qss_path.exists():
             qss_path = Path(__file__).parent.parent / "resources" / "themes" / "dark.qss"
         if qss_path.exists():
-            QApplication.instance().setStyleSheet(qss_path.read_text(encoding="utf-8"))
+            from ui.theme import ThemeManager
+            ThemeManager.get().set_base_stylesheet(qss_path.read_text(encoding="utf-8"))
 
     def toggle_theme(self):
         from core.app_settings import preferred_theme, set_preferred_theme
@@ -199,13 +221,16 @@ class MainWindow(QMainWindow):
         self._discover_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(8):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame
+        for _ in range(9):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame, 9 Music
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
         self._kinema_discover = None
         self._home_page = None
         self._hall_page = None
+        self._music_page = None
+        from ui.music_actions import MusicHub
+        MusicHub.get().db = self.db
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -278,6 +303,8 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
+        from ui import decor as _decor
+        _decor.register("sidebar", sidebar)
         self.sidebar = sidebar
         sidebar.setFixedWidth(232)
         lay = QVBoxLayout(sidebar)
@@ -301,7 +328,10 @@ class MainWindow(QMainWindow):
                 Qt.TransformationMode.SmoothTransformation
             )
             icon_lbl.setPixmap(px)
+            self._logo_lbl, self._logo_px, self._logo_base = icon_lbl, px, QPixmap(str(icon_path))
             icon_lbl.setObjectName("sidebarLogoMark")
+            from ui import decor as _decor
+            _decor.register("logo", icon_lbl)
             icon_lbl.setFixedSize(48, 44)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -311,6 +341,7 @@ class MainWindow(QMainWindow):
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ll.addWidget(name, alignment=Qt.AlignmentFlag.AlignHCenter)
         sub = QLabel("Anime · TV · Movies")
+        self._logo_sub = sub
         sub.setObjectName("appLogoSub")
         sub.setWordWrap(False)
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -375,6 +406,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self._open_add_dialog)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_search)
+        QShortcut(QKeySequence("Ctrl+M"), self, activated=lambda: self._navigate("music"))
         lay.addWidget(add_btn)
         lay.addSpacing(8)
 
@@ -789,6 +821,16 @@ class MainWindow(QMainWindow):
                 self.stack.insertWidget(7, page)
             self.stack.setCurrentIndex(7)
             self._home_page.load()
+        elif page_id == "music":
+            if self._music_page is None:
+                from ui.music_page import MusicPage
+                page = MusicPage(self.db, self)
+                page.open_title.connect(self._open_title)
+                self._music_page = page
+                self.stack.removeWidget(self.stack.widget(9))
+                self.stack.insertWidget(9, page)
+            self.stack.setCurrentIndex(9)
+            self._music_page.load()
         elif page_id == "hall":
             if self._hall_page is None:
                 from ui.hall_page import HallPage
@@ -1206,6 +1248,7 @@ class MainWindow(QMainWindow):
         if lib_id < 0:
             self._load_library()
             return
+        self._queue_auto_complete(lib_id)          # TV episodes come through here
         row = self.db.get_anime_by_id(lib_id)
         card = self._cards.get(lib_id)
         if not row:
@@ -1532,6 +1575,7 @@ class MainWindow(QMainWindow):
         if row and card is not None:
             card.update_data(row)
         self._update_stats_strip()
+        self._queue_auto_complete(lib_id)
 
     def _on_hall_changed(self):
         """The Hall changed: refresh what shows Hall of Fame state elsewhere."""
@@ -1561,6 +1605,67 @@ class MainWindow(QMainWindow):
         if anime and anime_id in self._cards:
             self._cards[anime_id].update_data(anime)
         self._update_stats_strip()
+        self._queue_auto_complete(anime_id)
+
+    # ── finishing something moves it to Completed (with Undo) ────────────────
+
+    def _queue_auto_complete(self, lib_id: int):
+        """Checked a moment after the last change, so ticking several episodes
+        in a row gives one result."""
+        if not lib_id:
+            return
+        self._ac_pending = getattr(self, "_ac_pending", set())
+        self._ac_pending.add(lib_id)
+        if getattr(self, "_ac_timer", None) is None:
+            self._ac_timer = QTimer(self)
+            self._ac_timer.setSingleShot(True)
+            self._ac_timer.timeout.connect(self._run_auto_complete)
+        self._ac_timer.start(700)
+
+    def _run_auto_complete(self):
+        from core import status_rules
+        ids, self._ac_pending = list(self._ac_pending), set()
+        moved = [m for m in (status_rules.auto_complete(self.db, lid) for lid in ids) if m]
+        if moved:
+            self._after_auto_complete(moved)
+
+    def _after_auto_complete(self, moved: list):
+        from core import status_rules
+        from ui.toast import Toast
+        for m in moved:
+            self._refresh_after_status(m["id"], "completed")
+        if len(moved) == 1:
+            m = moved[0]
+            msg = f"You finished “{m['name']}” — moved to {m['label']}. How was it?"
+        else:
+            msg = f"{len(moved)} titles you'd finished were moved to Completed."
+
+        def undo():
+            for x in moved:
+                status_rules.undo_auto_complete(self.db, x)
+                self._refresh_after_status(x["id"], x["prev"])
+            back = (f"“{moved[0]['name']}” is back in {moved[0]['prev_label']}." if len(moved) == 1
+                    else "they're back where they were.")
+            Toast.show(self, "Undone — " + back, kind="info")
+        Toast.show(self, msg, kind="success", duration=9000, action=("Undo", undo))
+
+    def _refresh_after_status(self, lib_id: int, status: str):
+        self._on_watch_status_changed(lib_id, status)
+        dp = getattr(self, "detail_panel", None)
+        if dp is not None and getattr(dp, "_anime", None) and dp._anime.get("id") == lib_id:
+            dp.refresh_from_db()
+        if self._home_page is not None and self.current_page == "home":
+            self._home_page.load()
+
+    def _sweep_finished(self):
+        """At start-up: titles you'd already finished that still sat in Watching."""
+        from core import status_rules
+        try:
+            moved = status_rules.sweep(self.db)
+        except Exception:
+            return
+        if moved:
+            self._after_auto_complete(moved)
 
     def _on_watch_status_changed(self, anime_id: int, new_status: str):
         """Remove or update cards when watch status no longer matches the active view."""
@@ -1795,8 +1900,136 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self, initial_page: str = "account"):
         from ui.settings_dialog import SettingsDialog
-        SettingsDialog(self.db, self, initial_page=initial_page).exec()
+        dlg = SettingsDialog(self.db, self, initial_page=initial_page)
+        dlg.exec()
         self._refresh_anilist_user_menu()
+        if dlg.preview_request:
+            self.start_theme_preview(*dlg.preview_request)
+
+    def _dress_logo(self, *_):
+        """The logo dresses up for the event on today (or goes back to normal)."""
+        from PyQt6 import sip
+        lbl = getattr(self, "_logo_lbl", None)
+        if lbl is None or sip.isdeleted(lbl):
+            return
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        ev = getattr(tm, "event", None)
+        if ev is None or tm.event_level == "off":
+            lbl.setPixmap(self._logo_px)
+            lbl.setToolTip("")
+            self._logo_sub.setText("Anime · TV · Movies")
+            return
+        from core.events import today
+        from ui import event_logo
+        self._logo_sub.setText(event_logo.subtitle(ev, today().year))
+        lbl.setToolTip(ev.get("line") or ev.get("name") or "")
+        lbl.setPixmap(event_logo.render(self._logo_base, ev, portrait=self._logo_portraits.get(ev["id"])))
+        if ev.get("dynamic") and ev.get("portraits") and ev["id"] not in self._logo_portraits:
+            self._logo_portraits[ev["id"]] = None
+            from workers.workers import ImageWorker, run_worker
+            w = ImageWorker(ev["portraits"][0], ev["id"])
+
+            def got(res, self=self):
+                k, _s, path = res
+                if path:
+                    self._logo_portraits[k] = QPixmap(str(path))
+                    self._dress_logo()
+            w.signals.result.connect(got)
+            run_worker(w)
+
+    _logo_portraits: dict = {}
+
+    def _show_event_moments(self, force: bool = False):
+        """Each event on today gets its moment once (letter / ticket / credits),
+        one after the other when two share a day."""
+        from ui.event_message import show_moment
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        if tm.event_level == "off" and not force:
+            return
+        queue = [e for e in (getattr(tm, "events", None) or ([tm.event] if tm.event else []))]
+
+        def nxt():
+            while queue:
+                m = show_moment(self, queue.pop(0), force=force)
+                if m is not None:
+                    m.destroyed.connect(lambda *_: QTimer.singleShot(400, nxt))
+                    return
+        nxt()
+
+    def _check_milestones(self):
+        """Celebrate a new milestone once: toast + a short confetti burst."""
+        try:
+            from core import milestones
+            hit = milestones.check(self.db)
+        except Exception:
+            return
+        if not hit:
+            return
+        from ui.toast import Toast
+        Toast.show(self, milestones.message(*hit), kind="success", duration=7000)
+        if getattr(self, "_decor", None) is not None:
+            self._decor.burst()
+
+    def _check_anime_event(self):
+        """Once a day: is a big premiere / farewell airing today? (background)"""
+        from core import anime_events, events
+        day = events.today().strftime("%Y-%m-%d")
+        if anime_events.cached(day) is not None or self._anime_event_checked(day):
+            return
+        lib = anime_events.library_index(self.db)          # read here, not in the worker
+
+        def work():
+            from datetime import datetime
+            return anime_events.detect(None, datetime.strptime(day, "%Y-%m-%d"), lib)
+
+        def done(ev):
+            anime_events.store(day, ev)
+            if ev is None:
+                return
+            from ui.theme import ThemeManager
+            tm = ThemeManager.get()
+            tm.reapply()
+            if self._home_page is not None:
+                self._home_page.load()
+            QTimer.singleShot(1200, self._show_event_moments)
+
+        from workers.workers import Worker, run_worker
+        w = Worker(work)
+        w.signals.result.connect(done)
+        run_worker(w)
+
+    def _anime_event_checked(self, day: str) -> bool:
+        import json
+        from core.app_settings import app_settings
+        try:
+            return json.loads(str(app_settings().value("anime_event_today", "") or "{}")).get("checked") == day
+        except ValueError:
+            return False
+
+    def _event_ended_note(self):
+        from ui.theme import ThemeManager
+        from ui.themes_catalog import info
+        tm = ThemeManager.get()
+        ev = getattr(tm, "ended_event", None)
+        if ev is not None:
+            tm.ended_event = None
+            from ui.toast import Toast
+            Toast.show(self, f"{ev['name']} is over — back to {info(tm.saved_id)['name']}.", kind="info")
+
+    def start_theme_preview(self, tid: str, accent: str = ""):
+        """Walk through the app in a theme without saving it."""
+        from ui.theme_preview import ThemePreview
+        if getattr(self, "_theme_preview", None) is not None:
+            return
+        self._theme_preview = ThemePreview(self, tid, accent)
+        self._theme_preview.finished.connect(self._theme_preview_done)
+        self._theme_preview.start()
+
+    def _theme_preview_done(self, _applied: bool):
+        self._theme_preview = None
+        QTimer.singleShot(150, lambda: self._open_settings("appearance"))
 
     # ── Timers ─────────────────────────────────────────────────────────────────
 

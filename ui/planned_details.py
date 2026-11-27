@@ -17,6 +17,7 @@ from PyQt6.QtGui import (
     QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -120,7 +121,7 @@ class PlannedTop(QWidget):
 
         # Trailers, PVs & themes
         from ui.video_gallery import VideoGallery
-        self.trailer_card = _card("Trailers & videos")
+        self.trailer_card = _card("Videos & music")
         self.gallery = VideoGallery(
             "No trailer yet. You'll get a notification the moment one drops.")
         self.trailer_card.layout().addWidget(self.gallery)
@@ -166,6 +167,7 @@ class PlannedTop(QWidget):
         from core.videos import build_playlist
         self.gallery.load(build_playlist(anime),
                           anime.get("english_title") or anime.get("romaji_title") or "")
+        self.gallery.set_media(anime)
 
     def stop(self):
         self._timer.stop()

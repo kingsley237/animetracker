@@ -264,7 +264,7 @@ class TVSection(QWidget):
 
         # Trailers
         from ui.video_gallery import VideoGallery
-        self.videos_card = _card("Trailers & videos")
+        self.videos_card = _card("Videos & music")
         self.gallery = VideoGallery("No trailers yet.")
         self.videos_card.layout().addWidget(self.gallery)
         lay.addWidget(self.videos_card)
@@ -307,6 +307,7 @@ class TVSection(QWidget):
             self._render_cast()
             from core.videos import build_playlist
             self.gallery.load(build_playlist(row), row.get("romaji_title") or "")
+            self.gallery.set_media(row)
             self._clear(self.where_lay)
             self.where_lay.addWidget(self._muted("Checking availability…"))
             self._fetch_where(row)
@@ -389,23 +390,12 @@ class TVSection(QWidget):
         else:
             self._timer.stop()
 
-        aired = p["aired"] > 0
-        if ws == "planned":
-            if aired:
-                self._add_action("▶  Start watching", "primaryBtn", lambda: self._set_status("watching"))
-                self._add_action("✓  I've finished it", "secondaryBtn", self._finish_all)
-        elif ws == "watching":
-            if nxt:
-                self._add_action(f"✓  Watched {code(nxt['season_number'], nxt['episode_number'])}",
-                                 "primaryBtn", lambda: self._toggle(nxt["season_number"],
-                                                                     nxt["episode_number"], True))
-            if api in ("FINISHED", "CANCELLED"):
-                self._add_action("Mark completed", "secondaryBtn", self._finish_all)
-            self._add_action("Drop", "dangerBtn", lambda: self._set_status("dropped"))
-        elif ws == "completed":
-            self._add_action("Back to Watching", "secondaryBtn", lambda: self._set_status("watching"))
-        elif ws == "dropped":
-            self._add_action("▶  Resume watching", "primaryBtn", lambda: self._set_status("watching"))
+        # Status moves (Watchlist / Watching / Finished / Dropped) live in the
+        # status switcher at the top of the panel; here: the next episode.
+        if ws in ("watching", "dropped", "planned") and nxt and p["aired"] > 0:
+            self._add_action(f"✓  Watched {code(nxt['season_number'], nxt['episode_number'])}",
+                             "primaryBtn", lambda: self._toggle(nxt["season_number"],
+                                                                 nxt["episode_number"], True))
 
     def _size_bar(self, frac: float):
         try:

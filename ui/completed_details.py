@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
     QPushButton, QVBoxLayout, QWidget,
@@ -488,7 +489,7 @@ class CompletedBottom(QWidget):
 
         # Themes & trailers
         from ui.video_gallery import VideoGallery
-        self.videos_card = _card("Openings, endings & trailers")
+        self.videos_card = _card("Videos & music")
         self.gallery = VideoGallery("No themes or trailers found for this one yet.")
         self.videos_card.layout().addWidget(self.gallery)
         lay.addWidget(self.videos_card)
@@ -536,3 +537,4 @@ class CompletedBottom(QWidget):
         items = build_playlist(anime)
         items.sort(key=lambda v: 0 if v.get("kind") == "music" else 1)   # themes first
         self.gallery.load(items, anime.get("english_title") or anime.get("romaji_title") or "")
+        self.gallery.set_media(anime)

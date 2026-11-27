@@ -2118,3 +2118,93 @@ QPushButton#hofBtn {
 }
 QPushButton#hofBtn:hover { background: rgba(245,196,81,0.18); }
 QPushButton#hofBtn[inHall="true"] { background: #f5c451; color: #0b0d12; border-color: #f5c451; }
+
+/* ── Status switcher (detail panel) ─────────────────────────────────────── */
+QLabel#statusSwitchHead { color: #6b7391; font-size: 10px; font-weight: 800; letter-spacing: 1.6px; }
+QWidget#statusSwitchTrack { background: #12141d; border: 1px solid #23273a; border-radius: 12px; }
+QPushButton#statusSeg {
+    background: transparent; color: #c7cbe0; border: none; border-radius: 9px;
+    padding: 8px 2px; font-size: 11px; font-weight: 700;
+}
+QPushButton#statusSeg:hover { background: rgba(255,255,255,0.07); color: #ffffff; }
+QPushButton#statusSeg[blocked="true"] { color: #454b66; }
+QPushButton#statusSeg[blocked="true"]:hover { background: transparent; color: #454b66; }
+QLabel#statusSwitchHint { color: #8c93ad; font-size: 11px; }
+
+/* ── Videos & music tabs ─────────────────────────────────────────────────── */
+QWidget#galleryTabs { background: #12141d; border: 1px solid #23273a; border-radius: 11px; }
+QPushButton#galleryTab {
+    background: transparent; color: #9da5c0; border: none; border-radius: 8px;
+    padding: 7px 2px; font-size: 11px; font-weight: 700;
+}
+QPushButton#galleryTab:hover { color: #ffffff; background: rgba(255,255,255,0.06); }
+QPushButton#galleryTab:checked { background: #2a2f45; color: #ffffff; }
+
+/* ── Music ───────────────────────────────────────────────────────────────── */
+QPushButton#musicLike, QPushButton#musicAction {
+    background: rgba(255,255,255,0.06); color: #dfe2ee; border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 9px; padding: 6px 12px; font-size: 12px; font-weight: 700; min-width: 18px;
+}
+QPushButton#musicLike:hover, QPushButton#musicAction:hover { background: rgba(255,255,255,0.12); color: #ffffff; }
+QPushButton#musicLike:checked { background: rgba(244,114,182,0.16); color: #f472b6; border-color: rgba(244,114,182,0.45); }
+QPushButton#playerLike, QPushButton#playerAction {
+    background: #1a1d28; color: #c7cbd9; border: 1px solid #2a2d42; border-radius: 6px;
+    font-size: 11px; font-weight: 700; padding: 0 14px;
+}
+QPushButton#playerLike:checked { color: #f472b6; border-color: #6b2f52; background: #2a1624; }
+QPushButton#playerLike:hover, QPushButton#playerAction:hover { background: #252a40; color: #ffffff; }
+QFrame#musicRow { background: transparent; border-radius: 10px; }
+QFrame#musicRow:hover { background: rgba(255,255,255,0.04); }
+QLabel#musicRowNum { color: #6b7391; font-size: 13px; font-weight: 800; }
+QLabel#musicRowTitle { color: #eef0f7; font-size: 13px; font-weight: 700; }
+QLabel#musicRowSub { color: #8c93ad; font-size: 11px; }
+QLabel#musicRowWhen { color: #6b7391; font-size: 11px; }
+QLabel#musicThumb { background: #161a2a; border-radius: 6px; }
+QLabel#musicRankBadge {
+    color: #0b0d12; background: #f5c451; border-radius: 7px; padding: 2px 8px; font-size: 10px; font-weight: 900;
+}
+QListWidget#musicRankList { background: transparent; border: none; outline: none; }
+QListWidget#musicRankList::item:selected { background: rgba(245,196,81,0.06); }
+QProgressBar#musicProgress { background: #1a1d28; border: none; border-radius: 4px; height: 8px; }
+QProgressBar#musicProgress::chunk { background: #8b7bff; border-radius: 4px; }
+QPushButton#songListen {
+    background: rgba(8,9,14,0.82); color: #ffffff; border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 800;
+}
+QPushButton#songListen:hover { background: #8b7bff; color: #0b0d12; }
+QWidget#songRow { background: #12141d; border: 1px solid #1f2333; border-radius: 12px; }
+QWidget#songRow:hover { border-color: #3a3f57; }
+QLabel#songRowTitle { color: #eef0f7; font-size: 13px; font-weight: 700; }
+
+/* ── Appearance & theme preview ───────────────────────────────────────────── */
+QPushButton#themePreviewBtn {
+    background: rgba(8,9,14,0.85); color: #f4f5fa; border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 9px; padding: 5px 12px; font-size: 11px; font-weight: 800;
+}
+QPushButton#themePreviewBtn:hover { background: #8b7bff; color: #0b0d12; }
+QPushButton#accentSwatch { font-size: 11px; font-weight: 700; color: #c7cbe0; background: #1a1d28;
+    border: 1px solid #2a2d42; border-radius: 15px; }
+QPushButton#accentSwatch:checked { border: 2px solid #f4f5fa; }
+QWidget#previewPill { background: #12141d; border: 1px solid #2e3348; border-radius: 16px; }
+QLabel#previewKicker { color: #8b7bff; font-size: 10px; font-weight: 900; letter-spacing: 1.6px; }
+QLabel#previewName { color: #f4f5fa; font-size: 14px; font-weight: 800; }
+QLabel#previewStep { color: #9da5c0; font-size: 11px; font-weight: 700; }
+QLabel#previewCaption { color: #c7cbe0; font-size: 12px; }
+QPushButton#previewNav { background: #1a1d28; color: #e8eaf2; border: 1px solid #2a2d42; border-radius: 8px;
+    font-size: 14px; font-weight: 800; }
+QPushButton#previewNav:disabled { color: #4a5070; }
+
+/* ── Event banner & coach mark ───────────────────────────────────────────── */
+QFrame#eventBanner {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(139,123,255,0.16), stop:1 rgba(245,196,81,0.10));
+    border: 1px solid rgba(139,123,255,0.35); border-radius: 16px;
+}
+QLabel#eventBannerTitle { color: #f4f5fa; font-size: 14px; background: transparent; }
+QLabel#eventBannerSub { color: #9da5c0; font-size: 12px; background: transparent; }
+QPushButton#eventBannerClose { background: transparent; color: #8c93ad; border: none; font-size: 13px; }
+QPushButton#eventBannerClose:hover { color: #ffffff; }
+QFrame#eventBannerSep { background: rgba(255,255,255,0.08); border: none; margin: 0 16px; }
+QWidget#coachMark { background: #161925; border: 1px solid #8b7bff; border-radius: 14px; }
+QLabel#coachText { color: #e8eaf2; font-size: 13px; background: transparent; }
+
+QFrame#eventRow { background: #12141d; border: 1px solid #1f2333; border-radius: 12px; }

@@ -25,6 +25,7 @@ from PyQt6.QtCore import (
     pyqtSignal, QThread, QObject, QRunnable,
 )
 from PyQt6.QtGui import QColor, QCursor, QPainter, QPainterPath
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QWidget, QCheckBox, QProgressBar,

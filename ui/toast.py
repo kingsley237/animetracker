@@ -16,6 +16,7 @@ from typing import ClassVar
 
 from PyQt6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QPropertyAnimation, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QWidget
 
 # kind -> (glyph, accent)
@@ -32,8 +33,12 @@ _SPACING:  int = 10
 _MAX_TOASTS: int = 3
 _SHADOW:   int = 14          # painted shadow around the card
 _MAX_W:    int = 420
-_SURFACE = QColor("#161925")
-_BORDER = QColor(255, 255, 255, 22)
+def _SURFACE():
+    return QColor("#161925")
+
+
+def _BORDER():
+    return QColor(255, 255, 255, 22)
 _TEXT = "#eef0f7"
 
 
@@ -126,7 +131,7 @@ class Toast(QWidget):
     """Auto-dismissing toast, stacked by _ToastManager."""
 
     def __init__(self, parent: QWidget, message: str,
-                 kind: str = "info", duration: int = _DEFAULT_DURATION_MS):
+                 kind: str = "info", duration: int = _DEFAULT_DURATION_MS, action=None):
         host = parent.window() if parent is not None else None
         super().__init__(host)        # drawn inside the window: no OS frame, moves with it
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -155,8 +160,21 @@ class Toast(QWidget):
         self.msg.setWordWrap(True)
         from PyQt6.QtGui import QFontMetrics
         one_line = QFontMetrics(f).horizontalAdvance(message) + 12
-        self.msg.setFixedWidth(min(one_line, _MAX_W - 26 - 12 - 24 - 28))
+        room = _MAX_W - 26 - 12 - 24 - 28
+        if action:
+            from PyQt6.QtWidgets import QPushButton
+            self.action_btn = QPushButton(action[0])
+            self.action_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            self.action_btn.setStyleSheet(
+                f"QPushButton{{color:{self.accent};background:transparent;border:1px solid {self.accent};"
+                "border-radius:8px;padding:3px 12px;font-size:12px;font-weight:700;}"
+                "QPushButton:hover{background:rgba(255,255,255,0.06);}")
+            self.action_btn.clicked.connect(lambda: (action[1](), self._dismiss()))
+            room -= self.action_btn.sizeHint().width() + 12
+        self.msg.setFixedWidth(min(one_line, room))
         lay.addWidget(self.msg, 1, Qt.AlignmentFlag.AlignVCenter)
+        if action:
+            lay.addWidget(self.action_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.close_btn = QLabel("✕")
         self.close_btn.setFixedSize(22, 22)
         self.close_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -259,8 +277,8 @@ class Toast(QWidget):
             p.drawRoundedRect(card.adjusted(-i, -i + 3, i, i + 3), 14 + i, 14 + i)
         path = QPainterPath()
         path.addRoundedRect(card, 14, 14)
-        p.fillPath(path, QColor("#1b1f2d") if self._hover else _SURFACE)
-        p.setPen(QPen(_BORDER, 1))
+        p.fillPath(path, QColor("#1b1f2d") if self._hover else _SURFACE())
+        p.setPen(QPen(_BORDER(), 1))
         p.drawPath(path)
         # countdown line along the bottom, clipped to the card
         frac = self._left / self.duration if self.duration else 0
@@ -278,8 +296,9 @@ class Toast(QWidget):
 
     @staticmethod
     def show(parent: QWidget, message: str, kind: str = "info",
-             duration: int = _DEFAULT_DURATION_MS) -> "Toast":
-        return Toast(parent, message, kind, duration)
+             duration: int = _DEFAULT_DURATION_MS, action=None) -> "Toast":
+        """action: optional (label, callback), e.g. ("Undo", fn)."""
+        return Toast(parent, message, kind, duration, action)
 
     @staticmethod
     def popup(parent: QWidget, message: str, kind: str = "info",

@@ -16,6 +16,7 @@ from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import (
     QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QPushButton
 
 LIBRARIES = {

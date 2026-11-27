@@ -107,7 +107,21 @@ def _run_check() -> int:
     return 0
 
 
+def _date_override():
+    """`--date 2026-12-25` shows Raikō as it will look that day (events)."""
+    import os as _os
+    if "--simulate" in sys.argv:              # e.g. --simulate premiere:"One Piece"  /  farewell:Frieren
+        i = sys.argv.index("--simulate")
+        if i + 1 < len(sys.argv):
+            _os.environ["RAIKO_SIMULATE"] = sys.argv[i + 1]
+    if "--date" in sys.argv:
+        i = sys.argv.index("--date")
+        if i + 1 < len(sys.argv):
+            _os.environ["RAIKO_DATE"] = sys.argv[i + 1]
+
+
 def main():
+    _date_override()
     _install_crash_guard()
     if "--check" in sys.argv:
         sys.exit(_run_check())
@@ -155,7 +169,12 @@ def main():
     if not _qss.exists():
         _qss = _Path(__file__).parent / "resources" / "themes" / "dark.qss"
     if _qss.exists():
-        app.setStyleSheet(_qss.read_text(encoding="utf-8"))
+        from ui.theme import ThemeManager
+        ThemeManager.get().set_base_stylesheet(_qss.read_text(encoding="utf-8"))
+        try:
+            ThemeManager.get().load_saved()          # your chosen theme (Settings → Appearance)
+        except Exception:
+            pass
 
     # Stage 2 — Database
     splash.set_status("Opening your library…", progress=45)

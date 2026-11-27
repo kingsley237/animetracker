@@ -133,7 +133,7 @@ class TrailerDialog(QDialog):
         self.setWindowTitle(f"Trailers — {self._title}")
         self.setModal(True)
         self.setStyleSheet("background:#0a0c10;")
-        self.resize(self.VIDEO_W, self.VIDEO_H + 48)
+        self.resize(self.VIDEO_W, self.VIDEO_H + 60)
         self.setMinimumSize(760, 480)
 
         self._build()
@@ -294,7 +294,17 @@ class TrailerDialog(QDialog):
             self._stack.setCurrentWidget(self._loading)
             self._loading.setText("Loading…")
         self._mark_current()
+        self._sync_music()
         self._load_trailer()
+
+    def _sync_music(self):
+        from ui.music_actions import MusicHub, is_music
+        cur = self._playlist[self._index]
+        show = is_music(cur) and MusicHub.get().db is not None
+        if getattr(self, "_like", None) is not None:
+            self._like.set_item(cur if show else None)
+            self._like.setVisible(show)
+            self._dl.setVisible(show)
 
     def _step(self, delta: int):
         if len(self._playlist) > 1:
@@ -340,7 +350,7 @@ class TrailerDialog(QDialog):
 
     def _bottom_bar(self) -> QWidget:
         bar = QWidget()
-        bar.setFixedHeight(48)
+        bar.setFixedHeight(60)
         bar.setStyleSheet("background:#0f1118;border-top:1px solid #1a1d28;")
         row = QHBoxLayout(bar)
         row.setContentsMargins(16, 0, 16, 0)
@@ -360,6 +370,7 @@ class TrailerDialog(QDialog):
             nxt.setToolTip("Next video (→)")
             for b, d in ((prev, -1), (nxt, 1)):
                 b.setStyleSheet(nav)
+                b.setFixedSize(34, 34)
                 b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
                 b.clicked.connect(lambda _=False, d=d: self._step(d))
             row.addSpacing(8)
@@ -381,6 +392,19 @@ class TrailerDialog(QDialog):
         ext.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         ext.clicked.connect(lambda: webbrowser.open(_watch_url(self._tid, self._tsite)))
         row.addWidget(ext)
+        # Songs (openings / endings / intros / soundtracks): like or download
+        from ui.music_actions import LikeButton, download_menu
+        self._like = LikeButton()
+        self._like.setObjectName("playerLike")
+        self._dl = QPushButton("⬇  Download")
+        self._dl.setObjectName("playerAction")
+        self._dl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._dl.clicked.connect(lambda: download_menu(self._playlist[self._index], self._dl))
+        for b in (self._like, self._dl):
+            b.setFixedHeight(34)
+        row.addWidget(self._like)
+        row.addWidget(self._dl)
+        self._sync_music()
         if self._counter is not None:
             self._mark_current()
 
@@ -402,6 +426,7 @@ class TrailerDialog(QDialog):
             "QPushButton:hover{background:#252a40;color:#c7cbd9;}"
         )
         close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close.setFixedHeight(34)
         close.clicked.connect(self.accept)
         row.addWidget(close)
         return bar

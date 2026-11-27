@@ -177,3 +177,36 @@ def wait_until(pred, timeout=8.0, step=40):
             return True
         pump(step)
     return pred()
+
+
+@pytest.fixture(autouse=True)
+def _reset_music_hub():
+    """The music hub is app-wide; don't let one test's library leak into the next."""
+    yield
+    try:
+        from ui.music_actions import MusicHub
+        if MusicHub._instance is not None:
+            MusicHub._instance.db = None
+            MusicHub._instance.active.clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_theme():
+    """Themes are app-wide; every test starts and ends on the base theme."""
+    yield
+    try:
+        from ui.theme import BASE, ThemeManager
+        tm = ThemeManager.get()
+        tm.event, tm.events, tm.event_level = None, [], "off"
+        if tm.theme.id != BASE.id or tm.font_scale != 1.0 or tm.theme.extra:
+            tm.apply(BASE, 1.0)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_live_events(monkeypatch):
+    """Tests run on an ordinary day unless they pick a date themselves."""
+    monkeypatch.setenv("RAIKO_DATE", "2026-11-27")

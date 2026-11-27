@@ -28,6 +28,7 @@ class SettingsDialog(QDialog):
         self._initial_page = initial_page
         self._json_path: Optional[str] = None
         self._nav_buttons: dict[str, QPushButton] = {}
+        self.preview_request = None          # (theme id, accent) when "Preview" was clicked
 
         self.setWindowTitle("Settings")
         self.setMinimumSize(780, 560)
@@ -72,6 +73,7 @@ class SettingsDialog(QDialog):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._page_account())
+        self.stack.addWidget(self._page_appearance())
         self.stack.addWidget(self._page_preferences())
         self.stack.addWidget(self._page_data())
         self.stack.addWidget(self._page_about())
@@ -98,6 +100,7 @@ class SettingsDialog(QDialog):
 
         for key, label in [
             ("account", "Account"),
+            ("appearance", "Appearance"),
             ("preferences", "Preferences"),
             ("data", "Data and Backup"),
             ("about", "About"),
@@ -117,7 +120,7 @@ class SettingsDialog(QDialog):
         return sidebar
 
     def _select_page(self, key: str):
-        order = ["account", "preferences", "data", "about"]
+        order = ["account", "appearance", "preferences", "data", "about"]
         idx = order.index(key) if key in order else 0
         self.stack.setCurrentIndex(idx)
         for pid, btn in self._nav_buttons.items():
@@ -249,6 +252,25 @@ class SettingsDialog(QDialog):
         lay.addStretch()
         return page
 
+    def _page_appearance(self) -> QWidget:
+        page, lay = self._page()
+        lay.addWidget(self._hero(
+            "Appearance",
+            "Pick how Raikō looks. Click a theme to use it, or Preview to walk through the app in it first."
+        ))
+        card, cl = self._card("Theme")
+        from ui.appearance import AppearancePage
+        self.appearance = AppearancePage()
+        self.appearance.preview_requested.connect(self._preview_theme)
+        cl.addWidget(self.appearance)
+        lay.addWidget(card)
+        lay.addStretch()
+        return page
+
+    def _preview_theme(self, tid: str, accent: str):
+        self.preview_request = (tid, accent)
+        self.accept()
+
     def _page_preferences(self) -> QWidget:
         page, lay = self._page()
         lay.addWidget(self._hero(
@@ -258,26 +280,7 @@ class SettingsDialog(QDialog):
 
         display, dl = self._card("Display and refresh")
 
-        theme_row = QHBoxLayout()
-        theme_label = QLabel("Appearance")
-        theme_label.setObjectName("settingsValueText")
-        theme_row.addWidget(theme_label)
-        theme_row.addStretch()
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Dark", "dark")
-        self.theme_combo.addItem("System", "system")
-        self.theme_combo.addItem("Light (coming soon)", "light")
-        self.theme_combo.setFixedWidth(180)
-        from core.app_settings import preferred_theme
-        current_theme = preferred_theme()
-        idx = self.theme_combo.findData(current_theme)
-        self.theme_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        theme_row.addWidget(self.theme_combo)
-        dl.addLayout(theme_row)
-        dl.addWidget(self._helper_text(
-            "System and Light currently use the dark stylesheet until a full light theme ships."
-        ))
+        # (themes moved to their own page: Settings → Appearance)
 
         auto_cb = QCheckBox("Refresh airing data automatically")
         auto_cb.setChecked(self.settings.value("auto_refresh", True, type=bool))
@@ -588,6 +591,8 @@ class SettingsDialog(QDialog):
             "Built with Python and PyQt6.",
             "Your library database is stored locally on this machine.",
             "Cover art remains the property of its respective copyright holders.",
+            "Animated emoji: Noto Emoji Animation by Google, licensed CC BY 4.0.",
+            "Theme fonts (Quicksand, Orbitron, Fraunces, VT323) under the SIL Open Font License.",
         ]:
             al.addWidget(self._body_text(text))
 

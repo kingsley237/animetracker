@@ -12,6 +12,7 @@ from PyQt6.QtGui import (
     QColor, QCursor, QFont, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
     QRadialGradient,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from core.hall import WING_NAMES, WINGS, Hall

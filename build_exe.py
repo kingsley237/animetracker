@@ -162,6 +162,10 @@ def build(version: str):
         "--hidden-import=PIL",
         "--hidden-import=requests",
         "--hidden-import=core._embedded_secrets",
+        # Music downloads: yt-dlp loads its site extractors dynamically;
+        # imageio-ffmpeg ships the ffmpeg.exe used for MP3 / 1080p merges.
+        "--collect-submodules=yt_dlp",
+        "--collect-all=imageio_ffmpeg",
 
         # ── Collect only what is actually needed ───────────────────────────
         # Do NOT use --collect-all=PyQt6 — it bundles the entire Qt suite.

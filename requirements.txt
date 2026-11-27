@@ -3,3 +3,5 @@ requests>=2.31.0
 tzlocal>=5.2
 Pillow>=10.0.0
 PyQt6-WebEngine>=6.4.0
+yt-dlp>=2026.11.23
+imageio-ffmpeg>=0.6.0

@@ -16,7 +16,8 @@ from PyQt6.QtGui import (
     QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
-from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.layout_helpers import FlowLayout
 from workers.workers import ImageWorker, run_worker
@@ -201,27 +202,139 @@ class VideoGallery(QWidget):
         self._title = ""
         self._token = 0
         self._tiles: List[_Tile] = []
+        self._empty_default = empty_text
+        self._trailers: List[Dict] = []
+        self._row: Optional[Dict] = None
+        self._tab = "trailers"
+        self._music: Dict[str, List[Dict]] = {}
+        self._tab_btns: Dict[str, QPushButton] = {}
+        self._fetch_tok = 0
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
+        # Trailers · Openings · Endings · Soundtrack (depends on the kind of title)
+        self.tabbar = QWidget()
+        self.tabbar.setObjectName("galleryTabs")
+        self._tabs_lay = QHBoxLayout(self.tabbar)
+        self._tabs_lay.setContentsMargins(3, 3, 3, 3)
+        self._tabs_lay.setSpacing(3)
+        self.tabbar.hide()
+        lay.addWidget(self.tabbar)
         self.hero = TrailerThumb()
         self.hero.clicked.connect(self._play)
         self.caption = QLabel()
         self.caption.setObjectName("galleryCaption")
+        self.caption.setWordWrap(True)
         self.tiles_host = QWidget()
         self.tiles = FlowLayout(self.tiles_host, h_spacing=8, v_spacing=6)
         self.empty = QLabel(empty_text)
         self.empty.setObjectName("plannedEmpty")
         self.empty.setWordWrap(True)
-        for w in (self.hero, self.caption, self.tiles_host, self.empty):
+        # ♥ Like · ⬇ Download · 🏆 Rank for the selected song
+        self.song_bar = QWidget()
+        sb = QHBoxLayout(self.song_bar)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(6)
+        from ui.music_actions import LikeButton, download_menu
+        self.like_btn = LikeButton()
+        self.dl_btn = QPushButton("⬇  Download")
+        self.dl_btn.setObjectName("musicAction")
+        self.dl_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.dl_btn.clicked.connect(lambda: self._items and download_menu(self._items[self._sel], self.dl_btn))
+        self.rank_btn = QPushButton("🏆  Rank")
+        self.rank_btn.setObjectName("musicAction")
+        self.rank_btn.setToolTip("Rank it with your other favourites (Music → Rankings)")
+        self.rank_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.rank_btn.clicked.connect(self._rank_song)
+        for b in (self.like_btn, self.dl_btn, self.rank_btn):
+            sb.addWidget(b)
+        sb.addStretch()
+        self.song_bar.hide()
+        for w in (self.hero, self.caption, self.song_bar, self.tiles_host, self.empty):
             lay.addWidget(w)
 
     def load(self, items: List[Dict], anime_title: str = ""):
+        """The title's own trailers / promos (the Trailers tab)."""
+        self._trailers = list(items or [])
+        self._title = anime_title
+        if self._tab == "trailers" or not self._row:
+            self.empty.setText(self._empty_default)
+            self._render(self._trailers, anime_title)
+
+    # ── music tabs ────────────────────────────────────────────────────────────
+
+    def set_media(self, row: Dict):
+        """Show the tabs for this kind of title (anime: Openings / Endings /
+        Soundtrack; TV: Intro / Soundtrack; movies: Soundtrack)."""
+        from core.music import TABS
+        same = self._row is not None and self._row.get("id") == row.get("id")
+        self._row = dict(row)
+        if not same:
+            self._music = {}
+            self._tab = "trailers"
+        while self._tabs_lay.count():
+            it = self._tabs_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._tab_btns = {}
+        for key, label in TABS.get(row.get("media_type") or "anime", TABS["anime"]):
+            b = QPushButton(("▶  " if key == "trailers" else "♪  ") + label)
+            b.setObjectName("galleryTab")
+            b.setCheckable(True)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _=False, k=key: self.show_tab(k))
+            self._tab_btns[key] = b
+            self._tabs_lay.addWidget(b, 1)
+        self.tabbar.show()
+        self.show_tab(self._tab)
+
+    def show_tab(self, key: str):
+        self._tab = key
+        for k, b in self._tab_btns.items():
+            b.setChecked(k == key)
+        if key == "trailers":
+            self.empty.setText(self._empty_default)
+            self._render(self._trailers, self._title)
+            return
+        names = {"op": "openings", "ed": "endings", "intro": "intros", "ost": "soundtrack music"}
+        if key in self._music:
+            self.empty.setText(f"No {names.get(key, 'music')} found for this one.")
+            self._render(self._music[key], self._title)
+            return
+        self._render([], self._title)
+        self.empty.setText(f"Finding {names.get(key, 'music')}…")
+        self._fetch_tok += 1
+        tok, row = self._fetch_tok, dict(self._row or {})
+        from workers.workers import Worker
+
+        def work():
+            from core.music import find
+            return find(row, key)
+
+        w = Worker(work)
+        w.signals.result.connect(lambda items, t=tok, k=key: self._got_music(k, items, t))
+        w.signals.error.connect(lambda _e, t=tok, k=key: self._got_music(k, None, t))
+        run_worker(w)
+
+    def _got_music(self, key: str, items, tok: int):
+        from PyQt6 import sip
+        if sip.isdeleted(self) or tok != self._fetch_tok:
+            return
+        if items is None:
+            self.empty.setText("Couldn't search right now — check your connection and try again.")
+            return
+        self._music[key] = items
+        if self._tab == key:
+            self.show_tab(key)
+
+    def _render(self, items: List[Dict], anime_title: str = ""):
         self._token += 1
         self._items = list(items or [])
         self._title = anime_title
         self._sel = 0
         has = bool(self._items)
+        if not has:
+            self.song_bar.hide()
         self.hero.setVisible(has)
         self.caption.setVisible(has)
         self.empty.setVisible(not has)
@@ -254,6 +367,17 @@ class VideoGallery(QWidget):
         for t in self._tiles:
             t.set_selected(t.index == i)
         self._fetch(it.get("thumb"), ("hero", self._token, i))
+        from ui.music_actions import MusicHub, is_music
+        song = is_music(it) and MusicHub.get().db is not None
+        self.song_bar.setVisible(song)
+        self.like_btn.set_item(it if song else None)
+
+    def _rank_song(self):
+        from ui.music_actions import MusicHub
+        if not self._items or MusicHub.get().db is None:
+            return
+        from ui.music_rank import rank_flow
+        rank_flow(MusicHub.get().db, self.window(), None, self._items[self._sel])
 
     def _fetch(self, url, key):
         if not url:

@@ -197,7 +197,9 @@ class KinemaSync:
             self.db.update_anime(old["id"], {**updates, "meta_synced_at": now})
             self.db.save_tv_seasons(old["id"], new["_seasons"])
             self.db.save_tv_episodes(old["id"], episodes)
-            if updates or episodes:
+            from core.status_rules import reopen_if_new_episodes
+            reopened = reopen_if_new_episodes(self.db, old["id"])
+            if updates or episodes or reopened:
                 result["changed"].append(old["id"])
             if not first_sync and old.get("watch_status") in ("watching", "planned", "completed"):
                 self._tv_alerts(old, new, updates, known_seasons, known_eps, episodes)

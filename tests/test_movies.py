@@ -330,7 +330,7 @@ def test_sidebar_sections_and_kinema_discover(movie_window, monkeypatch):
     monkeypatch.setattr(kd, "genres", lambda kind="movie": [])
     win, ids = movie_window
     assert [s for s, _ in mw.NAV_SECTIONS] == ["", "Miroku", "Kinema"]     # Home on top
-    assert [pid for _l, _t, pid in mw.NAV_SECTIONS[0][1]] == ["home", "hall"]
+    assert [pid for _l, _t, pid in mw.NAV_SECTIONS[0][1]] == ["home", "hall", "music"]
     miroku = [pid for _l, _t, pid in mw.NAV_SECTIONS[1][1]]
     assert miroku == ["library", "dropped", "discover"]
     assert [pid for _l, _t, pid in mw.NAV_SECTIONS[2][1]] == ["movies", "tv", "kinema_discover"]

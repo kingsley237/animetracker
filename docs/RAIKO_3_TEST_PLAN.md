@@ -147,6 +147,44 @@ meantime, it doesn't understand movies).
 - [ ] Toasts: mark an episode watched, rate something, add a title → new solid card bottom-right (no see-through), countdown pauses on hover, click / ✕ dismisses, 3+ stack neatly, move/resize the window → they follow
 - [ ] Home → This week: click an anime / TV / movie entry → popover beside it (flips near the right edge); Open details, Trailer; Esc / click outside / scroll / same entry closes it
 
+## Next (after 3.1.0) — status switcher & music (built 2026-11-27, awaiting your test) 🧪
+- [ ] Detail panel → STATUS row on every movie / show / anime: current status filled; greyed options say why on hover
+- [ ] TV still running (e.g. Vox Machina, caught up) → Finished works; if episodes are left it asks first and marks them; hint "new episodes will bring it back to Watching"
+- [ ] TV not premiered yet → only Watchlist; Watching / Finished / Dropped greyed
+- [ ] Movie not out yet → Watched greyed ("Not out yet — releases …"); out → Watched / back to Watchlist
+- [ ] Anime still airing → Completed greyed ("Still airing…"); not aired yet → only Plan to watch; finished anime → Completed marks all episodes (asks first); Dropped moves it to the Dropped list (asks first)
+- [ ] Moving something with watched episodes to Watchlist asks first and keeps your progress
+- [ ] Videos & music card: anime → Trailers · Openings · Endings · Soundtrack; TV → Trailers · Intro · Soundtrack; movies → Trailers · Soundtrack; each plays in the in-app player with Up Next; switching back and forth doesn't search again
+
+## Next — Music: like, download, rank (built 2026-11-27, awaiting your test) 🧪
+- [ ] Videos & music card: on an Opening / Ending / Intro / Soundtrack a row appears: ♡ Like · ⬇ Download · 🏆 Rank (not on trailers)
+- [ ] Player: ♡ Like and ⬇ Download in the bottom bar for songs; they follow Up Next
+- [ ] ⬇ → Audio (MP3) / Video (MP4 up to 1080p): toast, progress in Music → Downloads, file lands in your Downloads folder named "<show> - <song>"; Show in folder / Play work
+- [ ] Sidebar ♪ Music (or Ctrl+M): Liked — Play all, Shuffle, filter chips, ▶ / ♥ / ⬇ / ⋯ per row, double-click plays; #rank badges on ranked songs
+- [ ] Music search box (or "Find a song"): search any anime / show / movie (library first, then online) → its openings / endings / soundtrack → ▶ listen, ♥, Rank it
+- [ ] Rankings: Openings & intros / Endings / Soundtracks; + Rank a song → "Which do you love more?" with ▶ Listen on both cards; Too close / Skip / Undo; drag to reorder; ⋯ re-rank / remove
+- [ ] Liking / ranking something anywhere updates the Music page and every ♥ button at once
+
+## Next — Themes (phases 0–4 built 2026-11-27, awaiting your test) 🧪
+- [ ] Default look unchanged (Raikō Night)
+- [ ] Settings → Appearance: click each of the 8 themes (incl. light Sakura Dawn / Studio Watercolor) — whole app recolours live, fonts change; accent swatches; text size 90–125 %
+- [ ] Hover a theme → Preview: walkthrough (Home → Library → detail panel → Settings button), ‹ › / ← →, Apply keeps it, Cancel / Esc restores exactly
+- [ ] Motion Full / Calm / Off; "Follow Windows" (Settings → Accessibility → Animation effects off = still); Rai toggle
+- [ ] Events (run `main.py --date 2026-12-25`, `--date 2026-10-30`, `--date 2026-12-31`, `--date 2026-10-03`):
+  - [ ] default theme → full event look; your own theme → decorations only; banner wording matches
+  - [ ] Keep it / Switch back / Try the other looks; Nice / Go full / No decorations; ✕ → pointer on the Settings button (once)
+  - [ ] greeting ("Merry Christmas"), ornaments (Santa hat, holly, snowcap, bats, pumpkin, lanterns), Rai's outfit, ambient effects in sidebar/header only
+  - [ ] Home spotlight starts with the event: animated centrepiece (tree / jack-o'-lantern / fireworks / sparkles) + picks (your Watchlist first), Preview & add / Next pick
+  - [ ] Settings → Appearance → Event themes: per-event Automatic / Full / Decorations / Off, look, Preview, "Ask me first", "Bring it back"
+  - [ ] after the event (normal date) → "<event> is over — back to <theme>" toast
+  - [ ] anime events: `--date 2026-10-03` (Black Clover S2 premiere, on your list) → banner with its characters, "Wear its colours", spotlight with its art, characters orbiting, Trailer; `--date 2026-09-27` (a finale) → "Thank you, …", Rank its songs; Season Premiere Week shows the season's most anticipated
+  - [ ] Settings → Event themes: "Big premiere days" / "Farewells" rows (Automatic / Full / Decorations / Off)
+  - [ ] `--simulate premiere:"One Piece"` → ticket moment (logo, backdrop, stub, Watch the trailer / Add to my list), sidebar logo with Luffy in the core + "Premiere · ONE PIECE", banner portraits, spotlight with title logo and orbiting characters
+  - [ ] `--simulate farewell:Frieren` → rolling end credits, Rank its songs
+  - [ ] `--date 2026-10-31 --simulate premiere:"Chainsaw Man"` → Halloween look kept; letter first, then the ticket; banner has two rows; spotlight leads with the premiere
+  - [ ] holiday letters: `--date 2026-12-25`, `2026-10-31`, `2027-01-01`; logo wears Santa / witch / party hat; each letter shows once ("Read our note" re-opens)
+  - [ ] milestones: your next one (2,500 episodes / 10 movies / 100 series) → toast + short confetti, once
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).
@@ -161,3 +199,12 @@ meantime, it doesn't understand movies).
 - **Dropped**: faded cover (colour on hover), DROPPED badge, stop point + how long ago, your reason.
 - **Movies**: poster, title, runtime · year · seen N×, READY TO WATCH / IN CINEMAS / COMING SOON / WATCHED,
   HD date + days left / out in HD since / in cinemas date, your rating, accent border.
+
+## Finishing moves to Completed (auto, with Undo)
+- [ ] anime that has finished airing: tick its last episode → toast "You finished … — moved to Completed" + Undo; card leaves Watching
+- [ ] TV show that has ended: watch its last episode → moved to Finished + Undo
+- [ ] Undo → back in Watching / Plan to watch, and it isn't moved again until you un-tick an episode (rewatch)
+- [ ] still-airing anime / running TV show, caught up → stays in Watching (new episodes are coming)
+- [ ] movies: marking one watched still moves it to Watched as before
+- [ ] at start-up: anything you'd already finished that sat in Watching is moved, one toast for all, Undo restores all
+

@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QFileDialog, QSizePolicy,
