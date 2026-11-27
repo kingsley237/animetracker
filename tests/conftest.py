@@ -177,3 +177,16 @@ def wait_until(pred, timeout=8.0, step=40):
             return True
         pump(step)
     return pred()
+
+
+@pytest.fixture(autouse=True)
+def _reset_music_hub():
+    """The music hub is app-wide; don't let one test's library leak into the next."""
+    yield
+    try:
+        from ui.music_actions import MusicHub
+        if MusicHub._instance is not None:
+            MusicHub._instance.db = None
+            MusicHub._instance.active.clear()
+    except Exception:
+        pass

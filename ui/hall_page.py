@@ -438,9 +438,9 @@ class _ListRow(QWidget, _Img):
 
 class _RankList(QListWidget):
     """Ranked rows; drag to reorder."""
-    moved = pyqtSignal(int, int)          # lib id, new rank
-    opened = pyqtSignal(int)
-    menu = pyqtSignal(int, QPoint)
+    moved = pyqtSignal(object, int)       # id (lib id or song id), new rank
+    opened = pyqtSignal(object)
+    menu = pyqtSignal(object, QPoint)
 
     def __init__(self, parent=None):
         super().__init__(parent)

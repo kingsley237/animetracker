@@ -156,6 +156,15 @@ meantime, it doesn't understand movies).
 - [ ] Moving something with watched episodes to Watchlist asks first and keeps your progress
 - [ ] Videos & music card: anime → Trailers · Openings · Endings · Soundtrack; TV → Trailers · Intro · Soundtrack; movies → Trailers · Soundtrack; each plays in the in-app player with Up Next; switching back and forth doesn't search again
 
+## Next — Music: like, download, rank (built 2026-11-27, awaiting your test) 🧪
+- [ ] Videos & music card: on an Opening / Ending / Intro / Soundtrack a row appears: ♡ Like · ⬇ Download · 🏆 Rank (not on trailers)
+- [ ] Player: ♡ Like and ⬇ Download in the bottom bar for songs; they follow Up Next
+- [ ] ⬇ → Audio (MP3) / Video (MP4 up to 1080p): toast, progress in Music → Downloads, file lands in your Downloads folder named "<show> - <song>"; Show in folder / Play work
+- [ ] Sidebar ♪ Music (or Ctrl+M): Liked — Play all, Shuffle, filter chips, ▶ / ♥ / ⬇ / ⋯ per row, double-click plays; #rank badges on ranked songs
+- [ ] Music search box (or "Find a song"): search any anime / show / movie (library first, then online) → its openings / endings / soundtrack → ▶ listen, ♥, Rank it
+- [ ] Rankings: Openings & intros / Endings / Soundtracks; + Rank a song → "Which do you love more?" with ▶ Listen on both cards; Too close / Skip / Undo; drag to reorder; ⋯ re-rank / remove
+- [ ] Liking / ranking something anywhere updates the Music page and every ♥ button at once
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).

@@ -30,7 +30,7 @@ from ui.update_banner import UpdateBanner
 # Raikō: one sidebar, a section per library. Each library keeps its own
 # tools under its own name.
 NAV_SECTIONS = [
-    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall")]),
+    ("", [("Home", "⌂", "home"), ("Hall of Fame", "★", "hall"), ("Music", "♪", "music")]),
     ("Miroku", [
         ("Library", "LIB", "library"),
         ("Dropped", "DROP", "dropped"),
@@ -199,13 +199,16 @@ class MainWindow(QMainWindow):
         self._discover_page = None
 
         # Add placeholder widgets so indices stay fixed
-        for _ in range(8):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame
+        for _ in range(9):       # 1-5 Miroku pages, 6 Kinema Discover, 7 Home, 8 Hall of Fame, 9 Music
             ph = QWidget()
             ph.setObjectName("contentArea")
             self.stack.addWidget(ph)
         self._kinema_discover = None
         self._home_page = None
         self._hall_page = None
+        self._music_page = None
+        from ui.music_actions import MusicHub
+        MusicHub.get().db = self.db
 
         content_row.addWidget(self.stack, stretch=1)
 
@@ -375,6 +378,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self._open_add_dialog)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._open_search)
+        QShortcut(QKeySequence("Ctrl+M"), self, activated=lambda: self._navigate("music"))
         lay.addWidget(add_btn)
         lay.addSpacing(8)
 
@@ -789,6 +793,16 @@ class MainWindow(QMainWindow):
                 self.stack.insertWidget(7, page)
             self.stack.setCurrentIndex(7)
             self._home_page.load()
+        elif page_id == "music":
+            if self._music_page is None:
+                from ui.music_page import MusicPage
+                page = MusicPage(self.db, self)
+                page.open_title.connect(self._open_title)
+                self._music_page = page
+                self.stack.removeWidget(self.stack.widget(9))
+                self.stack.insertWidget(9, page)
+            self.stack.setCurrentIndex(9)
+            self._music_page.load()
         elif page_id == "hall":
             if self._hall_page is None:
                 from ui.hall_page import HallPage

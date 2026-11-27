@@ -146,7 +146,15 @@ def _load_cache() -> Dict:
 
 
 def find(row: Dict, tab: str, refresh: bool = False) -> List[Dict]:
-    """Network (cached a week): the videos for one music tab of a title."""
+    """Network (cached a week): the videos for one music tab of a title,
+    each tagged with where it's from (source title, media, library id)."""
+    src = {"source": row.get("english_title") or row.get("romaji_title") or "",
+           "media": row.get("media_type") or "anime",
+           "lib_id": row.get("id") if (row.get("id") or 0) > 0 and not row.get("_online") else None}
+    return [dict(i, **src) for i in _find(row, tab, refresh)]
+
+
+def _find(row: Dict, tab: str, refresh: bool = False) -> List[Dict]:
     key = f"{row.get('media_type') or 'anime'}:{row.get('anilist_id') or row.get('tmdb_id') or row.get('id')}:{tab}"
     cache = _load_cache()
     hit = cache.get(key)

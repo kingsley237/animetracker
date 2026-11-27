@@ -294,7 +294,17 @@ class TrailerDialog(QDialog):
             self._stack.setCurrentWidget(self._loading)
             self._loading.setText("Loading…")
         self._mark_current()
+        self._sync_music()
         self._load_trailer()
+
+    def _sync_music(self):
+        from ui.music_actions import MusicHub, is_music
+        cur = self._playlist[self._index]
+        show = is_music(cur) and MusicHub.get().db is not None
+        if getattr(self, "_like", None) is not None:
+            self._like.set_item(cur if show else None)
+            self._like.setVisible(show)
+            self._dl.setVisible(show)
 
     def _step(self, delta: int):
         if len(self._playlist) > 1:
@@ -381,6 +391,17 @@ class TrailerDialog(QDialog):
         ext.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         ext.clicked.connect(lambda: webbrowser.open(_watch_url(self._tid, self._tsite)))
         row.addWidget(ext)
+        # Songs (openings / endings / intros / soundtracks): like or download
+        from ui.music_actions import LikeButton, download_menu
+        self._like = LikeButton()
+        self._like.setObjectName("playerLike")
+        self._dl = QPushButton("⬇  Download")
+        self._dl.setObjectName("playerAction")
+        self._dl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._dl.clicked.connect(lambda: download_menu(self._playlist[self._index], self._dl))
+        row.addWidget(self._like)
+        row.addWidget(self._dl)
+        self._sync_music()
         if self._counter is not None:
             self._mark_current()
 

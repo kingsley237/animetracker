@@ -228,7 +228,27 @@ class VideoGallery(QWidget):
         self.empty = QLabel(empty_text)
         self.empty.setObjectName("plannedEmpty")
         self.empty.setWordWrap(True)
-        for w in (self.hero, self.caption, self.tiles_host, self.empty):
+        # ♥ Like · ⬇ Download · 🏆 Rank for the selected song
+        self.song_bar = QWidget()
+        sb = QHBoxLayout(self.song_bar)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(6)
+        from ui.music_actions import LikeButton, download_menu
+        self.like_btn = LikeButton()
+        self.dl_btn = QPushButton("⬇  Download")
+        self.dl_btn.setObjectName("musicAction")
+        self.dl_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.dl_btn.clicked.connect(lambda: self._items and download_menu(self._items[self._sel], self.dl_btn))
+        self.rank_btn = QPushButton("🏆  Rank")
+        self.rank_btn.setObjectName("musicAction")
+        self.rank_btn.setToolTip("Rank it with your other favourites (Music → Rankings)")
+        self.rank_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.rank_btn.clicked.connect(self._rank_song)
+        for b in (self.like_btn, self.dl_btn, self.rank_btn):
+            sb.addWidget(b)
+        sb.addStretch()
+        self.song_bar.hide()
+        for w in (self.hero, self.caption, self.song_bar, self.tiles_host, self.empty):
             lay.addWidget(w)
 
     def load(self, items: List[Dict], anime_title: str = ""):
@@ -311,6 +331,8 @@ class VideoGallery(QWidget):
         self._title = anime_title
         self._sel = 0
         has = bool(self._items)
+        if not has:
+            self.song_bar.hide()
         self.hero.setVisible(has)
         self.caption.setVisible(has)
         self.empty.setVisible(not has)
@@ -343,6 +365,17 @@ class VideoGallery(QWidget):
         for t in self._tiles:
             t.set_selected(t.index == i)
         self._fetch(it.get("thumb"), ("hero", self._token, i))
+        from ui.music_actions import MusicHub, is_music
+        song = is_music(it) and MusicHub.get().db is not None
+        self.song_bar.setVisible(song)
+        self.like_btn.set_item(it if song else None)
+
+    def _rank_song(self):
+        from ui.music_actions import MusicHub
+        if not self._items or MusicHub.get().db is None:
+            return
+        from ui.music_rank import rank_flow
+        rank_flow(MusicHub.get().db, self.window(), None, self._items[self._sel])
 
     def _fetch(self, url, key):
         if not url:
