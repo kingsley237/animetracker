@@ -138,6 +138,11 @@ def get_anilist_auth(parent=None) -> "AniListAuth":
 
     global _auth_instance
 
+    if _auth_instance is not None:
+        from PyQt6 import sip
+        if sip.isdeleted(_auth_instance):      # its parent window was destroyed
+            _auth_instance = None
+
     if _auth_instance is None:
 
         _auth_instance = AniListAuth(parent)

@@ -145,3 +145,68 @@ def test_gallery_music_tabs(qapp, monkeypatch):
     assert list(g._tab_btns) == ["trailers", "op", "ed", "ost"]
     g.deleteLater()
     pump(20)
+
+
+def test_finishing_moves_to_completed_with_undo(db, monkeypatch):
+    from core.status_rules import auto_complete, sweep, undo_auto_complete
+    # anime that finished airing: last episode watched -> Completed
+    aid = add_anime(db, "Done", "watching", total_episodes=3)
+    for n in (1, 2):
+        db.set_episode_watched(aid, n, True)
+    assert auto_complete(db, aid) is None                        # one left
+    db.set_episode_watched(aid, 3, True)
+    m = auto_complete(db, aid)
+    assert m["label"] == "Completed" and m["prev"] == "watching"
+    assert db.get_anime_by_id(aid)["watch_status"] == "completed"
+    # Undo puts it back and isn't overruled on the next check
+    undo_auto_complete(db, m)
+    assert db.get_anime_by_id(aid)["watch_status"] == "watching"
+    assert auto_complete(db, aid) is None
+    db.set_episode_watched(aid, 3, False)                        # started over: the undo is forgotten
+    assert auto_complete(db, aid) is None
+    db.set_episode_watched(aid, 3, True)
+    assert auto_complete(db, aid)["id"] == aid
+    # still airing: caught up stays in Watching
+    rid = add_anime(db, "Airing", "watching", status="RELEASING", total_episodes=12, next_episode_num=3)
+    for n in (1, 2):
+        db.set_episode_watched(rid, n, True)
+    assert auto_complete(db, rid) is None
+    # TV: an ended show fully watched -> Finished; a running one stays
+    tid = _tv(db, monkeypatch, {1: [_d(-30), _d(-23)]}, status="Ended", sid=11)
+    db.set_tv_episode_watched(tid, 1, 1, True)
+    assert auto_complete(db, tid) is None
+    db.set_tv_episode_watched(tid, 1, 2, True)
+    assert auto_complete(db, tid)["label"] == "Finished"
+    run = _tv(db, monkeypatch, {1: [_d(-30), _d(-23)]}, sid=12)
+    db.set_tv_episode_watched(run, 1, 1, True)
+    db.set_tv_episode_watched(run, 1, 2, True)
+    assert auto_complete(db, run) is None
+    # start-up sweep catches ones that were already finished
+    old = add_anime(db, "Old", "watching", total_episodes=2)
+    db.set_episode_watched(old, 1, True)
+    db.set_episode_watched(old, 2, True)
+    assert [m["id"] for m in sweep(db)] == [old]
+
+
+def test_auto_complete_toast_and_undo_in_window(qapp, db, monkeypatch):
+    from ui.main_window import MainWindow
+    from ui.toast import Toast
+    for name in ("_refresh_catalog", "_check_connection", "_check_anilist_status", "_check_tmdb_status",
+                 "_check_for_updates", "_setup_anilist_session", "_maybe_show_onboarding", "_scan_sequels",
+                 "_sync_metadata", "_refresh_upcoming", "_refresh_airing", "_scan_notifications",
+                 "_sync_movies", "_refresh_open_anime", "_check_anime_event"):
+        if hasattr(MainWindow, name):
+            monkeypatch.setattr(MainWindow, name, lambda self, *a, **k: None)
+    aid = add_anime(db, "Finale", "watching", total_episodes=2)
+    db.set_episode_watched(aid, 1, True)
+    win = MainWindow(db)
+    db.set_episode_watched(aid, 2, True)
+    win._on_episode_changed(aid)
+    assert wait_until(lambda: db.get_anime_by_id(aid)["watch_status"] == "completed", 3)
+    toasts = [t for t in win.findChildren(Toast) if getattr(t, "action_btn", None)]
+    assert toasts and "Finale" in toasts[-1].msg.text()
+    toasts[-1].action_btn.click()
+    assert db.get_anime_by_id(aid)["watch_status"] == "watching"
+    win.close()
+    win.deleteLater()
+    pump(50)

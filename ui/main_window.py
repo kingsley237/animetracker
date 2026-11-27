@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2600, self._show_event_moments)
         QTimer.singleShot(6000, self._check_anime_event)
         QTimer.singleShot(4000, self._check_milestones)
+        QTimer.singleShot(3200, self._sweep_finished)
         self._milestone_timer = QTimer(self)
         self._milestone_timer.setSingleShot(True)
         self._milestone_timer.timeout.connect(self._check_milestones)
@@ -1247,6 +1248,7 @@ class MainWindow(QMainWindow):
         if lib_id < 0:
             self._load_library()
             return
+        self._queue_auto_complete(lib_id)          # TV episodes come through here
         row = self.db.get_anime_by_id(lib_id)
         card = self._cards.get(lib_id)
         if not row:
@@ -1573,6 +1575,7 @@ class MainWindow(QMainWindow):
         if row and card is not None:
             card.update_data(row)
         self._update_stats_strip()
+        self._queue_auto_complete(lib_id)
 
     def _on_hall_changed(self):
         """The Hall changed: refresh what shows Hall of Fame state elsewhere."""
@@ -1602,6 +1605,67 @@ class MainWindow(QMainWindow):
         if anime and anime_id in self._cards:
             self._cards[anime_id].update_data(anime)
         self._update_stats_strip()
+        self._queue_auto_complete(anime_id)
+
+    # ── finishing something moves it to Completed (with Undo) ────────────────
+
+    def _queue_auto_complete(self, lib_id: int):
+        """Checked a moment after the last change, so ticking several episodes
+        in a row gives one result."""
+        if not lib_id:
+            return
+        self._ac_pending = getattr(self, "_ac_pending", set())
+        self._ac_pending.add(lib_id)
+        if getattr(self, "_ac_timer", None) is None:
+            self._ac_timer = QTimer(self)
+            self._ac_timer.setSingleShot(True)
+            self._ac_timer.timeout.connect(self._run_auto_complete)
+        self._ac_timer.start(700)
+
+    def _run_auto_complete(self):
+        from core import status_rules
+        ids, self._ac_pending = list(self._ac_pending), set()
+        moved = [m for m in (status_rules.auto_complete(self.db, lid) for lid in ids) if m]
+        if moved:
+            self._after_auto_complete(moved)
+
+    def _after_auto_complete(self, moved: list):
+        from core import status_rules
+        from ui.toast import Toast
+        for m in moved:
+            self._refresh_after_status(m["id"], "completed")
+        if len(moved) == 1:
+            m = moved[0]
+            msg = f"You finished “{m['name']}” — moved to {m['label']}. How was it?"
+        else:
+            msg = f"{len(moved)} titles you'd finished were moved to Completed."
+
+        def undo():
+            for x in moved:
+                status_rules.undo_auto_complete(self.db, x)
+                self._refresh_after_status(x["id"], x["prev"])
+            back = (f"“{moved[0]['name']}” is back in {moved[0]['prev_label']}." if len(moved) == 1
+                    else "they're back where they were.")
+            Toast.show(self, "Undone — " + back, kind="info")
+        Toast.show(self, msg, kind="success", duration=9000, action=("Undo", undo))
+
+    def _refresh_after_status(self, lib_id: int, status: str):
+        self._on_watch_status_changed(lib_id, status)
+        dp = getattr(self, "detail_panel", None)
+        if dp is not None and getattr(dp, "_anime", None) and dp._anime.get("id") == lib_id:
+            dp.refresh_from_db()
+        if self._home_page is not None and self.current_page == "home":
+            self._home_page.load()
+
+    def _sweep_finished(self):
+        """At start-up: titles you'd already finished that still sat in Watching."""
+        from core import status_rules
+        try:
+            moved = status_rules.sweep(self.db)
+        except Exception:
+            return
+        if moved:
+            self._after_auto_complete(moved)
 
     def _on_watch_status_changed(self, anime_id: int, new_status: str):
         """Remove or update cards when watch status no longer matches the active view."""

@@ -131,7 +131,7 @@ class Toast(QWidget):
     """Auto-dismissing toast, stacked by _ToastManager."""
 
     def __init__(self, parent: QWidget, message: str,
-                 kind: str = "info", duration: int = _DEFAULT_DURATION_MS):
+                 kind: str = "info", duration: int = _DEFAULT_DURATION_MS, action=None):
         host = parent.window() if parent is not None else None
         super().__init__(host)        # drawn inside the window: no OS frame, moves with it
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -160,8 +160,21 @@ class Toast(QWidget):
         self.msg.setWordWrap(True)
         from PyQt6.QtGui import QFontMetrics
         one_line = QFontMetrics(f).horizontalAdvance(message) + 12
-        self.msg.setFixedWidth(min(one_line, _MAX_W - 26 - 12 - 24 - 28))
+        room = _MAX_W - 26 - 12 - 24 - 28
+        if action:
+            from PyQt6.QtWidgets import QPushButton
+            self.action_btn = QPushButton(action[0])
+            self.action_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            self.action_btn.setStyleSheet(
+                f"QPushButton{{color:{self.accent};background:transparent;border:1px solid {self.accent};"
+                "border-radius:8px;padding:3px 12px;font-size:12px;font-weight:700;}"
+                "QPushButton:hover{background:rgba(255,255,255,0.06);}")
+            self.action_btn.clicked.connect(lambda: (action[1](), self._dismiss()))
+            room -= self.action_btn.sizeHint().width() + 12
+        self.msg.setFixedWidth(min(one_line, room))
         lay.addWidget(self.msg, 1, Qt.AlignmentFlag.AlignVCenter)
+        if action:
+            lay.addWidget(self.action_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.close_btn = QLabel("✕")
         self.close_btn.setFixedSize(22, 22)
         self.close_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -283,8 +296,9 @@ class Toast(QWidget):
 
     @staticmethod
     def show(parent: QWidget, message: str, kind: str = "info",
-             duration: int = _DEFAULT_DURATION_MS) -> "Toast":
-        return Toast(parent, message, kind, duration)
+             duration: int = _DEFAULT_DURATION_MS, action=None) -> "Toast":
+        """action: optional (label, callback), e.g. ("Undo", fn)."""
+        return Toast(parent, message, kind, duration, action)
 
     @staticmethod
     def popup(parent: QWidget, message: str, kind: str = "info",

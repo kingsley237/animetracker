@@ -174,3 +174,87 @@ def reopen_if_new_episodes(db, lib_id: int) -> bool:
         db.update_anime(lib_id, {"watch_status": "watching", "completed_at": None})
         return True
     return False
+
+
+# ── finishing moves a title to Completed by itself ────────────────────────────
+#
+# Watched every episode of something that has ended (anime FINISHED/CANCELLED,
+# TV ended or cancelled with nothing announced) -> Completed / Finished, with
+# an Undo toast. A show still airing stays in Watching when you're caught up
+# (new episodes are coming). Undo is remembered: that title isn't moved again
+# until it's no longer fully watched (e.g. a rewatch started over).
+
+def _declined() -> List[int]:
+    import json
+    from core.app_settings import app_settings
+    try:
+        return [int(x) for x in json.loads(str(app_settings().value("autocomplete_declined", "") or "[]"))]
+    except (ValueError, TypeError):
+        return []
+
+
+def _set_declined(ids: List[int]):
+    import json
+    from core.app_settings import app_settings
+    app_settings().setValue("autocomplete_declined", json.dumps(sorted(set(ids))))
+
+
+def finished_watching(db, row: Dict) -> bool:
+    """Every episode watched and nothing more coming."""
+    media = _media(row)
+    api = (row.get("status") or "").upper()
+    lid = row["id"]
+    if media == "anime":
+        if api not in ("FINISHED", "CANCELLED"):
+            return False
+        total = int(row.get("total_episodes") or 0) or len(db.get_episodes(lid))
+        return bool(total) and db.get_watched_count(lid) >= total
+    if media == "tv":
+        if api not in ("FINISHED", "CANCELLED"):
+            return False
+        today = time.strftime("%Y-%m-%d")
+        main = [e for e in db.get_tv_episodes(lid) if (e.get("season_number") or 0) > 0]
+        aired = [e for e in main if e.get("air_date") and e["air_date"] <= today]
+        if not aired or any(e.get("air_date") and e["air_date"] > today for e in main):
+            return False
+        return all(e.get("watched") for e in aired)
+    return False
+
+
+def auto_complete(db, lib_id: int):
+    """Move a just-finished title to Completed. Returns {id, name, label, prev, ...}
+    for the toast, or None when nothing moved."""
+    row = db.get_anime_by_id(lib_id) or {}
+    if not row or row.get("watch_status") not in ("watching", "planned"):
+        return None
+    media = _media(row)
+    if media not in ("anime", "tv"):
+        return None
+    declined = _declined()
+    done = finished_watching(db, row)
+    if lib_id in declined:
+        if not done:                                # started over: forget the undo
+            _set_declined([i for i in declined if i != lib_id])
+        return None
+    if not done:
+        return None
+    prev = row["watch_status"]
+    db.update_anime(lib_id, {"watch_status": "completed", "completed_at": int(time.time())})
+    return {"id": lib_id, "name": _name(row), "label": LABELS[media]["completed"], "prev": prev,
+            "prev_label": LABELS[media][prev], "media": media}
+
+
+def undo_auto_complete(db, moved: Dict):
+    db.update_anime(moved["id"], {"watch_status": moved["prev"], "completed_at": None})
+    _set_declined(_declined() + [moved["id"]])
+
+
+def sweep(db) -> List[Dict]:
+    """Titles already finished but still sitting in Watching / Plan to watch."""
+    out = []
+    for r in db.get_all_anime():
+        if r.get("watch_status") in ("watching", "planned") and _media(r) in ("anime", "tv"):
+            m = auto_complete(db, r["id"])
+            if m:
+                out.append(m)
+    return out

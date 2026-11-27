@@ -199,3 +199,12 @@ meantime, it doesn't understand movies).
 - **Dropped**: faded cover (colour on hover), DROPPED badge, stop point + how long ago, your reason.
 - **Movies**: poster, title, runtime · year · seen N×, READY TO WATCH / IN CINEMAS / COMING SOON / WATCHED,
   HD date + days left / out in HD since / in cinemas date, your rating, accent border.
+
+## Finishing moves to Completed (auto, with Undo)
+- [ ] anime that has finished airing: tick its last episode → toast "You finished … — moved to Completed" + Undo; card leaves Watching
+- [ ] TV show that has ended: watch its last episode → moved to Finished + Undo
+- [ ] Undo → back in Watching / Plan to watch, and it isn't moved again until you un-tick an episode (rewatch)
+- [ ] still-airing anime / running TV show, caught up → stays in Watching (new episodes are coming)
+- [ ] movies: marking one watched still moves it to Watched as before
+- [ ] at start-up: anything you'd already finished that sat in Watching is moved, one toast for all, Undo restores all
+
