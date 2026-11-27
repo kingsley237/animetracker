@@ -98,3 +98,55 @@ def test_appearance_and_preview(qapp, db):
         tm.apply(BASE, 1.0)
         tm.save("raiko_night", "", 1.0)
     pump(20)
+
+
+def test_decor_layer_zones_motion_and_anchors(qapp):
+    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+    from core.app_settings import app_settings
+    from ui import decor
+    from ui.theme import Theme, ThemeManager
+    host = QWidget()
+    host.resize(1000, 700)
+    lay = QHBoxLayout(host)
+    side = QWidget()
+    side.setFixedWidth(220)
+    btn = QPushButton("Settings", side)
+    lay.addWidget(side)
+    lay.addWidget(QLabel("content"), 1)
+    host.show()
+    pump(30)
+    decor.register("sidebar", side)
+    decor.register("settings_button", btn)
+    app_settings().setValue("motion_follow_windows", "false")
+    layer = decor.DecorLayer(host)
+    tm = ThemeManager.get()
+    th = Theme("ev", "Event", {"violet": "#ff8a1f"},
+               extra={"ambient": {"kind": "snow", "density": 1.0},
+                      "ornaments": [{"anchor": "settings_button", "kind": "bats"}], "mascot": "witch"})
+    app_settings().setValue("motion", "on")
+    tm.apply(th)
+    assert layer.parts and layer.timer.isActive()
+    for q in layer.parts:                                    # snow only in the sidebar / header band
+        assert any(z.contains(int(q.x), int(q.y)) or q.y < 0 for z in layer.zones)
+    for _ in range(5):
+        layer._tick()
+    assert layer._anchor_rect("settings_button") is not None
+    app_settings().setValue("motion", "off")
+    layer.refresh()
+    assert not layer.parts and not layer.timer.isActive()    # reduced motion: still, no particles
+    app_settings().setValue("motion", "calm")
+    layer.refresh()
+    assert 0 < len(layer.parts) and layer.timer.interval() == 66
+    host.grab()                                              # paints without errors
+    host.close()
+    pump(20)
+
+
+def test_animated_emoji_falls_back(qapp, monkeypatch, tmp_path):
+    from ui import anim_emoji
+    monkeypatch.setattr(anim_emoji, "CACHE", tmp_path)
+    assert anim_emoji.codepoint("🎃") == "1f383" and anim_emoji.codepoint("❄️") == "2744_fe0f"
+    w = anim_emoji.AnimatedEmoji("🎃", 32)
+    assert w.text() == "🎃"                                   # plain emoji until the animation is cached
+    w.deleteLater()
+    pump(20)

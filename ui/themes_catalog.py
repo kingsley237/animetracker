@@ -31,7 +31,8 @@ _DEFS: Dict[str, Dict] = {
         "roles": {"bg": "#fbf6f1", "text": "#2a2230", "violet": "#c2417a", "amber": "#965800",
                   "gold": "#8c5600", "sky": "#0b6fa4", "green": "#0f7a55", "red": "#c0322b",
                   "pink": "#be185d", "orange": "#c2410c"},
-        "fonts": {"display": "Quicksand"}, "extra": {"radius": 1.25},
+        "fonts": {"display": "Quicksand"},
+        "extra": {"radius": 1.25, "ambient": {"kind": "petals", "density": 0.3}},
     },
     "neo_tokyo": {
         "name": "Neo-Tokyo", "tagline": "Night city neon, hard edges, signal glow.",

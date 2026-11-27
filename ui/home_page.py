@@ -738,6 +738,8 @@ class HomePage(QWidget):
         col.setSpacing(2)
         self.hello = QLabel()
         self.hello.setObjectName("homeHello")
+        from ui import decor as _decor
+        _decor.register("home_greeting", self.hello)
         self.date = QLabel()
         self.date.setObjectName("homeDate")
         col.addWidget(self.hello)

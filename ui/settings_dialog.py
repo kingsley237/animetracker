@@ -591,6 +591,8 @@ class SettingsDialog(QDialog):
             "Built with Python and PyQt6.",
             "Your library database is stored locally on this machine.",
             "Cover art remains the property of its respective copyright holders.",
+            "Animated emoji: Noto Emoji Animation by Google, licensed CC BY 4.0.",
+            "Theme fonts (Quicksand, Orbitron, Fraunces, VT323) under the SIL Open Font License.",
         ]:
             al.addWidget(self._body_text(text))
 

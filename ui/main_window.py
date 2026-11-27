@@ -129,6 +129,13 @@ class MainWindow(QMainWindow):
         self._load_theme()
         self._build_ui()
         self._setup_timers()
+        # Living themes: ambient effects, ornaments, Rai (click-through overlay)
+        from ui import decor
+        decor.register("settings_button", self._settings_btn)
+        decor.register("add_button", self._add_btn)
+        if "hall" in self._nav_buttons:
+            decor.register("hall_nav", self._nav_buttons["hall"])
+        self._decor = decor.DecorLayer(self.centralWidget())
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
@@ -283,6 +290,8 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
+        from ui import decor as _decor
+        _decor.register("sidebar", sidebar)
         self.sidebar = sidebar
         sidebar.setFixedWidth(232)
         lay = QVBoxLayout(sidebar)
@@ -307,6 +316,8 @@ class MainWindow(QMainWindow):
             )
             icon_lbl.setPixmap(px)
             icon_lbl.setObjectName("sidebarLogoMark")
+            from ui import decor as _decor
+            _decor.register("logo", icon_lbl)
             icon_lbl.setFixedSize(48, 44)
             icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ll.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)

@@ -216,6 +216,39 @@ class AppearancePage(QWidget):
         srow.addStretch()
         lay.addLayout(srow)
         self.size_lbl.setText(f"{self.slider.value()}%")
+
+        mot_head = QLabel("MOTION")
+        mot_head.setObjectName("statusSwitchHead")
+        lay.addSpacing(6)
+        lay.addWidget(mot_head)
+        mrow = QHBoxLayout()
+        mrow.setSpacing(6)
+        self.motion_btns: Dict[str, QPushButton] = {}
+        cur = str(st.value("motion", "calm") or "calm")
+        for key, label, tip in (("on", "Full", "Ambient effects and animated ornaments"),
+                                ("calm", "Calm", "Fewer, slower effects"),
+                                ("off", "Off", "No ambient effects; ornaments stay still")):
+            b = QPushButton(label)
+            b.setObjectName("hallSeg")
+            b.setCheckable(True)
+            b.setChecked(key == cur)
+            b.setToolTip(tip)
+            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.clicked.connect(lambda _=False, k=key: self._set_motion(k))
+            self.motion_btns[key] = b
+            mrow.addWidget(b)
+        mrow.addSpacing(16)
+        from PyQt6.QtWidgets import QCheckBox
+        self.follow = QCheckBox("Follow Windows' animation setting")
+        self.follow.setChecked(str(st.value("motion_follow_windows", "true")).lower() != "false")
+        self.follow.toggled.connect(self._set_follow)
+        mrow.addWidget(self.follow)
+        mrow.addStretch()
+        lay.addLayout(mrow)
+        self.mascot = QCheckBox("Show Rai, the Raikō mascot, during events")
+        self.mascot.setChecked(str(st.value("mascot", "true")).lower() != "false")
+        self.mascot.toggled.connect(self._set_mascot)
+        lay.addWidget(self.mascot)
         self._refresh()
 
     def _refresh(self):
@@ -241,6 +274,27 @@ class AppearancePage(QWidget):
     def _set_accent(self, h: str):
         self.accent = h
         self._apply()
+
+    def _decor_changed(self):
+        tm = ThemeManager.get()
+        tm.changed.emit(tm.theme)
+
+    def _set_motion(self, key: str):
+        from core.app_settings import app_settings
+        app_settings().setValue("motion", key)
+        for k, b in self.motion_btns.items():
+            b.setChecked(k == key)
+        self._decor_changed()
+
+    def _set_follow(self, on: bool):
+        from core.app_settings import app_settings
+        app_settings().setValue("motion_follow_windows", "true" if on else "false")
+        self._decor_changed()
+
+    def _set_mascot(self, on: bool):
+        from core.app_settings import app_settings
+        app_settings().setValue("mascot", "true" if on else "false")
+        self._decor_changed()
 
     def _set_scale(self):
         v = self.slider.value() / 100
