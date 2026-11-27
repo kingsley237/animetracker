@@ -2124,7 +2124,7 @@ QLabel#statusSwitchHead { color: #6b7391; font-size: 10px; font-weight: 800; let
 QWidget#statusSwitchTrack { background: #12141d; border: 1px solid #23273a; border-radius: 12px; }
 QPushButton#statusSeg {
     background: transparent; color: #c7cbe0; border: none; border-radius: 9px;
-    padding: 8px 6px; font-size: 12px; font-weight: 700;
+    padding: 8px 2px; font-size: 11px; font-weight: 700;
 }
 QPushButton#statusSeg:hover { background: rgba(255,255,255,0.07); color: #ffffff; }
 QPushButton#statusSeg[blocked="true"] { color: #454b66; }
@@ -2135,7 +2135,7 @@ QLabel#statusSwitchHint { color: #8c93ad; font-size: 11px; }
 QWidget#galleryTabs { background: #12141d; border: 1px solid #23273a; border-radius: 11px; }
 QPushButton#galleryTab {
     background: transparent; color: #9da5c0; border: none; border-radius: 8px;
-    padding: 7px 6px; font-size: 11px; font-weight: 700;
+    padding: 7px 2px; font-size: 11px; font-weight: 700;
 }
 QPushButton#galleryTab:hover { color: #ffffff; background: rgba(255,255,255,0.06); }
 QPushButton#galleryTab:checked { background: #2a2f45; color: #ffffff; }
@@ -2149,7 +2149,7 @@ QPushButton#musicLike:hover, QPushButton#musicAction:hover { background: rgba(25
 QPushButton#musicLike:checked { background: rgba(244,114,182,0.16); color: #f472b6; border-color: rgba(244,114,182,0.45); }
 QPushButton#playerLike, QPushButton#playerAction {
     background: #1a1d28; color: #c7cbd9; border: 1px solid #2a2d42; border-radius: 6px;
-    font-size: 11px; font-weight: 700; padding: 6px 12px;
+    font-size: 11px; font-weight: 700; padding: 0 14px;
 }
 QPushButton#playerLike:checked { color: #f472b6; border-color: #6b2f52; background: #2a1624; }
 QPushButton#playerLike:hover, QPushButton#playerAction:hover { background: #252a40; color: #ffffff; }

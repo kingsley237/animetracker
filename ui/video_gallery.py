@@ -223,6 +223,7 @@ class VideoGallery(QWidget):
         self.hero.clicked.connect(self._play)
         self.caption = QLabel()
         self.caption.setObjectName("galleryCaption")
+        self.caption.setWordWrap(True)
         self.tiles_host = QWidget()
         self.tiles = FlowLayout(self.tiles_host, h_spacing=8, v_spacing=6)
         self.empty = QLabel(empty_text)

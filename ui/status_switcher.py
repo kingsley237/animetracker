@@ -48,7 +48,7 @@ class StatusSwitcher(QWidget):
                 it.widget().deleteLater()
         self.buttons = {}
         for o in opts:
-            b = QPushButton(("✓  " if o["current"] else "") + o["label"])
+            b = QPushButton(o["label"])
             b.setObjectName("statusSeg")
             b.setProperty("current", "true" if o["current"] else "false")
             b.setProperty("blocked", "false" if o["allowed"] or o["current"] else "true")
