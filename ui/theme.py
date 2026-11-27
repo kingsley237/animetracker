@@ -111,7 +111,8 @@ class Theme:
 
     @property
     def is_base(self) -> bool:
-        return self.roles == BASE_ROLES and not self.fonts and float(self.extra.get("radius", 1.0)) == 1.0
+        return (self.roles == BASE_ROLES and not self.fonts and float(self.extra.get("radius", 1.0)) == 1.0
+                and not any(k in self.extra for k in ("ambient", "ornaments", "mascot", "event")))
 
 
 BASE = Theme("raiko_night", "Raikō Night")
@@ -226,6 +227,9 @@ class ThemeManager(QObject):
         self._base_qss = ""
         self._fonts_loaded = False
         self.saved_id = "raiko_night"
+        self.event = None
+        self.event_level = "off"
+        self.ended_event = None
 
     @classmethod
     def get(cls) -> "ThemeManager":
@@ -334,9 +338,30 @@ class ThemeManager(QObject):
             scale = 1.0
         self.saved_id = tid
         theme = build(tid, accent)
+        # events (Christmas, Halloween…) at the right intensity
+        self.event, self.event_level, self.ended_event = None, "off", None
+        try:
+            from core import events
+            theme, ev, level = events.resolve(theme, tid)
+            self.event, self.event_level = ev, level
+            last = str(st.value("event_last", "") or "")
+            if ev is not None and level != "off":
+                st.setValue("event_last", ev["id"])
+            elif last:
+                st.setValue("event_last", "")
+                if ev is None and last in events.BY_ID:
+                    self.ended_event = events.BY_ID[last]
+        except Exception:
+            pass
         if theme.is_base and scale == 1.0 and self.theme.is_base:
             return
         self.apply(theme, scale)
+
+    def reapply(self):
+        """Re-resolve your theme + any event (after a choice) and apply it."""
+        self.load_saved()
+        if self.theme.is_base:
+            self.apply(self.theme, self.font_scale)
 
     def save(self, tid: str, accent: str = "", font_scale: float = 1.0):
         from core.app_settings import app_settings

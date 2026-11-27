@@ -78,25 +78,116 @@ _DEFS: Dict[str, Dict] = {
 
 ORDER = list(_DEFS)
 
+# ── Event & seasonal looks (variants per event; see core/events.py) ──────────
+_EVENT_DEFS: Dict[str, Dict] = {
+    # Christmas
+    "xmas_cozy": {
+        "name": "Cozy Cabin", "tagline": "Firelight, wood and wool socks.", "dark": True,
+        "roles": {"bg": "#140d0a", "text": "#fbf1e6", "violet": "#e2553f", "gold": "#f2b54a", "amber": "#f2b54a",
+                  "green": "#4caf6e", "pink": "#ef7b6b", "sky": "#7fb7d6"},
+        "fonts": {"display": "Fraunces"},
+        "extra": {"ambient": {"kind": "embers", "density": 0.45},
+                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "add_button", "kind": "holly"},
+                                {"anchor": "hall_nav", "kind": "sparkles"}], "mascot": "santa"}},
+    "xmas_snow": {
+        "name": "Snowfall Night", "tagline": "Deep blue night, quiet snow.", "dark": True,
+        "roles": {"bg": "#071022", "text": "#f2f7ff", "violet": "#7cc4ff", "gold": "#f2d27a", "amber": "#f2d27a",
+                  "green": "#4fd1a1", "red": "#ff7a85", "pink": "#ff9fc6", "sky": "#9fdcff"},
+        "fonts": {},
+        "extra": {"ambient": {"kind": "snow", "density": 0.9},
+                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "settings_button", "kind": "snowcap"},
+                                {"anchor": "add_button", "kind": "holly"}], "mascot": "santa"}},
+    "xmas_candy": {
+        "name": "Candy Cane", "tagline": "Playful red, peppermint white.", "dark": True,
+        "roles": {"bg": "#1a0b10", "text": "#fff5f6", "violet": "#ff4d6d", "gold": "#ffd166", "amber": "#ffd166",
+                  "green": "#3ccf8e", "pink": "#ff8fab", "sky": "#9bd7ff"},
+        "fonts": {"display": "Quicksand"},
+        "extra": {"radius": 1.2, "ambient": {"kind": "confetti", "density": 0.35,
+                                             "colors": ["#ff4d6d", "#ffffff", "#3ccf8e"]},
+                  "ornaments": [{"anchor": "logo", "kind": "santa_hat"}, {"anchor": "add_button", "kind": "holly"}],
+                  "mascot": "santa"}},
+    "xmas_golden": {
+        "name": "Golden Eve", "tagline": "Black tie, warm gold, candlelight.", "dark": True,
+        "roles": {"bg": "#0b0a08", "text": "#fbf6ea", "violet": "#e0b552", "gold": "#f3cf6f", "amber": "#f3cf6f",
+                  "green": "#8fc79a", "red": "#e07b6b", "pink": "#e8a6a0", "sky": "#a9c4d8"},
+        "fonts": {"display": "Fraunces"},
+        "extra": {"ambient": {"kind": "stars", "density": 0.5, "colors": ["#f3cf6f", "#fff3c4"]},
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}, {"anchor": "hall_nav", "kind": "sparkles"}],
+                  "mascot": "santa"}},
+    # New Year
+    "ny_midnight": {
+        "name": "Midnight Countdown", "tagline": "Fireworks, champagne gold, a fresh start.", "dark": True,
+        "roles": {"bg": "#070712", "text": "#f6f4ff", "violet": "#b18cff", "gold": "#ffd36e", "amber": "#ffd36e",
+                  "pink": "#ff7ac6", "sky": "#7fd8ff"},
+        "fonts": {"display": "Fraunces"},
+        "extra": {"ambient": {"kind": "confetti", "density": 0.4,
+                              "colors": ["#ffd36e", "#b18cff", "#ff7ac6", "#7fd8ff"]},
+                  "ornaments": [{"anchor": "logo", "kind": "party_hat"}, {"anchor": "settings_button", "kind": "sparkles"}],
+                  "mascot": "party"}},
+    "ny_sunrise": {
+        "name": "Hatsuhinode", "tagline": "The first sunrise of the year, warm and hopeful.", "dark": True,
+        "roles": {"bg": "#160d12", "text": "#fff4ec", "violet": "#ff8a5b", "gold": "#ffc46b", "amber": "#ffc46b",
+                  "pink": "#ff9aa2", "sky": "#9ecbff", "red": "#ff6b6b"},
+        "fonts": {"display": "Quicksand"},
+        "extra": {"ambient": {"kind": "stars", "density": 0.35, "colors": ["#ffd9a8", "#ffffff"]},
+                  "ornaments": [{"anchor": "logo", "kind": "sparkles"}], "mascot": "party"}},
+    # Halloween
+    "hw_haunted": {
+        "name": "Haunted Night", "tagline": "Bats, fog and a glowing moon.", "dark": True,
+        "roles": {"bg": "#0b0912", "text": "#f3ecff", "violet": "#ff8a1f", "pink": "#b06cff", "gold": "#ffb347",
+                  "amber": "#ffb347", "green": "#7ee081", "sky": "#9b8cff"},
+        "fonts": {},
+        "extra": {"ambient": {"kind": "embers", "density": 0.45},
+                  "ornaments": [{"anchor": "settings_button", "kind": "bats"}, {"anchor": "hall_nav", "kind": "pumpkin"}],
+                  "mascot": "witch"}},
+    "hw_pumpkin": {
+        "name": "Pumpkin Patch", "tagline": "Cute, cosy and very orange.", "dark": True,
+        "roles": {"bg": "#160c06", "text": "#fff1e4", "violet": "#ff7b1c", "gold": "#ffc15e", "amber": "#ffc15e",
+                  "green": "#7bc96f", "pink": "#ff9e7a", "sky": "#ffb38a"},
+        "fonts": {"display": "Quicksand"},
+        "extra": {"radius": 1.2, "ambient": {"kind": "leaves", "density": 0.45},
+                  "ornaments": [{"anchor": "hall_nav", "kind": "pumpkin"}, {"anchor": "add_button", "kind": "pumpkin"}],
+                  "mascot": "witch"}},
+    "hw_yokai": {
+        "name": "Yokai Night", "tagline": "Lanterns and spirits from Japanese folklore.", "dark": True,
+        "roles": {"bg": "#08070f", "text": "#eef0ff", "violet": "#5ee6c8", "pink": "#ff6fa5", "gold": "#ffcf6b",
+                  "amber": "#ffcf6b", "red": "#ff5a5a", "sky": "#8fb6ff"},
+        "fonts": {},
+        "extra": {"ambient": {"kind": "fireflies", "density": 0.55, "colors": ["#a6fff0", "#e0fffa"]},
+                  "ornaments": [{"anchor": "settings_button", "kind": "lantern"}, {"anchor": "logo", "kind": "lantern"}],
+                  "mascot": "witch"}},
+}
+
 # Curated accents (the picker shows these; any colour can be typed too)
 ACCENTS = ["#8b7bff", "#38bdf8", "#34d399", "#f5c451", "#fb923c", "#f472b6", "#f87171", "#e2e8f0"]
 
 
+def _def(tid: str):
+    return _DEFS.get(tid) or _EVENT_DEFS.get(tid)
+
+
 def info(tid: str) -> Dict:
-    d = _DEFS.get(tid) or _DEFS["raiko_night"]
-    return {"id": tid if tid in _DEFS else "raiko_night", "name": d["name"], "tagline": d["tagline"],
-            "dark": d["dark"]}
+    d = _def(tid) or _DEFS["raiko_night"]
+    return {"id": tid if _def(tid) else "raiko_night", "name": d["name"], "tagline": d["tagline"],
+            "dark": d["dark"], "event": tid in _EVENT_DEFS}
 
 
 def build(tid: str, accent: str = "") -> Theme:
     """The Theme for an id (+ optional accent replacing the main accent)."""
-    if tid not in _DEFS:
+    if not _def(tid):
         tid = "raiko_night"
-    d = _DEFS[tid]
+    d = _def(tid)
     roles = dict(d["roles"])
     if accent:
         roles["violet"] = accent
     return Theme(tid, d["name"], roles, dark=d["dark"], fonts=dict(d["fonts"]), extra=dict(d["extra"]))
+
+
+def event_extra(tid: str) -> Dict:
+    """Only the living details of an event look (for Decorations on your own theme)."""
+    d = _EVENT_DEFS.get(tid) or {}
+    ex = d.get("extra") or {}
+    return {k: v for k, v in ex.items() if k in ("ambient", "ornaments", "mascot")}
 
 
 def all_themes() -> List[Dict]:

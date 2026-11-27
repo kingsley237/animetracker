@@ -765,6 +765,9 @@ class HomePage(QWidget):
         self.res_lay.setContentsMargins(0, 0, 0, 0)
         self.res_lay.setSpacing(6)
         self.results.setVisible(False)
+        from ui.event_banner import EventBanner
+        self.event_banner = EventBanner()
+        self.lay.addWidget(self.event_banner)
         self.lay.addWidget(self.results)
 
         self.sections = QWidget()
@@ -831,6 +834,11 @@ class HomePage(QWidget):
     def load(self):
         h = datetime.now().hour
         self.hello.setText("Good morning" if 5 <= h < 12 else "Good afternoon" if h < 18 else "Good evening")
+        from ui.theme import ThemeManager
+        tm = ThemeManager.get()
+        if getattr(tm, "event", None) is not None and tm.event_level != "off":
+            self.hello.setText(tm.event["greeting"])
+        self.event_banner.refresh()
         d = datetime.now()
         self.date.setText(d.strftime("%A, %B ") + str(d.day))
 

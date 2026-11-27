@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         if "hall" in self._nav_buttons:
             decor.register("hall_nav", self._nav_buttons["hall"])
         self._decor = decor.DecorLayer(self.centralWidget())
+        QTimer.singleShot(1800, self._event_ended_note)
         self._load_library()
         self._check_connection()
         self._check_anilist_status()
@@ -1827,6 +1828,16 @@ class MainWindow(QMainWindow):
         self._refresh_anilist_user_menu()
         if dlg.preview_request:
             self.start_theme_preview(*dlg.preview_request)
+
+    def _event_ended_note(self):
+        from ui.theme import ThemeManager
+        from ui.themes_catalog import info
+        tm = ThemeManager.get()
+        ev = getattr(tm, "ended_event", None)
+        if ev is not None:
+            tm.ended_event = None
+            from ui.toast import Toast
+            Toast.show(self, f"{ev['name']} is over — back to {info(tm.saved_id)['name']}.", kind="info")
 
     def start_theme_preview(self, tid: str, accent: str = ""):
         """Walk through the app in a theme without saving it."""

@@ -249,6 +249,7 @@ class AppearancePage(QWidget):
         self.mascot.setChecked(str(st.value("mascot", "true")).lower() != "false")
         self.mascot.toggled.connect(self._set_mascot)
         lay.addWidget(self.mascot)
+        self._build_events(lay)
         self._refresh()
 
     def _refresh(self):
@@ -263,8 +264,9 @@ class AppearancePage(QWidget):
                                  f"border:{'3px solid ' + ring if h == self.accent else '1px solid rgba(128,128,140,0.5)'};}}")
 
     def _apply(self):
-        ThemeManager.get().save(self.tid, self.accent, self.scale)
-        ThemeManager.get().apply(build(self.tid, self.accent), self.scale)
+        tm = ThemeManager.get()
+        tm.save(self.tid, self.accent, self.scale)
+        tm.reapply()                     # your theme (+ any event on top, at the right intensity)
         self._refresh()
 
     def _choose(self, tid: str):
@@ -274,6 +276,97 @@ class AppearancePage(QWidget):
     def _set_accent(self, h: str):
         self.accent = h
         self._apply()
+
+    # ── event themes ─────────────────────────────────────────────────────────
+
+    def _build_events(self, lay):
+        from PyQt6.QtWidgets import QCheckBox, QComboBox, QFrame
+        from core import events
+        head = QLabel("EVENT THEMES")
+        head.setObjectName("statusSwitchHead")
+        lay.addSpacing(10)
+        lay.addWidget(head)
+        note = QLabel("Raikō dresses up for events on its own. On the default theme you get the full look; if you "
+                      "picked your own theme it stays, and the event only adds decorations. Adjust each event here.")
+        note.setObjectName("settingsHelperText")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        tm = ThemeManager.get()
+        ev_now = getattr(tm, "event", None)
+        if ev_now is not None and events.choice(ev_now) == "off":
+            row = QHBoxLayout()
+            msg = QLabel(f"{ev_now['name']} is on now — you switched it off for this year.")
+            msg.setObjectName("settingsValueText")
+            row.addWidget(msg, 1)
+            back = QPushButton(f"Bring {ev_now['name']} back")
+            back.setObjectName("secondaryBtn")
+            back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            back.clicked.connect(lambda: self._bring_back(ev_now, back))
+            row.addWidget(back)
+            lay.addLayout(row)
+        self.event_rows = {}
+        for ev, start, end in events.upcoming(limit=10):
+            fr = QFrame()
+            fr.setObjectName("eventRow")
+            h = QHBoxLayout(fr)
+            h.setContentsMargins(12, 8, 12, 8)
+            h.setSpacing(10)
+            on_now = ev_now is not None and ev_now["id"] == ev["id"]
+            when = (f"{start.strftime('%b')} {start.day} – {end.strftime('%b')} {end.day}"
+                    + ("  ·  on now" if on_now else ""))
+            name = QLabel(f"{ev['emoji']}  <b>{ev['name']}</b>  <span style='color:#8c93ad'>{when}</span>")
+            name.setObjectName("settingsValueText")
+            h.addWidget(name, 1)
+            lvl = QComboBox()
+            for k, label in events.INTENSITIES.items():
+                lvl.addItem(label, k)
+            lvl.setCurrentIndex(max(0, lvl.findData(events.setting(ev["id"]))))
+            lvl.setFixedWidth(220)
+            lvl.currentIndexChanged.connect(lambda _i, ev=ev, c=lvl: self._set_level(ev, c.currentData()))
+            h.addWidget(lvl)
+            look = QComboBox()
+            for vid in ev["variants"]:
+                look.addItem(info(vid)["name"], vid)
+            look.setCurrentIndex(max(0, look.findData(events.variant(ev))))
+            look.setFixedWidth(170)
+            look.setToolTip("Which look to use for the full theme")
+            look.currentIndexChanged.connect(lambda _i, ev=ev, c=look: self._set_look(ev, c.currentData()))
+            h.addWidget(look)
+            pv = QPushButton("Preview")
+            pv.setObjectName("secondaryBtn")
+            pv.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            pv.clicked.connect(lambda _=False, c=look: self.preview_requested.emit(c.currentData(), ""))
+            h.addWidget(pv)
+            lay.addWidget(fr)
+            self.event_rows[ev["id"]] = (lvl, look)
+        self.ask = QCheckBox("Ask me first instead of applying event themes automatically")
+        self.ask.setChecked(events.ask_first())
+        self.ask.toggled.connect(lambda on: (events.set_ask_first(on), self._events_changed()))
+        lay.addWidget(self.ask)
+
+    def _events_changed(self):
+        ThemeManager.get().reapply()
+        self._refresh()
+
+    def _set_level(self, ev, level):
+        from core import events
+        events.set_setting(ev["id"], level)
+        tm = ThemeManager.get()
+        if getattr(tm, "event", None) is not None and tm.event["id"] == ev["id"]:
+            events.set_choice(ev, "kept")         # your setting now decides (and no banner again)
+        self._events_changed()
+
+    def _set_look(self, ev, vid):
+        from core import events
+        events.set_variant(ev, vid)
+        self._events_changed()
+
+    def _bring_back(self, ev, btn):
+        from core import events
+        events.set_choice(ev, "kept")
+        btn.setEnabled(False)
+        btn.setText("Back on")
+        self._events_changed()
 
     def _decor_changed(self):
         tm = ThemeManager.get()

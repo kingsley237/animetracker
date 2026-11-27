@@ -2193,3 +2193,17 @@ QLabel#previewCaption { color: #c7cbe0; font-size: 12px; }
 QPushButton#previewNav { background: #1a1d28; color: #e8eaf2; border: 1px solid #2a2d42; border-radius: 8px;
     font-size: 14px; font-weight: 800; }
 QPushButton#previewNav:disabled { color: #4a5070; }
+
+/* ── Event banner & coach mark ───────────────────────────────────────────── */
+QFrame#eventBanner {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(139,123,255,0.16), stop:1 rgba(245,196,81,0.10));
+    border: 1px solid rgba(139,123,255,0.35); border-radius: 16px;
+}
+QLabel#eventBannerTitle { color: #f4f5fa; font-size: 14px; background: transparent; }
+QLabel#eventBannerSub { color: #9da5c0; font-size: 12px; background: transparent; }
+QPushButton#eventBannerClose { background: transparent; color: #8c93ad; border: none; font-size: 13px; }
+QPushButton#eventBannerClose:hover { color: #ffffff; }
+QWidget#coachMark { background: #161925; border: 1px solid #8b7bff; border-radius: 14px; }
+QLabel#coachText { color: #e8eaf2; font-size: 13px; background: transparent; }
+
+QFrame#eventRow { background: #12141d; border: 1px solid #1f2333; border-radius: 12px; }

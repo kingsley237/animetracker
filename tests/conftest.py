@@ -203,3 +203,9 @@ def _reset_theme():
             tm.apply(BASE, 1.0)
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _no_live_events(monkeypatch):
+    """Tests run on an ordinary day unless they pick a date themselves."""
+    monkeypatch.setenv("RAIKO_DATE", "2026-11-27")
