@@ -1811,8 +1811,24 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self, initial_page: str = "account"):
         from ui.settings_dialog import SettingsDialog
-        SettingsDialog(self.db, self, initial_page=initial_page).exec()
+        dlg = SettingsDialog(self.db, self, initial_page=initial_page)
+        dlg.exec()
         self._refresh_anilist_user_menu()
+        if dlg.preview_request:
+            self.start_theme_preview(*dlg.preview_request)
+
+    def start_theme_preview(self, tid: str, accent: str = ""):
+        """Walk through the app in a theme without saving it."""
+        from ui.theme_preview import ThemePreview
+        if getattr(self, "_theme_preview", None) is not None:
+            return
+        self._theme_preview = ThemePreview(self, tid, accent)
+        self._theme_preview.finished.connect(self._theme_preview_done)
+        self._theme_preview.start()
+
+    def _theme_preview_done(self, _applied: bool):
+        self._theme_preview = None
+        QTimer.singleShot(150, lambda: self._open_settings("appearance"))
 
     # ── Timers ─────────────────────────────────────────────────────────────────
 

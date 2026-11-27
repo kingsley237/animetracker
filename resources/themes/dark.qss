@@ -2175,3 +2175,21 @@ QPushButton#songListen:hover { background: #8b7bff; color: #0b0d12; }
 QWidget#songRow { background: #12141d; border: 1px solid #1f2333; border-radius: 12px; }
 QWidget#songRow:hover { border-color: #3a3f57; }
 QLabel#songRowTitle { color: #eef0f7; font-size: 13px; font-weight: 700; }
+
+/* ── Appearance & theme preview ───────────────────────────────────────────── */
+QPushButton#themePreviewBtn {
+    background: rgba(8,9,14,0.85); color: #f4f5fa; border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 9px; padding: 5px 12px; font-size: 11px; font-weight: 800;
+}
+QPushButton#themePreviewBtn:hover { background: #8b7bff; color: #0b0d12; }
+QPushButton#accentSwatch { font-size: 11px; font-weight: 700; color: #c7cbe0; background: #1a1d28;
+    border: 1px solid #2a2d42; border-radius: 15px; }
+QPushButton#accentSwatch:checked { border: 2px solid #f4f5fa; }
+QWidget#previewPill { background: #12141d; border: 1px solid #2e3348; border-radius: 16px; }
+QLabel#previewKicker { color: #8b7bff; font-size: 10px; font-weight: 900; letter-spacing: 1.6px; }
+QLabel#previewName { color: #f4f5fa; font-size: 14px; font-weight: 800; }
+QLabel#previewStep { color: #9da5c0; font-size: 11px; font-weight: 700; }
+QLabel#previewCaption { color: #c7cbe0; font-size: 12px; }
+QPushButton#previewNav { background: #1a1d28; color: #e8eaf2; border: 1px solid #2a2d42; border-radius: 8px;
+    font-size: 14px; font-weight: 800; }
+QPushButton#previewNav:disabled { color: #4a5070; }

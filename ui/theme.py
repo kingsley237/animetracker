@@ -111,7 +111,7 @@ class Theme:
 
     @property
     def is_base(self) -> bool:
-        return self.roles == BASE_ROLES and not self.fonts
+        return self.roles == BASE_ROLES and not self.fonts and float(self.extra.get("radius", 1.0)) == 1.0
 
 
 BASE = Theme("raiko_night", "Raikō Night")
@@ -131,16 +131,19 @@ def _hue_dist(lab, ref) -> float:
 
 
 class Mapper:
-    """Maps base-theme colours to a theme."""
+    """Maps base-theme colours (and sizes) to a theme."""
 
-    def __init__(self, theme: Theme):
+    def __init__(self, theme: Theme, font_scale: float = 1.0):
         self.theme = theme
-        self.identity = theme.is_base
+        self.colors_identity = theme.roles == BASE_ROLES
+        self.font_scale = font_scale
+        self.radius = float(theme.extra.get("radius", 1.0))
+        self.identity = self.colors_identity and font_scale == 1.0 and self.radius == 1.0
         self.lab = {k: rgb_to_oklab(*hex_rgb(v)) for k, v in theme.roles.items()}
         self._cache: Dict[Tuple[int, int, int], Tuple[int, int, int]] = {}
 
     def rgb(self, r: int, g: int, b: int) -> Tuple[int, int, int]:
-        if self.identity:
+        if self.colors_identity:
             return r, g, b
         key = (r, g, b)
         hit = self._cache.get(key)
@@ -176,18 +179,26 @@ class Mapper:
         return res
 
     def hex(self, h: str) -> str:
-        if self.identity:
+        if self.colors_identity:
             return h
         return rgb_hex(*self.rgb(*hex_rgb(h)))
 
 
 _HEX = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+_FONT_PX = re.compile(r"(font-size\s*:\s*)(\d+(?:\.\d+)?)px")
+_RADIUS = re.compile(r"(border(?:-top|-bottom)?(?:-left|-right)?-radius\s*:\s*)(\d+(?:\.\d+)?)px")
 _RGBA = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(,\s*[\d.]+\s*)?\)")
 
 
 def map_css(text: str, mapper: "Mapper") -> str:
     """Map every #hex and rgb()/rgba() in a stylesheet / rich-text string."""
-    if mapper.identity or not text or ("#" not in text and "rgb" not in text):
+    if mapper.identity or not text:
+        return text
+    if mapper.font_scale != 1.0:
+        text = _FONT_PX.sub(lambda m: f"{m.group(1)}{max(7, round(float(m.group(2)) * mapper.font_scale))}px", text)
+    if mapper.radius != 1.0:
+        text = _RADIUS.sub(lambda m: f"{m.group(1)}{round(float(m.group(2)) * mapper.radius)}px", text)
+    if mapper.colors_identity or ("#" not in text and "rgb" not in text):
         return text
 
     def hx(m):
@@ -211,7 +222,10 @@ class ThemeManager(QObject):
         super().__init__()
         self.theme = BASE
         self.mapper = Mapper(BASE)
+        self.font_scale = 1.0
         self._base_qss = ""
+        self._fonts_loaded = False
+        self.saved_id = "raiko_night"
 
     @classmethod
     def get(cls) -> "ThemeManager":
@@ -230,17 +244,66 @@ class ThemeManager(QObject):
         self._base_qss = qss
         app = QApplication.instance()
         if app is not None:
-            app.setStyleSheet(self.css(qss))
+            app.setStyleSheet(self._render_qss())
 
-    def apply(self, theme: Theme):
+    def _render_qss(self) -> str:
+        return self.css(self._base_qss) + self._font_qss()
+
+    def load_fonts(self, theme: Optional[Theme] = None):
+        """Register only the fonts this theme uses (registering a font also makes
+        it a fallback for symbols, so unused fonts stay unloaded)."""
+        if QApplication.instance() is None:
+            return
+        theme = theme or self.theme
+        if not isinstance(self._fonts_loaded, dict):
+            self._fonts_loaded = {}                      # family -> font id
+        from PyQt6.QtGui import QFontDatabase
+        folder = Path(__file__).parent.parent / "resources" / "fonts"
+        wanted = {v for v in theme.fonts.values() if v}
+        for fam in list(self._fonts_loaded):
+            if fam not in wanted:                        # leaving a theme: unload its font
+                QFontDatabase.removeApplicationFont(self._fonts_loaded.pop(fam))
+        for fam in wanted:
+            f = folder / f"{fam.replace(' ', '')}.ttf"
+            if fam not in self._fonts_loaded and f.exists():
+                self._fonts_loaded[fam] = QFontDatabase.addApplicationFont(str(f))
+
+    def _font_qss(self) -> str:
+        f = self.theme.fonts
+        out = ""
+        if f.get("body"):
+            out += f'\nQWidget {{ font-family: "{f["body"]}", "Segoe UI", sans-serif; }}\n'
+        if f.get("display"):
+            out += ",\n".join(f"QLabel#{n}" for n in DISPLAY_LABELS) + \
+                f' {{ font-family: "{f["display"]}", "Segoe UI", sans-serif; }}\n'
+        return out
+
+    def display_font(self) -> str:
+        return self.theme.fonts.get("display") or "Segoe UI"
+
+    def apply(self, theme: Theme, font_scale: Optional[float] = None):
         """Switch theme everywhere, now."""
+        self.load_fonts(theme)
+        if font_scale is not None:
+            self.font_scale = font_scale
         self.theme = theme
-        self.mapper = Mapper(theme)
+        self.mapper = Mapper(theme, self.font_scale)
         app = QApplication.instance()
         if app is None:
             return
+        from PyQt6.QtGui import QFont
+        if not hasattr(self, "_orig_font"):
+            self._orig_font = QFont(app.font())          # what the app started with
+        if theme.fonts.get("body") or self.font_scale != 1.0:
+            f = QFont(self._orig_font)
+            if theme.fonts.get("body"):
+                f.setFamily(theme.fonts["body"])
+            f.setPointSizeF(self._orig_font.pointSizeF() * self.font_scale)
+            app.setFont(f)
+        else:
+            app.setFont(self._orig_font)
         if self._base_qss:
-            app.setStyleSheet(self.css(self._base_qss))
+            app.setStyleSheet(self._render_qss())
         for w in app.allWidgets():
             try:
                 base = w.property("_rk_qss")
@@ -254,6 +317,43 @@ class ThemeManager(QObject):
             except RuntimeError:
                 pass
         self.changed.emit(theme)
+
+
+    # ── saved choice ─────────────────────────────────────────────────────────
+
+    def load_saved(self):
+        """Apply the theme saved in settings (call once at start-up)."""
+        from core.app_settings import app_settings
+        from ui.themes_catalog import build
+        st = app_settings()
+        tid = str(st.value("theme_id", "raiko_night") or "raiko_night")
+        accent = str(st.value("theme_accent", "") or "")
+        try:
+            scale = float(st.value("font_scale", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            scale = 1.0
+        self.saved_id = tid
+        theme = build(tid, accent)
+        if theme.is_base and scale == 1.0 and self.theme.is_base:
+            return
+        self.apply(theme, scale)
+
+    def save(self, tid: str, accent: str = "", font_scale: float = 1.0):
+        from core.app_settings import app_settings
+        st = app_settings()
+        st.setValue("theme_id", tid)
+        st.setValue("theme_accent", accent)
+        st.setValue("font_scale", font_scale)
+        self.saved_id = tid
+
+
+# Labels that use the theme's display font (titles, greeting, big numbers).
+DISPLAY_LABELS = [
+    "appLogo", "pageTitle", "detailTitle", "dialogTitle", "settingsTitle", "settingsPageTitle",
+    "settingsNavBrand", "settingsAboutName", "spotlightTitle", "homeHello", "homeSection", "hallTitle",
+    "hallAsk", "hallDoneRank", "hallPlaqueRank", "hallAwardName", "popTitle", "statValue",
+    "statStripValue", "homeStatValue", "slideBigNumber", "recapHeadline", "tvSeasonTitle",
+]
 
 
 def tm() -> ThemeManager:
@@ -294,6 +394,12 @@ def _themed_set_text(self, s):
         _ORIG_SET_TEXT(self, s)
 
 
+def set_raw_style(w: QWidget, css: str):
+    """Style a widget with *literal* colours (not theme-mapped) - e.g. colour swatches."""
+    w.setProperty("_rk_qss", None)
+    _ORIG_SET_QSS(w, css)
+
+
 def install():
     """Route widget styles and rich text through the theme (idempotent)."""
     global _installed
@@ -313,7 +419,7 @@ class QColor(_QtColor):
 
     def __init__(self, *args):
         m = ThemeManager.get().mapper
-        if not m.identity and args:
+        if not m.colors_identity and args:
             a0 = args[0]
             if isinstance(a0, str) and a0.startswith("#") and len(args) == 1:
                 args = (m.hex(a0),)

@@ -44,3 +44,57 @@ def test_hooks_and_live_switch(qapp):
         tm.apply(BASE)
     assert b.styleSheet() == "background:#8b7bff;" and "#8b7bff" in lab.text()
     pump(10)
+
+
+def test_every_theme_is_readable():
+    from ui.theme import Mapper, contrast
+    from ui.themes_catalog import ORDER, build
+    checks = [("#f4f5fa", "#0b0d12", 7), ("#e8eaf2", "#1a1d28", 7), ("#9da5c0", "#0b0d12", 4.5),
+              ("#8c93ad", "#12141d", 4.5), ("#6b7391", "#0b0d12", 3), ("#8b7bff", "#12141d", 3),
+              ("#f5c451", "#0b0d12", 3), ("#fbbf24", "#0b0d12", 3), ("#38bdf8", "#0b0d12", 3),
+              ("#34d399", "#0b0d12", 3), ("#f87171", "#0b0d12", 3), ("#0b0d12", "#8b7bff", 4.5),
+              ("#0b0d12", "#f5c451", 4.5), ("#0b0d12", "#fbbf24", 4.5)]
+    for tid in ORDER:
+        m = Mapper(build(tid))
+        for fg, bg, need in checks:
+            assert contrast(m.hex(fg), m.hex(bg)) >= need, (tid, fg, bg)
+
+
+def test_appearance_and_preview(qapp, db):
+    from core.app_settings import app_settings
+    from ui.appearance import AppearancePage
+    from ui.theme import BASE, ThemeManager
+    tm = ThemeManager.get()
+    try:
+        page = AppearancePage()
+        page._choose("sakura_dawn")
+        assert tm.theme.id == "sakura_dawn" and app_settings().value("theme_id") == "sakura_dawn"
+        page._set_accent("#38bdf8")
+        assert tm.theme.roles["violet"] == "#38bdf8"
+        page.slider.setValue(110)
+        page._set_scale()
+        assert abs(tm.font_scale - 1.1) < 1e-6
+        # preview another theme, then cancel -> back to Sakura exactly
+        from PyQt6.QtWidgets import QMainWindow, QWidget
+        from ui.theme_preview import ThemePreview
+        win = QMainWindow()
+        win.setCentralWidget(QWidget())
+        win._navigate = lambda *_a: None
+        win.resize(1000, 700)
+        win.show()
+        pv = ThemePreview(win, "neo_tokyo")
+        pv.start()
+        assert tm.theme.id == "neo_tokyo"
+        pv.go(3)
+        pv.end(False)
+        assert tm.theme.id == "sakura_dawn" and app_settings().value("theme_id") == "sakura_dawn"
+        pv2 = ThemePreview(win, "retro_vhs")
+        pv2.start()
+        pv2.end(True)
+        assert app_settings().value("theme_id") == "retro_vhs"
+        win.close()
+        page.deleteLater()
+    finally:
+        tm.apply(BASE, 1.0)
+        tm.save("raiko_night", "", 1.0)
+    pump(20)

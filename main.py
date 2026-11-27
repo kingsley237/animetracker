@@ -157,6 +157,10 @@ def main():
     if _qss.exists():
         from ui.theme import ThemeManager
         ThemeManager.get().set_base_stylesheet(_qss.read_text(encoding="utf-8"))
+        try:
+            ThemeManager.get().load_saved()          # your chosen theme (Settings → Appearance)
+        except Exception:
+            pass
 
     # Stage 2 — Database
     splash.set_status("Opening your library…", progress=45)

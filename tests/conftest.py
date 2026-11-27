@@ -190,3 +190,16 @@ def _reset_music_hub():
             MusicHub._instance.active.clear()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_theme():
+    """Themes are app-wide; every test starts and ends on the base theme."""
+    yield
+    try:
+        from ui.theme import BASE, ThemeManager
+        tm = ThemeManager.get()
+        if tm.theme.id != BASE.id or tm.font_scale != 1.0:
+            tm.apply(BASE, 1.0)
+    except Exception:
+        pass
