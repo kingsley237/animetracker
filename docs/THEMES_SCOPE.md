@@ -5,8 +5,9 @@ backgrounds, ornaments on real UI elements (bats around the Settings button), a 
 copy, celebrations, and a Home spotlight that *becomes* the event. Two kinds:
 
 - **Permanent themes** — you pick one; it stays.
-- **Event & seasonal themes** — switch on by themselves on the day (Christmas, Halloween, a new anime
-  season, the finale of a big series…), with a one-tap way back on first launch.
+- **Event & seasonal themes** — arrive by themselves on the day (Christmas, Halloween, a new anime
+  season, the finale of a big series…) at an intensity that respects any theme you chose yourself, and
+  go back in one tap (§6).
 
 Everything is built on what Raikō already is (PyQt6 widgets, one stylesheet, custom-painted cards) —
 no web view, no heavy engine, no new runtime dependency.
@@ -18,8 +19,8 @@ no web view, no heavy engine, no new runtime dependency.
 1. **Whole-app, not a skin.** One theme = a complete set of design tokens + assets + behaviour, applied to
    every screen, dialog, toast, the splash and the share cards.
 2. **Delight, never in the way.** Decorations sit *around* content, never on it; nothing ever blocks a click.
-3. **Your choice wins.** Events auto-apply (as you asked), but switching back is one tap, every event can be
-   turned off individually, and there's a master "never auto-apply" switch.
+3. **An explicit choice is never overridden.** Events never replace a theme you picked yourself — they add
+   to it; switching back is always one tap; every event can be turned down or off individually.
 4. **Respectful of people and machines.** Reduced motion, contrast, photosensitivity, battery, culture and
    region are handled by design (§9).
 5. **Data, not code.** A theme is a folder of JSON + images/fonts — safe to add, impossible to run code from.
@@ -120,17 +121,42 @@ Only one *theme* is active at a time; milestones are celebrations on top.
 
 ## 6. UX flows
 
+### 6.0 What the evidence says, and the behaviour it leads to
+What users and products have learned about seasonal themes (sources at the end):
+- The loudest complaints come from **having a deliberately chosen look overridden**; people on the default
+  look are far less bothered by a change — they haven't expressed a preference.
+- Users ask for **control per holiday** and for **degrees** (not just on/off); removing the feature
+  entirely draws more anger than offering a toggle.
+- Holidays aren't universal — they should be **region-aware and individually optional**.
+- Accessibility settings (reduced motion) must be respected **automatically**.
+- The best implementations are **additive and short**: they decorate, end on their own, and never trap
+  anyone in a look.
+
+**Recommended behaviour** — three intensities, with a default chosen per situation:
+
+| Intensity | What changes | Default for… |
+|---|---|---|
+| **Full theme** | the whole event theme (palette, fonts, art, ornaments, ambient, spotlight) | people on the **default theme** (Raikō Night) who haven't said otherwise |
+| **Decorations** | your own theme stays; the event **adds** ornaments, greeting, ambient effect and the event spotlight slide | people who **chose a theme themselves** — their choice is never replaced |
+| **Off** | nothing | anyone who turned the event (or its category) off; reduced-motion users get Decorations without motion |
+
+Anime-world events (finales, premieres) use **Decorations** by default even on the default theme — they're
+one-day, and a full palette built from someone's key art is better offered than imposed.
+
 ### 6.1 An event begins (no approval needed)
-1. On launch on the event day, the theme is already applied — the app opens *dressed up*.
-2. A **themed welcome banner** at the top of Home (not a dialog):
+1. On launch on the event day, the event is already there at its default intensity — no dialog, no question.
+2. A **themed welcome banner** at the top of Home (inline, not a dialog), worded for the intensity:
    > 🎃 **Raikō dressed up for Halloween.** &nbsp; [**Keep it**] [**Switch back**] [Try the other Halloween looks]
-3. **Keep it** → banner thanks you and fades. **Switch back** → your previous theme returns instantly,
-   with "You can turn Halloween back on in Settings → Appearance → Event themes."
-4. **If you close the banner (✕) without choosing:** the theme stays, and a coach mark appears once —
-   it **points at the Settings button in the sidebar** and says:
-   *"Changed your mind? Settings → Appearance → Event themes lets you switch back or turn off events."*
+
+   or, for someone with their own theme:
+   > 🎃 **A little Halloween on top of Midnight Ink.** &nbsp; [**Nice**] [**Go full Halloween**] [**No decorations**]
+3. One tap does what it says; **Switch back / No decorations** restores the previous look instantly, with
+   "You can bring Halloween back in Settings → Appearance → Event themes."
+4. **If the banner is closed (✕) without a choice:** the event stays as it is, and a coach mark appears
+   once — it **points at the Settings button in the sidebar** and says:
+   *"Changed your mind? Settings → Appearance → Event themes lets you switch back or turn events off."*
    (uses the same spotlight system as the welcome tour, so it highlights the exact place).
-5. The banner never returns for that event this year. When the event ends, your previous theme comes back
+5. The banner never returns for that event this year. When the event ends, everything returns to normal
    automatically, with a small "Halloween's over — back to Raikō Night" toast.
 
 ### 6.2 Previewing before accepting — the visual walkthrough
@@ -147,9 +173,9 @@ From the banner ("Try the other looks") or from Settings → Appearance:
 
 ### 6.3 Settings → Appearance (new page)
 - **Theme**: gallery (permanent), accent picker, font size (90–125%).
-- **Event themes**: master switch "Dress up Raikō for events" (on), per-category toggles (Holidays,
-  Seasons, Anime events, Milestones), per-event toggles with dates and a Preview button, "Ask me first
-  instead of switching automatically".
+- **Event themes**: intensity for events — *Full theme / Decorations / Off* (default chosen as in §6.0),
+  per-category settings (Holidays, Seasons, Anime events, Milestones), per-event settings with dates and a
+  Preview button, and "Ask me first instead of applying automatically".
 - **Motion**: Ambient effects (on / calm / off), "Follow Windows animation setting" (on), Sounds (off by default).
 - **Mascot**: show / hide.
 
@@ -311,18 +337,20 @@ Halloween-quality polish arriving for the next events.
 
 ---
 
-## 14. Decisions for you
+## 14. Recommended defaults — override anything you disagree with
 
-1. **Permanent themes** — the 8 in §4, or change the list?
-2. **Mascot** — yes to an original Raikō mascot ("Rai", a light spirit) appearing in empty states, toasts and
-   events? (can be hidden in Settings either way)
-3. **Event behaviour** — auto-apply on the day with the banner + switch-back (as you asked) — confirmed.
-   Also show "Coming up" events in Settings so you can preview/disable them early? (recommended)
-4. **Anime-world events** — include *Farewell to a legend*, *Season Premiere Week*, *Big premiere day*,
-   *your milestones*? (all recommended)
-5. **Sound** — off by default, opt-in soft cues? (recommended)
-6. **Christmas target** — aim to have phases 0–3 (including the Christmas themes) ready for you to test
-   before Dec 20?
+Each choice below follows the evidence and practice in this document; none of them is fixed.
+
+1. **Permanent themes** — the 8 in §4 (covers dark, true-black, light, playful, minimal and accessibility needs).
+2. **Mascot** — an original Raikō mascot ("Rai", a light spirit) in empty states, toasts and events, hideable
+   in Settings. Recommended: mascots make products feel alive when they're small, occasional and optional.
+3. **Event behaviour** — the intensity model in §6.0 (full theme on the default look, decorations on top of a
+   chosen theme, everything individually adjustable), plus **"Coming up"** in Settings to preview or turn off
+   events in advance.
+4. **Anime-world events** — *Farewell to a legend*, *Season Premiere Week*, *Big premiere day* and *your
+   milestones*, as decorations + spotlight by default.
+5. **Sound** — off by default, opt-in soft cues only.
+6. **Timing** — phases 0–3 (including the Christmas themes) ready for you to test before Dec 20.
 
 ---
 
