@@ -16,6 +16,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QRadialGradient,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
 
 

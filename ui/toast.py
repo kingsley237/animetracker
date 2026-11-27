@@ -16,6 +16,7 @@ from typing import ClassVar
 
 from PyQt6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QPropertyAnimation, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QWidget
 
 # kind -> (glyph, accent)
@@ -32,8 +33,12 @@ _SPACING:  int = 10
 _MAX_TOASTS: int = 3
 _SHADOW:   int = 14          # painted shadow around the card
 _MAX_W:    int = 420
-_SURFACE = QColor("#161925")
-_BORDER = QColor(255, 255, 255, 22)
+def _SURFACE():
+    return QColor("#161925")
+
+
+def _BORDER():
+    return QColor(255, 255, 255, 22)
 _TEXT = "#eef0f7"
 
 
@@ -259,8 +264,8 @@ class Toast(QWidget):
             p.drawRoundedRect(card.adjusted(-i, -i + 3, i, i + 3), 14 + i, 14 + i)
         path = QPainterPath()
         path.addRoundedRect(card, 14, 14)
-        p.fillPath(path, QColor("#1b1f2d") if self._hover else _SURFACE)
-        p.setPen(QPen(_BORDER, 1))
+        p.fillPath(path, QColor("#1b1f2d") if self._hover else _SURFACE())
+        p.setPen(QPen(_BORDER(), 1))
         p.drawPath(path)
         # countdown line along the bottom, clipped to the card
         frac = self._left / self.duration if self.duration else 0

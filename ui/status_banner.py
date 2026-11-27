@@ -17,6 +17,7 @@ from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QCursor, QPainter, QPainterPath
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget,

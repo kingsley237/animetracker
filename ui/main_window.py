@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
 from PyQt6.QtGui import QPixmap, QColor, QFont, QIcon, QCursor, QPainterPath, QRegion
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 
 from core.database import DatabaseManager
 from workers.workers import Worker, ImageWorker, AiringRefreshWorker, run_worker
@@ -157,7 +158,8 @@ class MainWindow(QMainWindow):
         if not qss_path.exists():
             qss_path = Path(__file__).parent.parent / "resources" / "themes" / "dark.qss"
         if qss_path.exists():
-            QApplication.instance().setStyleSheet(qss_path.read_text(encoding="utf-8"))
+            from ui.theme import ThemeManager
+            ThemeManager.get().set_base_stylesheet(qss_path.read_text(encoding="utf-8"))
 
     def toggle_theme(self):
         from core.app_settings import preferred_theme, set_preferred_theme

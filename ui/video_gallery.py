@@ -16,6 +16,7 @@ from PyQt6.QtGui import (
     QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.layout_helpers import FlowLayout

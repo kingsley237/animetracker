@@ -155,7 +155,8 @@ def main():
     if not _qss.exists():
         _qss = _Path(__file__).parent / "resources" / "themes" / "dark.qss"
     if _qss.exists():
-        app.setStyleSheet(_qss.read_text(encoding="utf-8"))
+        from ui.theme import ThemeManager
+        ThemeManager.get().set_base_stylesheet(_qss.read_text(encoding="utf-8"))
 
     # Stage 2 — Database
     splash.set_status("Opening your library…", progress=45)

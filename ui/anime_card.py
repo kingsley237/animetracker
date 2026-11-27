@@ -26,6 +26,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from PyQt6.QtGui import (
     QPixmap, QPainter, QPainterPath, QColor, QCursor, QFont, QPen, QRegion,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 
 from core.database import DatabaseManager
 

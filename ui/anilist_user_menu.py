@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QCursor
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 
 from workers.workers import ImageWorker, run_worker
 

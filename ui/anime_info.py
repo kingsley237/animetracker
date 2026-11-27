@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor, QCursor, QPainter, QPainterPath
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 
 from core.api import format_air_date, get_anime_by_id
 from workers.workers import Worker, ImageWorker, run_worker

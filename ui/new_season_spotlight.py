@@ -21,6 +21,7 @@ from PyQt6.QtGui import (
     QColor, QCursor, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
     QPen, QPixmap,
 )
+from ui.theme import QColor  # noqa: E402,F811  (theme-aware colours)
 from PyQt6.QtWidgets import (
     QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QMenu,
     QPushButton, QVBoxLayout, QWidget,
@@ -33,8 +34,12 @@ HERO_H = 138
 COVER_W, COVER_H = 70, 100
 COVER_OVERLAP = 46          # how far the cover pokes up into the hero
 RADIUS = 14
-BG = QColor("#0f1118")
-BORDER = QColor("#262b42")
+def _BG():
+    return QColor("#0f1118")
+
+
+def _BORDER():
+    return QColor("#262b42")
 
 # phase -> (badge text, accent, badge bg)
 _PHASES = {
@@ -616,7 +621,7 @@ class NewSeasonSpotlight(QFrame):
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         card = QPainterPath()
         card.addRoundedRect(rect, RADIUS, RADIUS)
-        p.fillPath(card, BG)
+        p.fillPath(card, _BG())
 
         # Hero art, clipped to the card's rounded top
         p.save()
@@ -650,12 +655,12 @@ class NewSeasonSpotlight(QFrame):
         fade.setColorAt(0.0, QColor(8, 10, 16, 120))
         fade.setColorAt(0.30, QColor(8, 10, 16, 20))
         fade.setColorAt(0.62, QColor(15, 17, 24, 120))
-        fade.setColorAt(0.90, BG)
-        fade.setColorAt(1.0, BG)
+        fade.setColorAt(0.90, _BG())
+        fade.setColorAt(1.0, _BG())
         p.fillRect(hero, fade)
         p.restore()
 
-        p.setPen(QPen(BORDER, 1))
+        p.setPen(QPen(_BORDER(), 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(card)
         p.end()
