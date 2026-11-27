@@ -182,6 +182,12 @@ class DetailPanel(QWidget):
         self.hof_btn.hide()
         self._lay.addWidget(self.hof_btn)
 
+        # Status: Watchlist / Watching / Finished / Dropped, only moves that make sense
+        from ui.status_switcher import StatusSwitcher
+        self.status_switch = StatusSwitcher()
+        self.status_switch.requested.connect(self._switch_status)
+        self._lay.addWidget(self.status_switch)
+
         # Progress info — last watched + next airing (clear, separate lines)
         self.progress_info_lbl = QLabel()
         self.progress_info_lbl.setObjectName("detailProgressCard")
@@ -231,6 +237,7 @@ class DetailPanel(QWidget):
         from ui.tv_details import TVSection
         self.tv_section = TVSection(self.db)
         self.tv_section.changed.connect(self.movie_changed.emit)
+        self.tv_section.changed.connect(lambda _id: self._refresh_status())
         self.tv_section.setVisible(False)
         self._lay.addWidget(self.tv_section)
 
@@ -385,6 +392,7 @@ class DetailPanel(QWidget):
         self._anime = anime
         aid = anime["id"]
         self._refresh_hall()
+        self._refresh_status()
 
         self.title_lbl.setText(anime.get("romaji_title", ""))
         eng = anime.get("english_title", "")
@@ -564,8 +572,9 @@ class DetailPanel(QWidget):
         self.watch_section.setVisible(watching_anime)
         if not watching_anime:
             self.watch_section.stop()
-        self.status_btn.setVisible(not (movie or tv))
-        self.drop_btn.setVisible(not (movie or tv))
+        # the status switcher at the top replaces these
+        self.status_btn.setVisible(False)
+        self.drop_btn.setVisible(False)
         if tv:
             self.movie_section.stop()
             self.archive_btn.setVisible(ws == "completed")
@@ -933,6 +942,58 @@ class DetailPanel(QWidget):
             self.hof_btn.style().polish(self.hof_btn)
         except Exception:
             self.hof_btn.hide()
+
+    # ── Status switcher ────────────────────────────────────────────────────────
+
+    def _refresh_status(self):
+        a = self._anime or {}
+        if not a.get("id") or a["id"] <= 0 or a.get("_dropped_id"):
+            self.status_switch.hide()
+            return
+        from core.status_rules import options
+        row = self.db.get_anime_by_id(a["id"]) or a
+        hint = ""
+        if (row.get("media_type") == "tv" and row.get("watch_status") == "completed"
+                and (row.get("status") or "") in ("RELEASING", "HIATUS")):
+            hint = "Caught up — new episodes will bring it back to Watching."
+        try:
+            self.status_switch.set_options(options(self.db, row), hint)
+            self.status_switch.show()
+        except Exception:
+            self.status_switch.hide()
+
+    def _switch_status(self, key: str):
+        a = self._anime or {}
+        if not a.get("id"):
+            return
+        from core.status_rules import LABELS, apply, plan
+        row = self.db.get_anime_by_id(a["id"]) or a
+        media = row.get("media_type") or "anime"
+        p = plan(self.db, row, key)
+        if not p["allowed"]:
+            return
+        if media == "anime" and key == "dropped":
+            self._drop()                      # moves it to the Dropped list (asks first)
+            return
+        if p["confirm"] and QMessageBox.question(
+                self, f"Move to {LABELS[media][key]}?", p["confirm"] + "\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        msg = apply(self.db, row, key)
+        aid = row["id"]
+        from ui.toast import Toast
+        Toast.show(self.window(), msg, kind="success")
+        self.watch_status_changed.emit(aid, key)
+        self.stats_changed.emit()
+        if media in ("movie", "tv"):
+            self.movie_changed.emit(aid)
+        else:
+            self.episode_changed.emit(aid)
+        fresh = self.db.get_anime_by_id(aid)
+        if fresh:
+            self.load_anime(fresh)
+        if key == "completed":
+            self._maybe_offer_induct(aid)
 
     def _hall_action(self):
         a = self._anime or {}

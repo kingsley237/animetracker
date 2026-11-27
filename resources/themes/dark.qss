@@ -2118,3 +2118,24 @@ QPushButton#hofBtn {
 }
 QPushButton#hofBtn:hover { background: rgba(245,196,81,0.18); }
 QPushButton#hofBtn[inHall="true"] { background: #f5c451; color: #0b0d12; border-color: #f5c451; }
+
+/* ── Status switcher (detail panel) ─────────────────────────────────────── */
+QLabel#statusSwitchHead { color: #6b7391; font-size: 10px; font-weight: 800; letter-spacing: 1.6px; }
+QWidget#statusSwitchTrack { background: #12141d; border: 1px solid #23273a; border-radius: 12px; }
+QPushButton#statusSeg {
+    background: transparent; color: #c7cbe0; border: none; border-radius: 9px;
+    padding: 8px 6px; font-size: 12px; font-weight: 700;
+}
+QPushButton#statusSeg:hover { background: rgba(255,255,255,0.07); color: #ffffff; }
+QPushButton#statusSeg[blocked="true"] { color: #454b66; }
+QPushButton#statusSeg[blocked="true"]:hover { background: transparent; color: #454b66; }
+QLabel#statusSwitchHint { color: #8c93ad; font-size: 11px; }
+
+/* ── Videos & music tabs ─────────────────────────────────────────────────── */
+QWidget#galleryTabs { background: #12141d; border: 1px solid #23273a; border-radius: 11px; }
+QPushButton#galleryTab {
+    background: transparent; color: #9da5c0; border: none; border-radius: 8px;
+    padding: 7px 6px; font-size: 11px; font-weight: 700;
+}
+QPushButton#galleryTab:hover { color: #ffffff; background: rgba(255,255,255,0.06); }
+QPushButton#galleryTab:checked { background: #2a2f45; color: #ffffff; }

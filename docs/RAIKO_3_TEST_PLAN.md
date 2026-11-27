@@ -147,6 +147,15 @@ meantime, it doesn't understand movies).
 - [ ] Toasts: mark an episode watched, rate something, add a title → new solid card bottom-right (no see-through), countdown pauses on hover, click / ✕ dismisses, 3+ stack neatly, move/resize the window → they follow
 - [ ] Home → This week: click an anime / TV / movie entry → popover beside it (flips near the right edge); Open details, Trailer; Esc / click outside / scroll / same entry closes it
 
+## Next (after 3.1.0) — status switcher & music (built 2026-11-27, awaiting your test) 🧪
+- [ ] Detail panel → STATUS row on every movie / show / anime: current status filled; greyed options say why on hover
+- [ ] TV still running (e.g. Vox Machina, caught up) → Finished works; if episodes are left it asks first and marks them; hint "new episodes will bring it back to Watching"
+- [ ] TV not premiered yet → only Watchlist; Watching / Finished / Dropped greyed
+- [ ] Movie not out yet → Watched greyed ("Not out yet — releases …"); out → Watched / back to Watchlist
+- [ ] Anime still airing → Completed greyed ("Still airing…"); not aired yet → only Plan to watch; finished anime → Completed marks all episodes (asks first); Dropped moves it to the Dropped list (asks first)
+- [ ] Moving something with watched episodes to Watchlist asks first and keeps your progress
+- [ ] Videos & music card: anime → Trailers · Openings · Endings · Soundtrack; TV → Trailers · Intro · Soundtrack; movies → Trailers · Soundtrack; each plays in the in-app player with Up Next; switching back and forth doesn't search again
+
 ## After 3.0 🕒
 - [ ] Release addressing all risks (anime side included). Running list: docs/HARDENING_PLAN.md
 - [ ] Trakt sync (separate version).

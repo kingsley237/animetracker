@@ -170,7 +170,7 @@ class AnimeWatchSection(QWidget):
         lay.addWidget(self.eps_card)
 
         from ui.video_gallery import VideoGallery
-        self.videos_card = _card("Trailers & videos")
+        self.videos_card = _card("Videos & music")
         self.gallery = VideoGallery("No trailers or promos yet.")
         self.videos_card.layout().addWidget(self.gallery)
         lay.addWidget(self.videos_card)
@@ -206,6 +206,7 @@ class AnimeWatchSection(QWidget):
             self._block = None
             from core.videos import build_playlist
             self.gallery.load(build_playlist(row), row.get("romaji_title") or "")
+            self.gallery.set_media(row)
         self._render()
 
     def stop(self):

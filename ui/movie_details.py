@@ -148,7 +148,7 @@ class MovieSection(QWidget):
 
         # Trailers
         from ui.video_gallery import VideoGallery
-        self.videos_card = _card("Trailers & videos")
+        self.videos_card = _card("Videos & music")
         self.gallery = VideoGallery("No trailers yet. You'll get a notification when one drops.")
         self.videos_card.layout().addWidget(self.gallery)
         lay.addWidget(self.videos_card)
@@ -194,6 +194,7 @@ class MovieSection(QWidget):
         self._render_cast()
         from core.videos import build_playlist
         self.gallery.load(build_playlist(row), row.get("romaji_title") or "")
+        self.gallery.set_media(row)
         self._clear(self.where_lay)
         self.where_lay.addWidget(QLabel("Checking availability…"))
         self.coll_card.setVisible(False)
